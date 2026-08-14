@@ -53,6 +53,8 @@ jobs:
           /t:Rebuild
           /p:Configuration=Release
           /p:Platform=AnyCPU
+          /p:BaseOutputPath=bin\
+          /p:OutputPath=bin\Release\
           /m
           /v:minimal
 
