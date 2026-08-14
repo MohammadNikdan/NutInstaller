@@ -82,9 +82,9 @@ namespace NutriculaInstaller
             catch (Exception ex)
             {
                 log("Parallel operation error: " + ex.Message);
-                if (installTask.IsCompletedSuccessfully)
+                if (installTask.Status == TaskStatus.RanToCompletion)
                     filesOk = installTask.Result;
-                if (serverTask.IsCompletedSuccessfully)
+                if (serverTask.Status == TaskStatus.RanToCompletion)
                     serverResult = serverTask.Result;
             }
 
