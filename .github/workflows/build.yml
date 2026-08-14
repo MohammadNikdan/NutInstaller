@@ -46,6 +46,16 @@ jobs:
       - name: Setup MSBuild
         uses: microsoft/setup-msbuild@v2
 
+      - name: Verify project target framework
+        shell: pwsh
+        run: |
+          $project = Get-Content -Raw -LiteralPath "NutriculaInstaller.csproj"
+          if ($project -notmatch '<TargetFrameworkVersion>v4\.8</TargetFrameworkVersion>') {
+            Write-Error "NutriculaInstaller.csproj is not targeting .NET Framework 4.8."
+            exit 1
+          }
+          Write-Host "Project targets .NET Framework 4.8."
+
       - name: Rebuild Release
         shell: pwsh
         run: >-
