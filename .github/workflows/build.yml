@@ -2,66 +2,78 @@ name: Build Nutricula Installer
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - main
+      - master
+
+permissions:
+  contents: read
 
 jobs:
   build:
+    name: Build Release EXE
     runs-on: windows-2022
 
     steps:
       - name: Checkout source
         uses: actions/checkout@v4
 
-      - name: Verify required files
-        shell: powershell
+      - name: Verify required installer files
+        shell: pwsh
         run: |
           $required = @(
             "icon.ico",
-            "Assets\Nutricula.ex4",
-            "Assets\Nutricula.ex5",
-            "Assets\Nutricula.ex4.sig",
-            "Assets\Nutricula.ex5.sig",
-            "Assets\MathUtils.dll",
-            "NutriculaInstaller.sln",
-            "NutriculaInstaller.csproj"
+            "Assets\\Nutricula.ex4",
+            "Assets\\Nutricula.ex5",
+            "Assets\\Nutricula.ex4.sig",
+            "Assets\\Nutricula.ex5.sig",
+            "Assets\\MathUtils.dll"
           )
 
+          $missing = @()
           foreach ($file in $required) {
-            if (-not (Test-Path $file)) {
-              Write-Error "Required file not found: $file"
-              exit 1
+            if (-not (Test-Path -LiteralPath $file -PathType Leaf)) {
+              $missing += $file
             }
           }
 
-          Write-Host "All required files were found."
+          if ($missing.Count -gt 0) {
+            Write-Error ("Required files are missing:`n" + ($missing -join "`n"))
+            exit 1
+          }
 
       - name: Setup MSBuild
         uses: microsoft/setup-msbuild@v2
 
-      - name: Build project
-        shell: powershell
-        run: |
-          msbuild NutriculaInstaller.sln `
-            /restore `
-            /t:Rebuild `
-            /p:Configuration=Release `
-            /p:Platform="Any CPU"
+      - name: Rebuild Release
+        shell: pwsh
+        run: >-
+          msbuild .\NutriculaInstaller.csproj
+          /t:Rebuild
+          /p:Configuration=Release
+          /p:Platform=AnyCPU
+          /m
+          /v:minimal
 
-      - name: Verify EXE
-        shell: powershell
+      - name: Verify single EXE output
+        shell: pwsh
         run: |
-          $exe = "bin\Release\NutriculaExpertInstaller.exe"
-
-          if (-not (Test-Path $exe)) {
-            Write-Error "Build completed but EXE was not found: $exe"
+          $exe = Join-Path $PWD "bin\\Release\\NutriculaExpertInstaller.exe"
+          if (-not (Test-Path -LiteralPath $exe -PathType Leaf)) {
+            Write-Error "Build completed but NutriculaExpertInstaller.exe was not found."
             exit 1
           }
 
-          Write-Host "EXE successfully created:"
-          Write-Host $exe
+          Write-Host "Built EXE: $exe"
+          Write-Host "Size: $((Get-Item $exe).Length) bytes"
+          Get-FileHash -Algorithm SHA256 -LiteralPath $exe | Format-List
 
-      - name: Upload EXE
+      - name: Upload EXE artifact
         uses: actions/upload-artifact@v4
         with:
           name: NutriculaExpertInstaller
           path: bin/Release/NutriculaExpertInstaller.exe
           if-no-files-found: error
+          retention-days: 30
+          compression-level: 0
