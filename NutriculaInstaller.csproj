@@ -1,0 +1,85 @@
+<Project ToolsVersion="15.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
+  <PropertyGroup>
+    <Configuration Condition=" '$(Configuration)' == '' ">Release</Configuration>
+    <Platform Condition=" '$(Platform)' == '' ">AnyCPU</Platform>
+    <ProjectGuid>{4AA1C77B-6F18-4F2E-A7F9-9AA2B52F5B6E}</ProjectGuid>
+    <OutputType>WinExe</OutputType>
+    <RootNamespace>NutriculaInstaller</RootNamespace>
+    <AssemblyName>NutriculaExpertInstaller</AssemblyName>
+    <TargetFrameworkVersion>v4.8</TargetFrameworkVersion>
+    <FileAlignment>512</FileAlignment>
+    <AutoGenerateBindingRedirects>true</AutoGenerateBindingRedirects>
+    <ApplicationIcon>icon.ico</ApplicationIcon>
+    <LangVersion>7.3</LangVersion>
+    <Prefer32Bit>false</Prefer32Bit>
+    <Nullable>disable</Nullable>
+    <PlatformTarget>AnyCPU</PlatformTarget>
+    <GenerateSerializationAssemblies>Off</GenerateSerializationAssemblies>
+  </PropertyGroup>
+
+  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|AnyCPU' ">
+    <OutputPath>bin\Debug\</OutputPath>
+    <DebugSymbols>true</DebugSymbols>
+    <DebugType>full</DebugType>
+    <Optimize>false</Optimize>
+  </PropertyGroup>
+
+  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Release|AnyCPU' ">
+    <OutputPath>bin\Release\</OutputPath>
+    <DebugType>none</DebugType>
+    <Optimize>true</Optimize>
+    <DefineConstants>TRACE</DefineConstants>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Reference Include="System" />
+    <Reference Include="System.Core" />
+    <Reference Include="System.Drawing" />
+    <Reference Include="System.Management" />
+    <Reference Include="System.Net.Http" />
+    <Reference Include="System.Security" />
+    <Reference Include="System.Windows.Forms" />
+    <Reference Include="System.Xml" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Include="Program.cs" />
+    <Compile Include="MainForm.cs" />
+    <Compile Include="Models.cs" />
+    <Compile Include="InstallerService.cs" />
+    <Compile Include="MachineIdService.cs" />
+    <Compile Include="CryptoService.cs" />
+    <Compile Include="TerminalDiscoveryService.cs" />
+    <Compile Include="UiHelpers.cs" />
+    <Compile Include="Properties\AssemblyInfo.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="icon.ico" />
+    <EmbeddedResource Include="Assets\Nutricula.ex4">
+      <LogicalName>NutriculaInstaller.Assets.Nutricula.ex4</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Assets\Nutricula.ex5">
+      <LogicalName>NutriculaInstaller.Assets.Nutricula.ex5</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Assets\Nutricula.ex4.sig">
+      <LogicalName>NutriculaInstaller.Assets.Nutricula.ex4.sig</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Assets\Nutricula.ex5.sig">
+      <LogicalName>NutriculaInstaller.Assets.Nutricula.ex5.sig</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Assets\MathUtils.dll">
+      <LogicalName>NutriculaInstaller.Assets.MathUtils.dll</LogicalName>
+    </EmbeddedResource>
+  </ItemGroup>
+  <Target Name="ValidateRequiredInstallerFiles" BeforeTargets="PrepareForBuild">
+    <Error Condition="!Exists('$(MSBuildProjectDirectory)\icon.ico')" Text="Required file missing: icon.ico (place it next to NutriculaInstaller.csproj)." />
+    <Error Condition="!Exists('$(MSBuildProjectDirectory)\Assets\Nutricula.ex4')" Text="Required file missing: Assets\Nutricula.ex4" />
+    <Error Condition="!Exists('$(MSBuildProjectDirectory)\Assets\Nutricula.ex5')" Text="Required file missing: Assets\Nutricula.ex5" />
+    <Error Condition="!Exists('$(MSBuildProjectDirectory)\Assets\Nutricula.ex4.sig')" Text="Required file missing: Assets\Nutricula.ex4.sig" />
+    <Error Condition="!Exists('$(MSBuildProjectDirectory)\Assets\Nutricula.ex5.sig')" Text="Required file missing: Assets\Nutricula.ex5.sig" />
+    <Error Condition="!Exists('$(MSBuildProjectDirectory)\Assets\MathUtils.dll')" Text="Required file missing: Assets\MathUtils.dll" />
+  </Target>
+
+</Project>
