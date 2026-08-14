@@ -1,0 +1,67 @@
+name: Build Nutricula Installer
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-2022
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Verify required files
+        shell: powershell
+        run: |
+          $required = @(
+            "icon.ico",
+            "Assets\Nutricula.ex4",
+            "Assets\Nutricula.ex5",
+            "Assets\Nutricula.ex4.sig",
+            "Assets\Nutricula.ex5.sig",
+            "Assets\MathUtils.dll",
+            "NutriculaInstaller.sln",
+            "NutriculaInstaller.csproj"
+          )
+
+          foreach ($file in $required) {
+            if (-not (Test-Path $file)) {
+              Write-Error "Required file not found: $file"
+              exit 1
+            }
+          }
+
+          Write-Host "All required files were found."
+
+      - name: Setup MSBuild
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Build project
+        shell: powershell
+        run: |
+          msbuild NutriculaInstaller.sln `
+            /restore `
+            /t:Rebuild `
+            /p:Configuration=Release `
+            /p:Platform="Any CPU"
+
+      - name: Verify EXE
+        shell: powershell
+        run: |
+          $exe = "bin\Release\NutriculaExpertInstaller.exe"
+
+          if (-not (Test-Path $exe)) {
+            Write-Error "Build completed but EXE was not found: $exe"
+            exit 1
+          }
+
+          Write-Host "EXE successfully created:"
+          Write-Host $exe
+
+      - name: Upload EXE
+        uses: actions/upload-artifact@v4
+        with:
+          name: NutriculaExpertInstaller
+          path: bin/Release/NutriculaExpertInstaller.exe
+          if-no-files-found: error
