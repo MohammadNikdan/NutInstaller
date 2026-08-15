@@ -10,7 +10,7 @@ namespace NutriculaInstaller
 {
     public sealed class MainForm : Form
     {
-        private int pageWidth; // fixed content width, computed once from the (now fixed-size) window
+        private const int PageWidth = 696; // ClientSize.Width (760) minus contentHost's left+right padding (32+32)
 
         private readonly InstallerService installer = new InstallerService();
         private readonly CancellationTokenSource cts = new CancellationTokenSource();
@@ -145,8 +145,6 @@ namespace NutriculaInstaller
             contentHost = new Panel { Dock = DockStyle.Fill, Padding = new Padding(32, 26, 32, 20), BackColor = UiHelpers.Background };
             Controls.Add(contentHost);
             contentHost.BringToFront();
-
-            pageWidth = Math.Max(240, ClientSize.Width - contentHost.Padding.Left - contentHost.Padding.Right);
 
             BuildFooter();
 
@@ -296,11 +294,11 @@ namespace NutriculaInstaller
             page.Controls.Add(sectionSubtitle);
 
             freeTile = new OptionTile(InstallMode.Free, "FREE", "Install Free Version", "Install the free Nutricula files without license activation.")
-            { Location = new Point(0, 62), Width = pageWidth, Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right };
+            { Location = new Point(0, 82), Width = PageWidth, Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right };
             premiumTile = new OptionTile(InstallMode.Premium, "PRO", "Install Premium Version", "Install Nutricula and activate a purchase license on this computer.")
-            { Location = new Point(0, 160), Width = pageWidth, Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right };
+            { Location = new Point(0, 202), Width = PageWidth, Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right };
             transferTile = new OptionTile(InstallMode.Transfer, "SWITCH", "Transfer License to This Computer", "Install Nutricula and move the existing license to this computer.")
-            { Location = new Point(0, 258), Width = pageWidth, Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right };
+            { Location = new Point(0, 322), Width = PageWidth, Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right };
 
             freeTile.Click += delegate { OnOptionTapped(InstallMode.Free); };
             premiumTile.Click += delegate { OnOptionTapped(InstallMode.Premium); };
@@ -329,7 +327,7 @@ namespace NutriculaInstaller
             credSubtitleLabel = new Label
             {
                 AutoSize = false,
-                Size = new Size(pageWidth, 34),
+                Size = new Size(PageWidth, 34),
                 Font = new Font("Segoe UI", 9f),
                 ForeColor = UiHelpers.TextMuted,
                 Location = new Point(0, 27),
@@ -337,7 +335,7 @@ namespace NutriculaInstaller
             };
             page.Controls.Add(credSubtitleLabel);
 
-            Panel card = new Panel { Location = new Point(0, 78), Size = new Size(pageWidth, 210), BackColor = UiHelpers.Background, Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right };
+            Panel card = new Panel { Location = new Point(0, 78), Size = new Size(PageWidth, 210), BackColor = UiHelpers.Background, Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right };
             card.Paint += delegate (object sender, PaintEventArgs e)
             {
                 e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
@@ -378,7 +376,7 @@ namespace NutriculaInstaller
 
             installButton = new MaterialButton("Install", UiHelpers.GlyphDownload, ButtonKind.Filled)
             {
-                Location = new Point(pageWidth - 170, 308),
+                Location = new Point(PageWidth - 170, 308),
                 Size = new Size(170, 46),
                 FillColor = UiHelpers.Success,
                 Anchor = AnchorStyles.Top | AnchorStyles.Right
@@ -429,13 +427,13 @@ namespace NutriculaInstaller
         {
             Panel page = new Panel { Dock = DockStyle.Fill, BackColor = UiHelpers.Background };
 
-            runningPanel = new Panel { Location = new Point(0, 110), Size = new Size(pageWidth, 120), BackColor = UiHelpers.Background, Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right };
+            runningPanel = new Panel { Location = new Point(0, 110), Size = new Size(PageWidth, 120), BackColor = UiHelpers.Background, Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right };
             page.Controls.Add(runningPanel);
 
             progressStatusLabel = new Label
             {
                 AutoSize = false,
-                Size = new Size(pageWidth, 26),
+                Size = new Size(PageWidth, 26),
                 Text = "Installing Nutricula...",
                 Font = new Font("Segoe UI Semibold", 11.5f),
                 ForeColor = UiHelpers.TextDark,
@@ -445,13 +443,13 @@ namespace NutriculaInstaller
             };
             runningPanel.Controls.Add(progressStatusLabel);
 
-            progressBar = new IndeterminateBar { Location = new Point(0, 42), Size = new Size(pageWidth, 8), Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right };
+            progressBar = new IndeterminateBar { Location = new Point(0, 42), Size = new Size(PageWidth, 8), Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right };
             runningPanel.Controls.Add(progressBar);
 
             subStatusLabel = new Label
             {
                 AutoSize = false,
-                Size = new Size(pageWidth, 40),
+                Size = new Size(PageWidth, 40),
                 Font = new Font("Segoe UI", 8.7f),
                 ForeColor = UiHelpers.TextMuted,
                 TextAlign = ContentAlignment.MiddleCenter,
@@ -460,19 +458,19 @@ namespace NutriculaInstaller
             };
             runningPanel.Controls.Add(subStatusLabel);
 
-            resultPanel = new Panel { Location = new Point(0, 90), Size = new Size(pageWidth, 220), BackColor = UiHelpers.Background, Visible = false, Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right };
+            resultPanel = new Panel { Location = new Point(0, 90), Size = new Size(PageWidth, 220), BackColor = UiHelpers.Background, Visible = false, Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right };
             page.Controls.Add(resultPanel);
             // Fixed-size children (badge, buttons) can't self-center via Anchor, so redo
             // their centering whenever this panel's width changes (including on window resize).
             resultPanel.Resize += delegate { LayoutResultButtons(lastResultSuccess); };
 
-            resultBadge = new ResultBadge { Location = new Point((pageWidth - 84) / 2, 0) };
+            resultBadge = new ResultBadge { Location = new Point((PageWidth - 84) / 2, 0) };
             resultPanel.Controls.Add(resultBadge);
 
             resultMessageLabel = new Label
             {
                 AutoSize = false,
-                Size = new Size(pageWidth, 56),
+                Size = new Size(PageWidth, 56),
                 Font = UiHelpers.UiFont(11f, FontStyle.Bold),
                 TextAlign = ContentAlignment.MiddleCenter,
                 Location = new Point(0, 100),
@@ -482,7 +480,7 @@ namespace NutriculaInstaller
 
             finishButton = new MaterialButton("Finish", UiHelpers.GlyphCheck, ButtonKind.Filled)
             {
-                Location = new Point((pageWidth - 180) / 2, 164),
+                Location = new Point((PageWidth - 180) / 2, 164),
                 Size = new Size(180, 46)
             };
             finishButton.Click += delegate { Close(); };
