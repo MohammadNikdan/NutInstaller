@@ -42,6 +42,7 @@ namespace NutriculaInstaller
         public const string GlyphMoveToFolder = "\uE8DE";
         public const string GlyphGlobe = "\uE774";
         public const string GlyphMessage = "\uE8BD";
+        public const string GlyphSendFill = "\uE725";
 
         public static Font IconFont(float size)
         {
@@ -107,6 +108,46 @@ namespace NutriculaInstaller
             }
         }
 
+        /// <summary>Draws a filled circular badge with short, bold, centered text (auto-shrinks to fit).</summary>
+        public static void DrawTextBadge(Graphics g, Rectangle rect, string text, Color bg, Color fg, float maxFontSize)
+        {
+            g.SmoothingMode = SmoothingMode.AntiAlias;
+            using (Brush b = new SolidBrush(bg))
+                g.FillEllipse(b, rect);
+            if (string.IsNullOrEmpty(text)) return;
+
+            float maxWidth = rect.Width * 0.72f;
+            float fontSize = maxFontSize;
+            Font chosenFont = null;
+            try
+            {
+                while (fontSize > 6f)
+                {
+                    using (Font candidate = new Font("Segoe UI Semibold", fontSize, FontStyle.Bold, GraphicsUnit.Point))
+                    {
+                        if (g.MeasureString(text, candidate).Width <= maxWidth)
+                        {
+                            chosenFont = new Font("Segoe UI Semibold", fontSize, FontStyle.Bold, GraphicsUnit.Point);
+                            break;
+                        }
+                    }
+                    fontSize -= 0.5f;
+                }
+                if (chosenFont == null)
+                    chosenFont = new Font("Segoe UI Semibold", 6f, FontStyle.Bold, GraphicsUnit.Point);
+
+                using (Brush fb = new SolidBrush(fg))
+                using (StringFormat sf = new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center })
+                {
+                    g.DrawString(text, chosenFont, fb, rect, sf);
+                }
+            }
+            finally
+            {
+                if (chosenFont != null) chosenFont.Dispose();
+            }
+        }
+
         /// <summary>Draws a filled circular badge with a centered icon-font glyph.</summary>
         public static void DrawGlyphBadge(Graphics g, Rectangle rect, string glyph, Color bg, Color fg, float glyphSize)
         {
@@ -130,16 +171,16 @@ namespace NutriculaInstaller
     internal sealed class OptionTile : Panel
     {
         public InstallMode Mode { get; private set; }
-        private readonly string glyph;
+        private readonly string badgeText;
         private readonly string title;
         private readonly string subtitle;
         private bool hovering;
         private bool pressed;
 
-        public OptionTile(InstallMode mode, string glyph, string title, string subtitle)
+        public OptionTile(InstallMode mode, string badgeText, string title, string subtitle)
         {
             Mode = mode;
-            this.glyph = glyph;
+            this.badgeText = badgeText;
             this.title = title;
             this.subtitle = subtitle;
 
@@ -174,9 +215,8 @@ namespace NutriculaInstaller
             UiHelpers.DrawRounded(g, rect, 14, cardFill, cardBorder);
 
             Rectangle badgeRect = new Rectangle(16, (Height - 52) / 2, 52, 52);
-            Color badgeBg = hovering ? UiHelpers.BrandColor : UiHelpers.BrandSoft;
-            Color badgeFg = hovering ? Color.White : UiHelpers.BrandColor;
-            UiHelpers.DrawGlyphBadge(g, badgeRect, glyph, badgeBg, badgeFg, 16f);
+            Color badgeBg = hovering ? UiHelpers.BrandLighter : UiHelpers.BrandColor;
+            UiHelpers.DrawTextBadge(g, badgeRect, badgeText, badgeBg, Color.White, 11f);
 
             int textX = badgeRect.Right + 18;
             int textWidth = Width - textX - 46;
