@@ -235,7 +235,7 @@ namespace NutriculaInstaller
             header.Controls.Add(webButton);
             headerToolTip.SetToolTip(webButton, "Visit our website");
 
-            HeaderIconButton chatButton = new HeaderIconButton(UiHelpers.GlyphMessage)
+            HeaderIconButton chatButton = new HeaderIconButton(UiHelpers.GlyphSendFill)
             {
                 Location = new Point(webButton.Left - 8 - 34, 40)
             };
@@ -286,11 +286,11 @@ namespace NutriculaInstaller
             };
             page.Controls.Add(sectionSubtitle);
 
-            freeTile = new OptionTile(InstallMode.Free, UiHelpers.GlyphPackage, "Install Free Version", "Install the free Nutricula files without license activation.")
+            freeTile = new OptionTile(InstallMode.Free, "FREE", "Install Free Version", "Install the free Nutricula files without license activation.")
             { Location = new Point(0, 62), Width = PageWidth };
-            premiumTile = new OptionTile(InstallMode.Premium, UiHelpers.GlyphShield, "Install Premium Version", "Install Nutricula and activate a purchase license on this computer.")
+            premiumTile = new OptionTile(InstallMode.Premium, "PRO", "Install Premium Version", "Install Nutricula and activate a purchase license on this computer.")
             { Location = new Point(0, 160), Width = PageWidth };
-            transferTile = new OptionTile(InstallMode.Transfer, UiHelpers.GlyphMoveToFolder, "Transfer License to This Computer", "Install Nutricula and move the existing license to this computer.")
+            transferTile = new OptionTile(InstallMode.Transfer, "MOVE", "Transfer License to This Computer", "Install Nutricula and move the existing license to this computer.")
             { Location = new Point(0, 258), Width = PageWidth };
 
             freeTile.Click += delegate { OnOptionTapped(InstallMode.Free); };
@@ -576,13 +576,22 @@ namespace NutriculaInstaller
 
         private void FadeTimer_Tick(object sender, EventArgs e)
         {
-            fadeAlpha -= 0.09f;
+            fadeAlpha -= 0.07f;
             if (fadeAlpha <= 0f)
             {
                 StopFadeTransition();
                 return;
             }
-            if (fadeOverlay != null) fadeOverlay.Invalidate();
+            if (fadeOverlay != null)
+            {
+                // Invalidate() alone only *schedules* a repaint - if ticks arrive
+                // faster than the OS processes WM_PAINT, several ticks can get
+                // coalesced into a single final paint (looks like a flash/jump
+                // instead of a fade). Update() forces this frame to actually be
+                // drawn right now, before the next tick is allowed to run.
+                fadeOverlay.Invalidate();
+                fadeOverlay.Update();
+            }
         }
 
         private void FadeOverlay_Paint(object sender, PaintEventArgs e)
@@ -725,7 +734,7 @@ namespace NutriculaInstaller
 
             if (success)
             {
-                resultSummaryLabel.Text = "MT4: " + mt4Count + "   |   MT5: " + mt5Count;
+                resultSummaryLabel.Text = "MT4: " + mt4Count + "  |  MT5: " + mt5Count + "  case(s) found.";
             }
 
             LayoutResultButtons(success);
