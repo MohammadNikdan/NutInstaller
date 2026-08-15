@@ -66,6 +66,14 @@ namespace NutriculaInstaller
 
         private static readonly Color Brand = UiHelpers.BrandColor;
 
+        private sealed class BufferedOverlayPanel : Panel
+        {
+            public BufferedOverlayPanel()
+            {
+                SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, true);
+            }
+        }
+
         public MainForm()
         {
             InitializeForm();
@@ -166,6 +174,8 @@ namespace NutriculaInstaller
             contentHost.Controls.Add(pageSelect);
         }
 
+        private readonly ToolTip headerToolTip = new ToolTip();
+
         private void BuildHeader()
         {
             Panel header = new Panel { Dock = DockStyle.Top, Height = 84, BackColor = Brand };
@@ -195,12 +205,43 @@ namespace NutriculaInstaller
             Label title = new Label
             {
                 AutoSize = true,
-                Text = "Expert Advisor Installer",
+                Text = "Expert Advisor",
                 Font = new Font("Segoe UI", 9.5f),
                 ForeColor = Color.FromArgb(206, 211, 228),
                 Location = new Point(81, 46)
             };
             header.Controls.Add(title);
+            // Center the subtitle under the (larger) brand title above it.
+            title.Location = new Point(brand.Left + (brand.Width - title.Width) / 2, 46);
+
+            // Right side of the header: a small credit line plus quick links to the
+            // website and Telegram support, so that space isn't left empty.
+            Label byLabel = new Label
+            {
+                AutoSize = true,
+                Text = "by Highflyers co.",
+                Font = new Font("Segoe UI", 8f, FontStyle.Italic),
+                ForeColor = Color.FromArgb(206, 211, 228),
+                BackColor = Color.Transparent
+            };
+            header.Controls.Add(byLabel);
+            byLabel.Location = new Point(ClientSize.Width - 20 - byLabel.Width, 16);
+
+            HeaderIconButton webButton = new HeaderIconButton(UiHelpers.GlyphGlobe)
+            {
+                Location = new Point(ClientSize.Width - 20 - 34, 40)
+            };
+            webButton.Click += delegate { OpenUrl("https://www.NutriculaExpert.com"); };
+            header.Controls.Add(webButton);
+            headerToolTip.SetToolTip(webButton, "Visit our website");
+
+            HeaderIconButton chatButton = new HeaderIconButton(UiHelpers.GlyphMessage)
+            {
+                Location = new Point(webButton.Left - 8 - 34, 40)
+            };
+            chatButton.Click += delegate { OpenUrl("https://t.me/nutriculaexpertsupport"); };
+            header.Controls.Add(chatButton);
+            headerToolTip.SetToolTip(chatButton, "Chat with support on Telegram");
         }
 
         private void BuildFooter()
@@ -245,11 +286,11 @@ namespace NutriculaInstaller
             };
             page.Controls.Add(sectionSubtitle);
 
-            freeTile = new OptionTile(InstallMode.Free, UiHelpers.GlyphDownload, "Install Free Version", "Install the free Nutricula files without license activation.")
+            freeTile = new OptionTile(InstallMode.Free, UiHelpers.GlyphPackage, "Install Free Version", "Install the free Nutricula files without license activation.")
             { Location = new Point(0, 62), Width = PageWidth };
-            premiumTile = new OptionTile(InstallMode.Premium, UiHelpers.GlyphStar, "Install Premium Version", "Install Nutricula and activate a purchase license on this computer.")
+            premiumTile = new OptionTile(InstallMode.Premium, UiHelpers.GlyphShield, "Install Premium Version", "Install Nutricula and activate a purchase license on this computer.")
             { Location = new Point(0, 160), Width = PageWidth };
-            transferTile = new OptionTile(InstallMode.Transfer, UiHelpers.GlyphSync, "Transfer License to This Computer", "Install Nutricula and move the existing license to this computer.")
+            transferTile = new OptionTile(InstallMode.Transfer, UiHelpers.GlyphMoveToFolder, "Transfer License to This Computer", "Install Nutricula and move the existing license to this computer.")
             { Location = new Point(0, 258), Width = PageWidth };
 
             freeTile.Click += delegate { OnOptionTapped(InstallMode.Free); };
@@ -298,12 +339,12 @@ namespace NutriculaInstaller
             };
             page.Controls.Add(card);
 
-            Label emailCaption = new Label { AutoSize = true, Text = "Email", Font = new Font("Segoe UI Semibold", 8.5f), ForeColor = UiHelpers.TextDark, Location = new Point(18, 16) };
+            Label emailCaption = new Label { AutoSize = true, Text = "Email", Font = new Font("Segoe UI Semibold", 8.5f), ForeColor = UiHelpers.TextDark, Location = new Point(18, 16), BackColor = Color.Transparent };
             card.Controls.Add(emailCaption);
             Panel emailWrap = BuildFieldWrap(UiHelpers.GlyphMail, new Point(18, 36), card.Width - 36, out emailBox);
             card.Controls.Add(emailWrap);
 
-            Label purchaseCaption = new Label { AutoSize = true, Text = "Purchase Key", Font = new Font("Segoe UI Semibold", 8.5f), ForeColor = UiHelpers.TextDark, Location = new Point(18, 96) };
+            Label purchaseCaption = new Label { AutoSize = true, Text = "Purchase Key", Font = new Font("Segoe UI Semibold", 8.5f), ForeColor = UiHelpers.TextDark, Location = new Point(18, 96), BackColor = Color.Transparent };
             card.Controls.Add(purchaseCaption);
             Panel purchaseWrap = BuildFieldWrap(UiHelpers.GlyphKey, new Point(18, 116), card.Width - 36, out purchaseKeyBox);
             card.Controls.Add(purchaseWrap);
@@ -315,7 +356,8 @@ namespace NutriculaInstaller
                 Text = "Required for Premium installation and license transfer.",
                 Font = new Font("Segoe UI", 8f),
                 ForeColor = UiHelpers.TextMuted,
-                Location = new Point(18, 172)
+                Location = new Point(18, 172),
+                BackColor = Color.Transparent
             };
             card.Controls.Add(helperLabel);
 
@@ -404,7 +446,7 @@ namespace NutriculaInstaller
             };
             runningPanel.Controls.Add(subStatusLabel);
 
-            resultPanel = new Panel { Location = new Point(left, 90), Size = new Size(480, 250), BackColor = UiHelpers.Background, Visible = false };
+            resultPanel = new Panel { Location = new Point(left, 90), Size = new Size(480, 220), BackColor = UiHelpers.Background, Visible = false };
             page.Controls.Add(resultPanel);
 
             resultBadge = new ResultBadge { Location = new Point((480 - 84) / 2, 0) };
@@ -436,17 +478,18 @@ namespace NutriculaInstaller
             tryAgainButton.Click += delegate { OnTryAgainTapped(); };
             resultPanel.Controls.Add(tryAgainButton);
 
+            // Small install summary, pinned to the very bottom of the window (a few px
+            // of breathing room above the edge) rather than crowding the result card.
             resultSummaryLabel = new Label
             {
-                AutoSize = false,
-                Size = new Size(480, 18),
-                Font = new Font("Segoe UI", 7.7f),
-                ForeColor = UiHelpers.TextDark,
+                Dock = DockStyle.Bottom,
+                Height = 20,
+                Font = new Font("Segoe UI", 7.2f),
+                ForeColor = Color.Black,
                 TextAlign = ContentAlignment.MiddleCenter,
-                Location = new Point(0, 216),
                 Visible = false
             };
-            resultPanel.Controls.Add(resultSummaryLabel);
+            page.Controls.Add(resultSummaryLabel);
 
             return page;
         }
@@ -458,10 +501,15 @@ namespace NutriculaInstaller
         {
             if (page == null || page == lastShownPage) return;
 
-            // Only animate when there is something on screen already to fade from
-            // (skip on the very first page shown from the constructor).
             bool animate = lastShownPage != null && lastShownPage.Visible;
-            Bitmap oldSnapshot = animate ? CaptureContentHost() : null;
+
+            if (animate)
+            {
+                // Freeze the current view under an opaque overlay BEFORE anything
+                // underneath changes, so the page switch itself is never visible.
+                Bitmap oldSnapshot = CaptureContentHost();
+                BeginFadeCover(oldSnapshot);
+            }
 
             pageSelect.Visible = page == pageSelect;
             pageCredentials.Visible = page == pageCredentials;
@@ -472,10 +520,17 @@ namespace NutriculaInstaller
 
             if (animate)
             {
+                // DrawToBitmap renders straight from each control's own paint logic;
+                // it doesn't require the control to be topmost or on-screen, so this
+                // capture happens invisibly behind the overlay set up above.
                 contentHost.PerformLayout();
-                page.Refresh();
                 Bitmap newSnapshot = CaptureContentHost();
-                StartFadeTransition(oldSnapshot, newSnapshot);
+
+                // page.BringToFront() just reordered contentHost's children, which
+                // pushed the overlay behind the new page - bring it back to the front
+                // before starting the crossfade.
+                fadeOverlay.BringToFront();
+                StartFadeTransition(newSnapshot);
             }
         }
 
@@ -489,20 +544,31 @@ namespace NutriculaInstaller
             return bmp;
         }
 
-        private void StartFadeTransition(Bitmap oldSnapshot, Bitmap newSnapshot)
+        private void BeginFadeCover(Bitmap oldSnapshot)
         {
             StopFadeTransition();
 
             fadeOldSnapshot = oldSnapshot;
-            fadeNewSnapshot = newSnapshot;
+            fadeNewSnapshot = null;
             fadeAlpha = 1f;
 
-            fadeOverlay = new Panel { Location = Point.Empty, Size = contentHost.Size, BackColor = UiHelpers.Background };
+            fadeOverlay = new BufferedOverlayPanel { Location = Point.Empty, Size = contentHost.Size, BackColor = UiHelpers.Background };
             fadeOverlay.Paint += FadeOverlay_Paint;
             contentHost.Controls.Add(fadeOverlay);
             fadeOverlay.BringToFront();
 
-            // Quick fade: a handful of 15ms steps, ~100-120ms total.
+            // Force this to actually paint right now, synchronously, before anything
+            // underneath is touched - this is what prevents any flash of the old->new
+            // page switch happening on the real screen.
+            fadeOverlay.Refresh();
+        }
+
+        private void StartFadeTransition(Bitmap newSnapshot)
+        {
+            fadeNewSnapshot = newSnapshot;
+            fadeAlpha = 1f;
+
+            // Quick fade: a handful of steps at a smooth interval, ~150-180ms total.
             fadeTimer = new System.Windows.Forms.Timer { Interval = 15 };
             fadeTimer.Tick += FadeTimer_Tick;
             fadeTimer.Start();
@@ -510,7 +576,7 @@ namespace NutriculaInstaller
 
         private void FadeTimer_Tick(object sender, EventArgs e)
         {
-            fadeAlpha -= 0.16f;
+            fadeAlpha -= 0.09f;
             if (fadeAlpha <= 0f)
             {
                 StopFadeTransition();
@@ -659,7 +725,7 @@ namespace NutriculaInstaller
 
             if (success)
             {
-                resultSummaryLabel.Text = "Nutricula was installed on " + mt4Count + " MetaTrader 4 and " + mt5Count + " MetaTrader 5 terminal(s).";
+                resultSummaryLabel.Text = "MT4: " + mt4Count + "   |   MT5: " + mt5Count;
             }
 
             LayoutResultButtons(success);
