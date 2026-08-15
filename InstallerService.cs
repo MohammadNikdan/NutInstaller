@@ -40,7 +40,11 @@ namespace NutriculaInstaller
             Action<string> log)
         {
             InstallResult result = new InstallResult();
-            List<TerminalInfo> terminals = DiscoverTerminals(log);
+            // DiscoverTerminals performs a synchronous disk/registry scan. Running it
+            // directly here would block the calling (UI) thread until it finishes.
+            // Task.Run moves that scan to a background thread; nothing about what it
+            // does or what it returns changes.
+            List<TerminalInfo> terminals = await Task.Run(() => DiscoverTerminals(log)).ConfigureAwait(true);
 
             if (terminals.Count == 0)
             {
