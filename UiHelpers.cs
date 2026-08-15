@@ -267,6 +267,55 @@ namespace NutriculaInstaller
                 g.DrawString(glyph, f, fb, rect, sf);
             }
         }
+
+        /// <summary>A simple right-pointing play triangle, its bounding box exactly centered in `circle`.</summary>
+        public static void DrawPlayGlyph(Graphics g, RectangleF circle, Color color)
+        {
+            g.SmoothingMode = SmoothingMode.AntiAlias;
+            float cx = circle.X + circle.Width / 2f;
+            float cy = circle.Y + circle.Height / 2f;
+            float r = circle.Width * 0.24f;
+            PointF[] triangle =
+            {
+                new PointF(cx - r, cy - r),
+                new PointF(cx - r, cy + r),
+                new PointF(cx + r, cy)
+            };
+            using (Brush b = new SolidBrush(color))
+                g.FillPolygon(b, triangle);
+        }
+
+        /// <summary>A simple shopping-bag silhouette (symmetric body + top handle arc), centered in `circle`.</summary>
+        public static void DrawShoppingBagGlyph(Graphics g, RectangleF circle, Color color)
+        {
+            g.SmoothingMode = SmoothingMode.AntiAlias;
+            float cx = circle.X + circle.Width / 2f;
+            float cy = circle.Y + circle.Height / 2f;
+            float s = circle.Width * 0.30f;
+
+            float bodyTop = cy - s * 0.10f;
+            float bodyBottom = cy + s * 0.75f;
+            float topHalfWidth = s * 0.55f;
+            float bottomHalfWidth = s * 0.85f;
+
+            PointF[] body =
+            {
+                new PointF(cx - topHalfWidth, bodyTop),
+                new PointF(cx + topHalfWidth, bodyTop),
+                new PointF(cx + bottomHalfWidth, bodyBottom),
+                new PointF(cx - bottomHalfWidth, bodyBottom)
+            };
+            using (Brush b = new SolidBrush(color))
+                g.FillPolygon(b, body);
+
+            float handleWidth = topHalfWidth * 1.3f;
+            float handleHeight = s * 0.85f;
+            RectangleF handleRect = new RectangleF(cx - handleWidth / 2f, bodyTop - handleHeight * 0.65f, handleWidth, handleHeight);
+            using (Pen p = new Pen(color, Math.Max(1.5f, circle.Width * 0.07f)))
+            {
+                g.DrawArc(p, handleRect, 180f, 180f);
+            }
+        }
     }
 
     // ======================================================================
@@ -366,6 +415,13 @@ namespace NutriculaInstaller
         public Color FillColor { get; set; }
         public Color TextColor { get; set; }
         public bool UseCircularIcon { get; set; }
+        /// <summary>
+        /// When set (and UseCircularIcon is true), this draws the icon instead of IconGlyph.
+        /// Segoe MDL2 Assets glyphs each carry their own inconsistent internal padding, so
+        /// StringFormat centering only centers the character's bounding box, not necessarily
+        /// how the shape visually reads - drawing the icon ourselves guarantees true centering.
+        /// </summary>
+        public Action<Graphics, RectangleF, Color> CustomIconDrawer { get; set; }
 
         private bool hovering;
         private bool pressed;
@@ -473,11 +529,19 @@ namespace NutriculaInstaller
                             RectangleF circleRect = new RectangleF(startX, centerY - circleDiameter / 2f, circleDiameter, circleDiameter);
                             using (Brush cb = new SolidBrush(UiHelpers.BrandColor))
                                 g.FillEllipse(cb, circleRect);
-                            using (Font smallIconFont = UiHelpers.IconFont(circleDiameter * 0.42f))
-                            using (StringFormat sf = new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center })
-                            using (Brush whiteBrush = new SolidBrush(Color.White))
+
+                            if (CustomIconDrawer != null)
                             {
-                                g.DrawString(IconGlyph, smallIconFont, whiteBrush, circleRect, sf);
+                                CustomIconDrawer(g, circleRect, Color.White);
+                            }
+                            else
+                            {
+                                using (Font smallIconFont = UiHelpers.IconFont(circleDiameter * 0.42f))
+                                using (StringFormat sf = new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center })
+                                using (Brush whiteBrush = new SolidBrush(Color.White))
+                                {
+                                    g.DrawString(IconGlyph, smallIconFont, whiteBrush, circleRect, sf);
+                                }
                             }
                         }
                         else
@@ -513,7 +577,7 @@ namespace NutriculaInstaller
             timer = new Timer { Interval = 16 };
             timer.Tick += delegate
             {
-                phase += 0.06f;
+                phase += 0.02f;
                 // Loop back to "segment already visible at the left edge" instead of a
                 // fully off-screen negative phase - that off-screen pre-roll was what
                 // produced a visible pause before any motion appeared, and it was
