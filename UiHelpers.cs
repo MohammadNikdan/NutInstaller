@@ -176,6 +176,8 @@ namespace NutriculaInstaller
         private readonly string subtitle;
         private bool hovering;
         private bool pressed;
+        private Rectangle? homeBounds;
+        private const int GrowPx = 4; // grows 4px per side (8px total) - stays clear of the 14px gap between tiles
 
         public OptionTile(InstallMode mode, string badgeText, string title, string subtitle)
         {
@@ -189,8 +191,23 @@ namespace NutriculaInstaller
             BackColor = UiHelpers.Background;
             SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, true);
 
-            MouseEnter += delegate { hovering = true; Invalidate(); };
-            MouseLeave += delegate { hovering = false; pressed = false; Invalidate(); };
+            MouseEnter += delegate
+            {
+                hovering = true;
+                // Location/Width are only set by the caller right after construction,
+                // so the "home" size is captured lazily on first hover instead.
+                if (homeBounds == null) homeBounds = Bounds;
+                Bounds = Rectangle.Inflate(homeBounds.Value, GrowPx, GrowPx);
+                BringToFront();
+                Invalidate();
+            };
+            MouseLeave += delegate
+            {
+                hovering = false;
+                pressed = false;
+                if (homeBounds != null) Bounds = homeBounds.Value;
+                Invalidate();
+            };
             MouseDown += delegate { pressed = true; Invalidate(); };
             MouseUp += delegate { pressed = false; Invalidate(); };
         }
@@ -214,9 +231,10 @@ namespace NutriculaInstaller
             Rectangle rect = new Rectangle(0, 0, Width - 1, Height - 1);
             UiHelpers.DrawRounded(g, rect, 14, cardFill, cardBorder);
 
-            Rectangle badgeRect = new Rectangle(16, (Height - 52) / 2, 52, 52);
+            int badgeSize = hovering ? 58 : 52;
+            Rectangle badgeRect = new Rectangle(16 - (hovering ? 3 : 0), (Height - badgeSize) / 2, badgeSize, badgeSize);
             Color badgeBg = hovering ? UiHelpers.BrandLighter : UiHelpers.BrandColor;
-            UiHelpers.DrawTextBadge(g, badgeRect, badgeText, badgeBg, Color.White, 11f);
+            UiHelpers.DrawTextBadge(g, badgeRect, badgeText, badgeBg, Color.White, hovering ? 12f : 11f);
 
             int textX = badgeRect.Right + 18;
             int textWidth = Width - textX - 46;
