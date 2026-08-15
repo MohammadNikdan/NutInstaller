@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Drawing2D;
+using System.Drawing.Imaging;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
@@ -44,7 +45,9 @@ namespace NutriculaInstaller
         private Label subStatusLabel;
         private ResultBadge resultBadge;
         private Label resultMessageLabel;
+        private Label resultSummaryLabel;
         private MaterialButton finishButton;
+        private MaterialButton tryAgainButton;
 
         // Footer links
         private MaterialButton guideButton;
@@ -52,6 +55,14 @@ namespace NutriculaInstaller
 
         private bool running;
         private InstallMode selectedMode = InstallMode.Free;
+
+        // Page fade-transition state
+        private Panel lastShownPage;
+        private Timer fadeTimer;
+        private Panel fadeOverlay;
+        private Bitmap fadeOldSnapshot;
+        private Bitmap fadeNewSnapshot;
+        private float fadeAlpha;
 
         private static readonly Color Brand = UiHelpers.BrandColor;
 
@@ -69,6 +80,7 @@ namespace NutriculaInstaller
 
         protected override void OnFormClosed(FormClosedEventArgs e)
         {
+            StopFadeTransition();
             cts.Cancel();
             cts.Dispose();
             base.OnFormClosed(e);
@@ -78,8 +90,8 @@ namespace NutriculaInstaller
         {
             Text = "Nutricula Expert Advisor Installer";
             StartPosition = FormStartPosition.CenterScreen;
-            ClientSize = new Size(760, 640);
-            MinimumSize = new Size(760, 640);
+            ClientSize = new Size(760, 580);
+            MinimumSize = new Size(760, 580);
             BackColor = UiHelpers.Background;
             Font = new Font("Segoe UI", 9f);
             FormBorderStyle = FormBorderStyle.FixedSingle;
@@ -88,15 +100,48 @@ namespace NutriculaInstaller
             Icon = TryLoadIcon();
         }
 
+        private static Icon cachedAppIcon;
+
         private Icon TryLoadIcon()
         {
+            if (cachedAppIcon != null)
+                return cachedAppIcon;
+
+            // Primary: extract the icon that is already embedded in this executable
+            // (set via <ApplicationIcon>icon.ico</ApplicationIcon> in the .csproj).
+            // This works no matter what the process's current working directory is,
+            // unlike a relative File.Exists("icon.ico") check.
             try
             {
-                if (System.IO.File.Exists("icon.ico"))
-                    return new Icon("icon.ico");
+                Icon extracted = Icon.ExtractAssociatedIcon(Application.ExecutablePath);
+                if (extracted != null)
+                {
+                    cachedAppIcon = extracted;
+                    return cachedAppIcon;
+                }
             }
             catch { }
-            return SystemIcons.Application;
+
+            // Fallback: an icon.ico file sitting next to the executable.
+            try
+            {
+                string besideExe = System.IO.Path.Combine(
+                    System.IO.Path.GetDirectoryName(Application.ExecutablePath) ?? string.Empty, "icon.ico");
+                if (System.IO.File.Exists(besideExe))
+                {
+                    cachedAppIcon = new Icon(besideExe);
+                    return cachedAppIcon;
+                }
+                if (System.IO.File.Exists("icon.ico"))
+                {
+                    cachedAppIcon = new Icon("icon.ico");
+                    return cachedAppIcon;
+                }
+            }
+            catch { }
+
+            cachedAppIcon = SystemIcons.Application;
+            return cachedAppIcon;
         }
 
         // =====================================================================
@@ -204,7 +249,7 @@ namespace NutriculaInstaller
             { Location = new Point(0, 62), Width = PageWidth };
             premiumTile = new OptionTile(InstallMode.Premium, UiHelpers.GlyphStar, "Install Premium Version", "Install Nutricula and activate a purchase license on this computer.")
             { Location = new Point(0, 160), Width = PageWidth };
-            transferTile = new OptionTile(InstallMode.Transfer, UiHelpers.GlyphSync, "Transfer License to Another Computer", "Install Nutricula and move the existing license to this computer.")
+            transferTile = new OptionTile(InstallMode.Transfer, UiHelpers.GlyphSync, "Transfer License to This Computer", "Install Nutricula and move the existing license to this computer.")
             { Location = new Point(0, 258), Width = PageWidth };
 
             freeTile.Click += delegate { OnOptionTapped(InstallMode.Free); };
@@ -241,10 +286,14 @@ namespace NutriculaInstaller
             };
             page.Controls.Add(credSubtitleLabel);
 
-            Panel card = new Panel { Location = new Point(0, 78), Size = new Size(PageWidth, 210), BackColor = UiHelpers.Surface };
+            Panel card = new Panel { Location = new Point(0, 78), Size = new Size(PageWidth, 210), BackColor = UiHelpers.Background };
             card.Paint += delegate (object sender, PaintEventArgs e)
             {
                 e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+                // Paint the page background first so the corners outside the rounded
+                // shape blend with the page instead of showing a square white patch.
+                using (Brush pageBrush = new SolidBrush(UiHelpers.Background))
+                    e.Graphics.FillRectangle(pageBrush, card.ClientRectangle);
                 UiHelpers.DrawRounded(e.Graphics, new Rectangle(0, 0, card.Width - 1, card.Height - 1), 14, UiHelpers.Surface, UiHelpers.Border);
             };
             page.Controls.Add(card);
@@ -303,7 +352,8 @@ namespace NutriculaInstaller
                 Font = UiHelpers.IconFont(11f),
                 ForeColor = UiHelpers.TextMuted,
                 TextAlign = ContentAlignment.MiddleCenter,
-                Location = new Point(10, 0)
+                Location = new Point(10, 0),
+                BackColor = Color.Transparent
             };
             wrap.Controls.Add(icon);
 
@@ -354,7 +404,7 @@ namespace NutriculaInstaller
             };
             runningPanel.Controls.Add(subStatusLabel);
 
-            resultPanel = new Panel { Location = new Point(left, 90), Size = new Size(480, 220), BackColor = UiHelpers.Background, Visible = false };
+            resultPanel = new Panel { Location = new Point(left, 90), Size = new Size(480, 250), BackColor = UiHelpers.Background, Visible = false };
             page.Controls.Add(resultPanel);
 
             resultBadge = new ResultBadge { Location = new Point((480 - 84) / 2, 0) };
@@ -378,6 +428,26 @@ namespace NutriculaInstaller
             finishButton.Click += delegate { Close(); };
             resultPanel.Controls.Add(finishButton);
 
+            tryAgainButton = new MaterialButton("Try Again", UiHelpers.GlyphSync, ButtonKind.Outline)
+            {
+                Size = new Size(170, 46),
+                Visible = false
+            };
+            tryAgainButton.Click += delegate { OnTryAgainTapped(); };
+            resultPanel.Controls.Add(tryAgainButton);
+
+            resultSummaryLabel = new Label
+            {
+                AutoSize = false,
+                Size = new Size(480, 18),
+                Font = new Font("Segoe UI", 7.7f),
+                ForeColor = UiHelpers.TextDark,
+                TextAlign = ContentAlignment.MiddleCenter,
+                Location = new Point(0, 216),
+                Visible = false
+            };
+            resultPanel.Controls.Add(resultSummaryLabel);
+
             return page;
         }
 
@@ -386,11 +456,114 @@ namespace NutriculaInstaller
         // =====================================================================
         private void ShowPage(Panel page)
         {
+            if (page == null || page == lastShownPage) return;
+
+            // Only animate when there is something on screen already to fade from
+            // (skip on the very first page shown from the constructor).
+            bool animate = lastShownPage != null && lastShownPage.Visible;
+            Bitmap oldSnapshot = animate ? CaptureContentHost() : null;
+
             pageSelect.Visible = page == pageSelect;
             pageCredentials.Visible = page == pageCredentials;
             pageProgress.Visible = page == pageProgress;
-            if (page != null) page.BringToFront();
+            page.BringToFront();
             footer.Visible = page != pageProgress;
+            lastShownPage = page;
+
+            if (animate)
+            {
+                contentHost.PerformLayout();
+                page.Refresh();
+                Bitmap newSnapshot = CaptureContentHost();
+                StartFadeTransition(oldSnapshot, newSnapshot);
+            }
+        }
+
+        // =====================================================================
+        // Quick fade transition between pages
+        // =====================================================================
+        private Bitmap CaptureContentHost()
+        {
+            Bitmap bmp = new Bitmap(Math.Max(1, contentHost.Width), Math.Max(1, contentHost.Height));
+            contentHost.DrawToBitmap(bmp, new Rectangle(Point.Empty, contentHost.Size));
+            return bmp;
+        }
+
+        private void StartFadeTransition(Bitmap oldSnapshot, Bitmap newSnapshot)
+        {
+            StopFadeTransition();
+
+            fadeOldSnapshot = oldSnapshot;
+            fadeNewSnapshot = newSnapshot;
+            fadeAlpha = 1f;
+
+            fadeOverlay = new Panel { Location = Point.Empty, Size = contentHost.Size, BackColor = UiHelpers.Background };
+            fadeOverlay.Paint += FadeOverlay_Paint;
+            contentHost.Controls.Add(fadeOverlay);
+            fadeOverlay.BringToFront();
+
+            // Quick fade: a handful of 15ms steps, ~100-120ms total.
+            fadeTimer = new Timer { Interval = 15 };
+            fadeTimer.Tick += FadeTimer_Tick;
+            fadeTimer.Start();
+        }
+
+        private void FadeTimer_Tick(object sender, EventArgs e)
+        {
+            fadeAlpha -= 0.16f;
+            if (fadeAlpha <= 0f)
+            {
+                StopFadeTransition();
+                return;
+            }
+            if (fadeOverlay != null) fadeOverlay.Invalidate();
+        }
+
+        private void FadeOverlay_Paint(object sender, PaintEventArgs e)
+        {
+            if (fadeNewSnapshot != null)
+                e.Graphics.DrawImageUnscaled(fadeNewSnapshot, Point.Empty);
+            if (fadeOldSnapshot != null && fadeAlpha > 0f)
+                DrawWithAlpha(e.Graphics, fadeOldSnapshot, fadeAlpha);
+        }
+
+        private static void DrawWithAlpha(Graphics g, Image img, float alpha)
+        {
+            alpha = Math.Max(0f, Math.Min(1f, alpha));
+            ColorMatrix matrix = new ColorMatrix { Matrix33 = alpha };
+            using (ImageAttributes attributes = new ImageAttributes())
+            {
+                attributes.SetColorMatrix(matrix, ColorMatrixFlag.Default, ColorAdjustType.Bitmap);
+                g.DrawImage(img, new Rectangle(0, 0, img.Width, img.Height), 0, 0, img.Width, img.Height, GraphicsUnit.Pixel, attributes);
+            }
+        }
+
+        private void StopFadeTransition()
+        {
+            if (fadeTimer != null)
+            {
+                fadeTimer.Stop();
+                fadeTimer.Tick -= FadeTimer_Tick;
+                fadeTimer.Dispose();
+                fadeTimer = null;
+            }
+            if (fadeOverlay != null)
+            {
+                fadeOverlay.Paint -= FadeOverlay_Paint;
+                contentHost.Controls.Remove(fadeOverlay);
+                fadeOverlay.Dispose();
+                fadeOverlay = null;
+            }
+            if (fadeOldSnapshot != null)
+            {
+                fadeOldSnapshot.Dispose();
+                fadeOldSnapshot = null;
+            }
+            if (fadeNewSnapshot != null)
+            {
+                fadeNewSnapshot.Dispose();
+                fadeNewSnapshot = null;
+            }
         }
 
         private void OnOptionTapped(InstallMode mode)
@@ -437,7 +610,10 @@ namespace NutriculaInstaller
             runningPanel.Visible = true;
             resultPanel.Visible = false;
             progressStatusLabel.Text = "Installing Nutricula...";
-            subStatusLabel.Text = "Detecting MetaTrader terminals...";
+            // No status/log line is shown while installing - just the fixed title and the
+            // indeterminate progress bar below it.
+            subStatusLabel.Text = string.Empty;
+            subStatusLabel.Visible = false;
             progressBar.StartAnimating();
             _ = RunInstallAsync();
         }
@@ -449,14 +625,9 @@ namespace NutriculaInstaller
             try
             {
                 // Run terminal discovery on a background thread so the window
-                // never freezes while the disk/registry are being scanned.
-                List<TerminalInfo> discovered = await Task.Run(() => installer.DiscoverTerminals(AppendLog)).ConfigureAwait(true);
-                subStatusLabel.Text = discovered.Count + " MetaTrader terminal(s) found.";
-
-                var progress = new Progress<ProgressUpdate>(p =>
-                {
-                    subStatusLabel.Text = "Installing files... " + p.Percent + "%";
-                });
+                // never freezes while the disk/registry are being scanned. No status
+                // text is surfaced from this - the caller only needs the final result.
+                var progress = new Progress<ProgressUpdate>(delegate { });
 
                 InstallResult result = await installer.RunAsync(
                     selectedMode,
@@ -466,11 +637,11 @@ namespace NutriculaInstaller
                     progress,
                     AppendLog);
 
-                ShowResult(result.OverallSuccess, result.FinalMessage);
+                ShowResult(result.OverallSuccess, result.FinalMessage, result.Mt4Count, result.Mt5Count);
             }
             catch (Exception ex)
             {
-                ShowResult(false, "The installation could not be completed: " + ex.Message);
+                ShowResult(false, "The installation could not be completed: " + ex.Message, 0, 0);
             }
             finally
             {
@@ -478,14 +649,69 @@ namespace NutriculaInstaller
             }
         }
 
-        private void ShowResult(bool success, string message)
+        private void ShowResult(bool success, string message, int mt4Count, int mt5Count)
         {
             progressBar.StopAnimating();
             runningPanel.Visible = false;
             resultBadge.SetSuccess(success);
             resultMessageLabel.ForeColor = success ? UiHelpers.Success : UiHelpers.Error;
             resultMessageLabel.Text = message;
+
+            if (success)
+            {
+                resultSummaryLabel.Text = "Nutricula was installed on " + mt4Count + " MetaTrader 4 and " + mt5Count + " MetaTrader 5 terminal(s).";
+            }
+
+            LayoutResultButtons(success);
             resultPanel.Visible = true;
+        }
+
+        private void LayoutResultButtons(bool success)
+        {
+            const int buttonY = 164;
+            if (success)
+            {
+                tryAgainButton.Visible = false;
+                resultSummaryLabel.Visible = true;
+
+                finishButton.Text2 = "Finish";
+                finishButton.Size = new Size(180, 46);
+                finishButton.Location = new Point((480 - finishButton.Width) / 2, buttonY);
+            }
+            else
+            {
+                resultSummaryLabel.Visible = false;
+
+                finishButton.Text2 = "Close";
+                finishButton.Size = new Size(170, 46);
+                tryAgainButton.Size = new Size(170, 46);
+
+                const int gap = 14;
+                int totalWidth = tryAgainButton.Width + gap + finishButton.Width;
+                int startX = (480 - totalWidth) / 2;
+
+                tryAgainButton.Location = new Point(startX, buttonY);
+                finishButton.Location = new Point(startX + tryAgainButton.Width + gap, buttonY);
+                tryAgainButton.Visible = true;
+            }
+        }
+
+        private void OnTryAgainTapped()
+        {
+            if (running) return;
+
+            if (selectedMode == InstallMode.Free)
+            {
+                // Same window, same flow: the progress indicator starts moving again
+                // and the install is simply re-attempted from scratch.
+                StartInstall();
+            }
+            else
+            {
+                // Go back to the credentials page without clearing anything the user
+                // already typed, so they can retry as-is or fix a mistake first.
+                ShowPage(pageCredentials);
+            }
         }
 
         private bool ValidateCredentials(string email, string key, out string error)
@@ -517,18 +743,9 @@ namespace NutriculaInstaller
 
         private void AppendLog(string message)
         {
-            if (IsDisposed)
-                return;
-            if (InvokeRequired)
-            {
-                BeginInvoke(new Action<string>(AppendLog), message);
-                return;
-            }
-
-            // The scrollable log panel was removed for a cleaner UI; the latest
-            // status line is still surfaced under the progress indicator.
-            if (subStatusLabel != null && running)
-                subStatusLabel.Text = message;
+            // Intentionally a no-op: no log or status text is shown during installation.
+            // The installer/discovery services still call this delegate internally, so
+            // it is kept as a harmless sink rather than removing the parameter everywhere.
         }
 
         private void OpenUrl(string url)
