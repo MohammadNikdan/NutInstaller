@@ -46,6 +46,9 @@ namespace NutriculaInstaller
             // does or what it returns changes.
             List<TerminalInfo> terminals = await Task.Run(() => DiscoverTerminals(log)).ConfigureAwait(true);
 
+            result.Mt4Count = terminals.Count(t => t.Type == TerminalType.MT4);
+            result.Mt5Count = terminals.Count(t => t.Type == TerminalType.MT5);
+
             if (terminals.Count == 0)
             {
                 result.Errors.Add("No MetaTrader 4 or MetaTrader 5 terminal was found on this computer.");
