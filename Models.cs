@@ -48,6 +48,8 @@ namespace NutriculaInstaller
         public bool OverallSuccess { get; set; }
         public string ServerResponse { get; set; }
         public string FinalMessage { get; set; }
+        public int Mt4Count { get; set; }
+        public int Mt5Count { get; set; }
         public List<string> Errors { get; } = new List<string>();
     }
 }
