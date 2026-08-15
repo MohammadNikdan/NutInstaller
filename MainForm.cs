@@ -10,7 +10,7 @@ namespace NutriculaInstaller
 {
     public sealed class MainForm : Form
     {
-        private const int PageWidth = 696;
+        private int pageWidth; // live content width, recalculated to match the actual (resizable) window
 
         private readonly InstallerService installer = new InstallerService();
         private readonly CancellationTokenSource cts = new CancellationTokenSource();
@@ -53,6 +53,7 @@ namespace NutriculaInstaller
         private MaterialButton buyButton;
 
         private bool running;
+        private bool lastResultSuccess;
         private InstallMode selectedMode = InstallMode.Free;
 
         private static readonly Color Brand = UiHelpers.BrandColor;
@@ -80,12 +81,12 @@ namespace NutriculaInstaller
         {
             Text = "Nutricula Expert Advisor Installer";
             StartPosition = FormStartPosition.CenterScreen;
-            ClientSize = new Size(760, 580);
-            MinimumSize = new Size(760, 580);
+            ClientSize = new Size(500, 580);
+            MinimumSize = new Size(430, 480);
             BackColor = UiHelpers.Background;
             Font = new Font("Segoe UI", 9f);
-            FormBorderStyle = FormBorderStyle.FixedSingle;
-            MaximizeBox = false;
+            FormBorderStyle = FormBorderStyle.Sizable;
+            MaximizeBox = true;
             DoubleBuffered = true;
             Icon = TryLoadIcon();
         }
@@ -144,6 +145,8 @@ namespace NutriculaInstaller
             contentHost = new Panel { Dock = DockStyle.Fill, Padding = new Padding(32, 26, 32, 20), BackColor = UiHelpers.Background };
             Controls.Add(contentHost);
             contentHost.BringToFront();
+
+            pageWidth = Math.Max(240, contentHost.ClientSize.Width - contentHost.Padding.Left - contentHost.Padding.Right);
 
             BuildFooter();
 
@@ -204,7 +207,8 @@ namespace NutriculaInstaller
                 Text = "by Highflyers co.",
                 Font = new Font("Segoe UI", 8f, FontStyle.Italic),
                 ForeColor = Color.FromArgb(206, 211, 228),
-                BackColor = Color.Transparent
+                BackColor = Color.Transparent,
+                Anchor = AnchorStyles.Top | AnchorStyles.Right
             };
             header.Controls.Add(byLabel);
             byLabel.Location = new Point(ClientSize.Width - 20 - byLabel.Width, 16);
@@ -223,8 +227,8 @@ namespace NutriculaInstaller
                 int chatLeft = rowLeft + (int)Math.Round(gap);
                 int webLeft = chatLeft + buttonSize + (int)Math.Round(gap);
 
-                chatButton = new HeaderIconButton(UiHelpers.GlyphSendFill) { Location = new Point(chatLeft, 40) };
-                webButton = new HeaderIconButton(UiHelpers.GlyphGlobe) { Location = new Point(webLeft, 40) };
+                chatButton = new HeaderIconButton(UiHelpers.GlyphSendFill) { Location = new Point(chatLeft, 40), Anchor = AnchorStyles.Top | AnchorStyles.Right };
+                webButton = new HeaderIconButton(UiHelpers.GlyphGlobe) { Location = new Point(webLeft, 40), Anchor = AnchorStyles.Top | AnchorStyles.Right };
             }
 
             chatButton.Click += delegate { OpenUrl("https://t.me/nutriculaexpertsupport"); };
@@ -245,11 +249,22 @@ namespace NutriculaInstaller
             Panel divider = new Panel { Dock = DockStyle.Top, Height = 1, BackColor = UiHelpers.Border };
             footer.Controls.Add(divider);
 
-            guideButton = new MaterialButton("Installation Guide", null, ButtonKind.Text) { Location = new Point(28, 14), Size = new Size(160, 40) };
+            guideButton = new MaterialButton("Installation Guide", UiHelpers.GlyphPlay, ButtonKind.Text)
+            {
+                Location = new Point(28, 14),
+                Size = new Size(190, 40),
+                UseCircularIcon = true
+            };
             guideButton.Click += delegate { OpenUrl("https://www.youtube.com/"); };
             footer.Controls.Add(guideButton);
 
-            buyButton = new MaterialButton("Buy Premium License", null, ButtonKind.Text) { Location = new Point(196, 14), Size = new Size(180, 40), TextColor = Color.FromArgb(131, 87, 25) };
+            buyButton = new MaterialButton("Buy Premium License", UiHelpers.GlyphShoppingCart, ButtonKind.Text)
+            {
+                Location = new Point(226, 14),
+                Size = new Size(215, 40),
+                UseCircularIcon = true,
+                TextColor = UiHelpers.BrandColor
+            };
             buyButton.Click += delegate { OpenUrl("https://www.google.com/"); };
             footer.Controls.Add(buyButton);
         }
@@ -279,11 +294,11 @@ namespace NutriculaInstaller
             page.Controls.Add(sectionSubtitle);
 
             freeTile = new OptionTile(InstallMode.Free, "FREE", "Install Free Version", "Install the free Nutricula files without license activation.")
-            { Location = new Point(0, 62), Width = PageWidth };
+            { Location = new Point(0, 62), Width = pageWidth, Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right };
             premiumTile = new OptionTile(InstallMode.Premium, "PRO", "Install Premium Version", "Install Nutricula and activate a purchase license on this computer.")
-            { Location = new Point(0, 160), Width = PageWidth };
+            { Location = new Point(0, 160), Width = pageWidth, Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right };
             transferTile = new OptionTile(InstallMode.Transfer, "SWITCH", "Transfer License to This Computer", "Install Nutricula and move the existing license to this computer.")
-            { Location = new Point(0, 258), Width = PageWidth };
+            { Location = new Point(0, 258), Width = pageWidth, Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right };
 
             freeTile.Click += delegate { OnOptionTapped(InstallMode.Free); };
             premiumTile.Click += delegate { OnOptionTapped(InstallMode.Premium); };
@@ -312,14 +327,15 @@ namespace NutriculaInstaller
             credSubtitleLabel = new Label
             {
                 AutoSize = false,
-                Size = new Size(PageWidth, 34),
+                Size = new Size(pageWidth, 34),
                 Font = new Font("Segoe UI", 9f),
                 ForeColor = UiHelpers.TextMuted,
-                Location = new Point(0, 27)
+                Location = new Point(0, 27),
+                Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right
             };
             page.Controls.Add(credSubtitleLabel);
 
-            Panel card = new Panel { Location = new Point(0, 78), Size = new Size(PageWidth, 210), BackColor = UiHelpers.Background };
+            Panel card = new Panel { Location = new Point(0, 78), Size = new Size(pageWidth, 210), BackColor = UiHelpers.Background, Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right };
             card.Paint += delegate (object sender, PaintEventArgs e)
             {
                 e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
@@ -331,12 +347,12 @@ namespace NutriculaInstaller
             };
             page.Controls.Add(card);
 
-            Label emailCaption = new Label { AutoSize = true, Text = "Email", Font = UiHelpers.UiFont(8.5f, FontStyle.Bold), ForeColor = UiHelpers.TextDark, Location = new Point(18, 16), BackColor = Color.Transparent };
+            Label emailCaption = new Label { AutoSize = true, Text = "Email", Font = UiHelpers.UiFont(9.5f, FontStyle.Bold), ForeColor = UiHelpers.TextDark, Location = new Point(18, 16), BackColor = Color.Transparent };
             card.Controls.Add(emailCaption);
             Panel emailWrap = BuildFieldWrap(UiHelpers.GlyphMail, new Point(18, 36), card.Width - 36, out emailBox);
             card.Controls.Add(emailWrap);
 
-            Label purchaseCaption = new Label { AutoSize = true, Text = "Purchase Key", Font = UiHelpers.UiFont(8.5f, FontStyle.Bold), ForeColor = UiHelpers.TextDark, Location = new Point(18, 96), BackColor = Color.Transparent };
+            Label purchaseCaption = new Label { AutoSize = true, Text = "Purchase Key", Font = UiHelpers.UiFont(9.5f, FontStyle.Bold), ForeColor = UiHelpers.TextDark, Location = new Point(18, 96), BackColor = Color.Transparent };
             card.Controls.Add(purchaseCaption);
             Panel purchaseWrap = BuildFieldWrap(UiHelpers.GlyphKey, new Point(18, 116), card.Width - 36, out purchaseKeyBox);
             card.Controls.Add(purchaseWrap);
@@ -346,10 +362,11 @@ namespace NutriculaInstaller
                 AutoSize = false,
                 Size = new Size(card.Width - 36, 30),
                 Text = "Required for Premium installation and license transfer.",
-                Font = UiHelpers.UiFont(8f),
+                Font = UiHelpers.UiFont(9f),
                 ForeColor = UiHelpers.TextMuted,
                 Location = new Point(18, 172),
-                BackColor = Color.Transparent
+                BackColor = Color.Transparent,
+                Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right
             };
             card.Controls.Add(helperLabel);
 
@@ -359,9 +376,10 @@ namespace NutriculaInstaller
 
             installButton = new MaterialButton("Install", UiHelpers.GlyphCheck, ButtonKind.Filled)
             {
-                Location = new Point(PageWidth - 170, 308),
+                Location = new Point(pageWidth - 170, 308),
                 Size = new Size(170, 46),
-                FillColor = UiHelpers.Success
+                FillColor = UiHelpers.Success,
+                Anchor = AnchorStyles.Top | AnchorStyles.Right
             };
             installButton.Click += async delegate { await OnInstallTappedAsync(); };
             page.Controls.Add(installButton);
@@ -371,7 +389,7 @@ namespace NutriculaInstaller
 
         private Panel BuildFieldWrap(string glyph, Point location, int width, out TextBox textBox)
         {
-            Panel wrap = new Panel { Location = location, Size = new Size(width, 46), BackColor = UiHelpers.Surface };
+            Panel wrap = new Panel { Location = location, Size = new Size(width, 46), BackColor = UiHelpers.Surface, Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right };
             wrap.Paint += delegate (object sender, PaintEventArgs e)
             {
                 e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
@@ -397,7 +415,8 @@ namespace NutriculaInstaller
                 Font = UiHelpers.UiFont(10f),
                 Location = new Point(44, 14),
                 Width = width - 58,
-                BackColor = UiHelpers.Surface
+                BackColor = UiHelpers.Surface,
+                Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right
             };
             wrap.Controls.Add(box);
             textBox = box;
@@ -407,56 +426,61 @@ namespace NutriculaInstaller
         private Panel BuildProgressPage()
         {
             Panel page = new Panel { Dock = DockStyle.Fill, BackColor = UiHelpers.Background };
-            int left = (PageWidth - 480) / 2;
 
-            runningPanel = new Panel { Location = new Point(left, 110), Size = new Size(480, 120), BackColor = UiHelpers.Background };
+            runningPanel = new Panel { Location = new Point(0, 110), Size = new Size(pageWidth, 120), BackColor = UiHelpers.Background, Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right };
             page.Controls.Add(runningPanel);
 
             progressStatusLabel = new Label
             {
                 AutoSize = false,
-                Size = new Size(480, 26),
+                Size = new Size(pageWidth, 26),
                 Text = "Installing Nutricula...",
                 Font = new Font("Segoe UI Semibold", 11.5f),
                 ForeColor = UiHelpers.TextDark,
                 TextAlign = ContentAlignment.MiddleCenter,
-                Location = new Point(0, 0)
+                Location = new Point(0, 0),
+                Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right
             };
             runningPanel.Controls.Add(progressStatusLabel);
 
-            progressBar = new IndeterminateBar { Location = new Point(0, 42), Size = new Size(480, 8) };
+            progressBar = new IndeterminateBar { Location = new Point(0, 42), Size = new Size(pageWidth, 8), Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right };
             runningPanel.Controls.Add(progressBar);
 
             subStatusLabel = new Label
             {
                 AutoSize = false,
-                Size = new Size(480, 40),
+                Size = new Size(pageWidth, 40),
                 Font = new Font("Segoe UI", 8.7f),
                 ForeColor = UiHelpers.TextMuted,
                 TextAlign = ContentAlignment.MiddleCenter,
-                Location = new Point(0, 62)
+                Location = new Point(0, 62),
+                Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right
             };
             runningPanel.Controls.Add(subStatusLabel);
 
-            resultPanel = new Panel { Location = new Point(left, 90), Size = new Size(480, 220), BackColor = UiHelpers.Background, Visible = false };
+            resultPanel = new Panel { Location = new Point(0, 90), Size = new Size(pageWidth, 220), BackColor = UiHelpers.Background, Visible = false, Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right };
             page.Controls.Add(resultPanel);
+            // Fixed-size children (badge, buttons) can't self-center via Anchor, so redo
+            // their centering whenever this panel's width changes (including on window resize).
+            resultPanel.Resize += delegate { LayoutResultButtons(lastResultSuccess); };
 
-            resultBadge = new ResultBadge { Location = new Point((480 - 84) / 2, 0) };
+            resultBadge = new ResultBadge { Location = new Point((pageWidth - 84) / 2, 0) };
             resultPanel.Controls.Add(resultBadge);
 
             resultMessageLabel = new Label
             {
                 AutoSize = false,
-                Size = new Size(480, 56),
+                Size = new Size(pageWidth, 56),
                 Font = UiHelpers.UiFont(11f, FontStyle.Bold),
                 TextAlign = ContentAlignment.MiddleCenter,
-                Location = new Point(0, 100)
+                Location = new Point(0, 100),
+                Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right
             };
             resultPanel.Controls.Add(resultMessageLabel);
 
             finishButton = new MaterialButton("Finish", UiHelpers.GlyphCheck, ButtonKind.Filled)
             {
-                Location = new Point((480 - 180) / 2, 164),
+                Location = new Point((pageWidth - 180) / 2, 164),
                 Size = new Size(180, 46)
             };
             finishButton.Click += delegate { Close(); };
@@ -595,25 +619,33 @@ namespace NutriculaInstaller
                 resultSummaryLabel.Text = "MT4: " + mt4Count + "  |  MT5: " + mt5Count + "  case(s) found.";
             }
 
+            lastResultSuccess = success;
             LayoutResultButtons(success);
             resultPanel.Visible = true;
         }
 
         private void LayoutResultButtons(bool success)
         {
+            if (resultPanel == null || finishButton == null || tryAgainButton == null) return;
+
+            int w = resultPanel.Width;
+
+            if (resultBadge != null)
+                resultBadge.Left = (w - resultBadge.Width) / 2;
+
             const int buttonY = 164;
             if (success)
             {
                 tryAgainButton.Visible = false;
-                resultSummaryLabel.Visible = true;
+                if (resultSummaryLabel != null) resultSummaryLabel.Visible = true;
 
                 finishButton.Text2 = "Finish";
                 finishButton.Size = new Size(180, 46);
-                finishButton.Location = new Point((480 - finishButton.Width) / 2, buttonY);
+                finishButton.Location = new Point((w - finishButton.Width) / 2, buttonY);
             }
             else
             {
-                resultSummaryLabel.Visible = false;
+                if (resultSummaryLabel != null) resultSummaryLabel.Visible = false;
 
                 finishButton.Text2 = "Close";
                 finishButton.Size = new Size(170, 46);
@@ -621,7 +653,7 @@ namespace NutriculaInstaller
 
                 const int gap = 14;
                 int totalWidth = tryAgainButton.Width + gap + finishButton.Width;
-                int startX = (480 - totalWidth) / 2;
+                int startX = (w - totalWidth) / 2;
 
                 tryAgainButton.Location = new Point(startX, buttonY);
                 finishButton.Location = new Point(startX + tryAgainButton.Width + gap, buttonY);
