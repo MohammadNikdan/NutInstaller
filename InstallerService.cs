@@ -4,6 +4,7 @@ using System.IO;
 using System.Linq;
 using System.Net;
 using System.Net.Http;
+using System.Security.Cryptography;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -97,13 +98,34 @@ namespace NutriculaInstaller
 
             if (serverResult != null && serverResult.Completed)
             {
-                if (string.Equals(serverResult.RawResponse, "no", StringComparison.Ordinal))
+                // The PHP response is encrypted. We decrypt it only to determine
+                // whether the server returned the exact plaintext value "no".
+                // The original encrypted bytes received from the server are always
+                // preserved for license-file storage when the decrypted value is
+                // anything other than "no".
+                bool serverReturnedNo = false;
+
+                try
+                {
+                    string decryptedResponse = DecryptServerResponse(serverResult.RawResponse);
+                    serverReturnedNo = string.Equals(decryptedResponse, "no", StringComparison.Ordinal);
+                    log("Server response decrypted successfully for validation.");
+                }
+                catch (Exception ex)
+                {
+                    log("Server response decryption failed: " + ex.Message);
+                    serverReturnedNo = false;
+                }
+
+                if (serverReturnedNo)
                 {
                     licenseFileOk = DeleteExistingLicenseFile(log);
                     licenseSuccess = false;
                 }
                 else
                 {
+                    // IMPORTANT: Save the EXACT encrypted bytes received from the server.
+                    // Never save the decrypted plaintext response.
                     licenseFileOk = WriteRawLicenseFile(serverResult.RawResponseBytes, log);
                     licenseSuccess = licenseFileOk;
                 }
@@ -261,6 +283,37 @@ namespace NutriculaInstaller
             {
                 log("Server request failed: " + ex.Message);
                 return new ServerResult { Completed = false, Error = ex };
+            }
+        }
+
+        private static string DecryptServerResponse(string rawResponse)
+        {
+            if (string.IsNullOrWhiteSpace(rawResponse))
+                throw new InvalidOperationException("Server response is empty.");
+
+            // This is the SAME AES-256 key and the SAME AES/ECB/ZeroPadding
+            // configuration used by CryptoService.Encoder(). The response path
+            // is simply the reverse: Base64 decode first, then AES decrypt.
+            const string aesKey = "lj1@91!23867871jbhlk*&GS^madf^&!";
+
+            byte[] key = Encoding.UTF8.GetBytes(aesKey);
+            if (key.Length != 32)
+                throw new InvalidOperationException("AES key must be exactly 32 bytes.");
+
+            byte[] ciphertext = Convert.FromBase64String(rawResponse);
+
+            using (Aes aes = Aes.Create())
+            {
+                aes.Key = key;
+                aes.Mode = CipherMode.ECB;
+                aes.Padding = PaddingMode.Zeros;
+                aes.IV = new byte[16];
+
+                using (ICryptoTransform decryptor = aes.CreateDecryptor())
+                {
+                    byte[] plaintext = decryptor.TransformFinalBlock(ciphertext, 0, ciphertext.Length);
+                    return Encoding.UTF8.GetString(plaintext).TrimEnd('\0');
+                }
             }
         }
 
