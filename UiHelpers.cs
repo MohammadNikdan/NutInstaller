@@ -140,7 +140,7 @@ namespace NutriculaInstaller
 
             Height = 84;
             Cursor = Cursors.Hand;
-            BackColor = UiHelpers.Surface;
+            BackColor = UiHelpers.Background;
             SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, true);
 
             MouseEnter += delegate { hovering = true; Invalidate(); };
@@ -157,6 +157,13 @@ namespace NutriculaInstaller
 
             Color cardFill = pressed ? Color.FromArgb(247, 248, 251) : (hovering ? Color.FromArgb(250, 251, 253) : UiHelpers.Surface);
             Color cardBorder = hovering ? UiHelpers.BrandColor : UiHelpers.Border;
+
+            // Paint the surrounding page background first. Without this, the control's own
+            // opaque rectangular BackColor is left showing at the four corners outside the
+            // rounded path (a "square white corner" behind the rounded card).
+            Color pageBg = Parent != null ? Parent.BackColor : UiHelpers.Background;
+            using (Brush pageBrush = new SolidBrush(pageBg))
+                g.FillRectangle(pageBrush, ClientRectangle);
 
             Rectangle rect = new Rectangle(0, 0, Width - 1, Height - 1);
             UiHelpers.DrawRounded(g, rect, 14, cardFill, cardBorder);
