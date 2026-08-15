@@ -37,6 +37,11 @@ namespace NutriculaInstaller
         public const string GlyphChevronRight = "\uE76C";
         public const string GlyphCheck = "\uE73E";
         public const string GlyphCancel = "\uE711";
+        public const string GlyphPackage = "\uE7B8";
+        public const string GlyphShield = "\uEA18";
+        public const string GlyphMoveToFolder = "\uE8DE";
+        public const string GlyphGlobe = "\uE774";
+        public const string GlyphMessage = "\uE8BD";
 
         public static Font IconFont(float size)
         {
@@ -283,9 +288,9 @@ namespace NutriculaInstaller
 
             using (Font iconFont = UiHelpers.IconFont(10.5f))
             {
-                SizeF textSize = g.MeasureString(Text2, Font);
+                SizeF textSize = string.IsNullOrEmpty(Text2) ? SizeF.Empty : g.MeasureString(Text2, Font);
                 SizeF iconSize = string.IsNullOrEmpty(IconGlyph) ? SizeF.Empty : g.MeasureString(IconGlyph, iconFont);
-                float gap = string.IsNullOrEmpty(IconGlyph) ? 0f : 8f;
+                float gap = (string.IsNullOrEmpty(IconGlyph) || string.IsNullOrEmpty(Text2)) ? 0f : 8f;
                 float totalWidth = iconSize.Width + gap + textSize.Width;
                 float startX = (Width - totalWidth) / 2f;
                 float centerY = Height / 2f;
@@ -404,6 +409,56 @@ namespace NutriculaInstaller
                 g.FillEllipse(b, outer);
             Rectangle inner = Rectangle.Inflate(outer, -14, -14);
             UiHelpers.DrawGlyphBadge(g, inner, glyph, badgeColor, Color.White, 24f);
+        }
+    }
+
+    // ======================================================================
+    // Small icon-only button designed for the dark brand-colored header
+    // (website / support links). A plain MaterialButton's hover colors are
+    // tuned for light backgrounds, so this uses a lighter-navy hover circle
+    // instead of a near-white one.
+    // ======================================================================
+    internal sealed class HeaderIconButton : Panel
+    {
+        private readonly string glyph;
+        private bool hovering;
+        private bool pressed;
+
+        public HeaderIconButton(string glyph)
+        {
+            this.glyph = glyph;
+            Size = new Size(34, 34);
+            Cursor = Cursors.Hand;
+            SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, true);
+
+            MouseEnter += delegate { hovering = true; Invalidate(); };
+            MouseLeave += delegate { hovering = false; pressed = false; Invalidate(); };
+            MouseDown += delegate { pressed = true; Invalidate(); };
+            MouseUp += delegate { pressed = false; Invalidate(); };
+        }
+
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            Graphics g = e.Graphics;
+            g.SmoothingMode = SmoothingMode.AntiAlias;
+
+            Color pageBg = Parent != null ? Parent.BackColor : UiHelpers.BrandColor;
+            using (Brush pageBrush = new SolidBrush(pageBg))
+                g.FillRectangle(pageBrush, ClientRectangle);
+
+            if (pressed || hovering)
+            {
+                Color circleColor = pressed ? UiHelpers.Darken(UiHelpers.BrandLighter, 0.12f) : UiHelpers.BrandLighter;
+                using (Brush cb = new SolidBrush(circleColor))
+                    g.FillEllipse(cb, new Rectangle(0, 0, Width - 1, Height - 1));
+            }
+
+            using (Font f = UiHelpers.IconFont(12f))
+            using (Brush fb = new SolidBrush(Color.White))
+            using (StringFormat sf = new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center })
+            {
+                g.DrawString(glyph, f, fb, new RectangleF(0, 0, Width, Height), sf);
+            }
         }
     }
 }
