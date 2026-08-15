@@ -79,10 +79,17 @@ namespace NutriculaInstaller
 
         private void InitializeForm()
         {
+            // Must be set before anything else. This codebase positions every control with
+            // hardcoded literal pixel values; without this, WinForms' default Font-based
+            // auto-scaling silently rescales all of them at runtime based on the system's
+            // font/DPI settings, which is what was causing controls to overflow past the
+            // window edge regardless of the actual pixel math in this file.
+            AutoScaleMode = AutoScaleMode.None;
+
             Text = "Nutricula Expert Advisor Installer";
             StartPosition = FormStartPosition.CenterScreen;
-            ClientSize = new Size(760, 640);
-            MinimumSize = new Size(760, 640);
+            ClientSize = new Size(760, 580);
+            MinimumSize = new Size(760, 580);
             BackColor = UiHelpers.Background;
             Font = new Font("Segoe UI", 9f);
             FormBorderStyle = FormBorderStyle.FixedSingle;
@@ -294,11 +301,11 @@ namespace NutriculaInstaller
             page.Controls.Add(sectionSubtitle);
 
             freeTile = new OptionTile(InstallMode.Free, "FREE", "Install Free Version", "Install the free Nutricula files without license activation.")
-            { Location = new Point(0, 82), Width = PageWidth, Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right };
+            { Location = new Point(0, 62), Width = PageWidth, Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right };
             premiumTile = new OptionTile(InstallMode.Premium, "PRO", "Install Premium Version", "Install Nutricula and activate a purchase license on this computer.")
-            { Location = new Point(0, 202), Width = PageWidth, Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right };
+            { Location = new Point(0, 160), Width = PageWidth, Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right };
             transferTile = new OptionTile(InstallMode.Transfer, "SWITCH", "Transfer License to This Computer", "Install Nutricula and move the existing license to this computer.")
-            { Location = new Point(0, 322), Width = PageWidth, Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right };
+            { Location = new Point(0, 258), Width = PageWidth, Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right };
 
             freeTile.Click += delegate { OnOptionTapped(InstallMode.Free); };
             premiumTile.Click += delegate { OnOptionTapped(InstallMode.Premium); };
