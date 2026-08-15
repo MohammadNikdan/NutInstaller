@@ -58,6 +58,9 @@
 
   <ItemGroup>
     <None Include="icon.ico" />
+    <EmbeddedResource Include="Fonts\Outfit-Regular.ttf">
+      <LogicalName>NutriculaInstaller.Fonts.Outfit-Regular.ttf</LogicalName>
+    </EmbeddedResource>
     <EmbeddedResource Include="Assets\Nutricula.ex4">
       <LogicalName>NutriculaInstaller.Assets.Nutricula.ex4</LogicalName>
     </EmbeddedResource>
@@ -76,6 +79,7 @@
   </ItemGroup>
   <Target Name="ValidateRequiredInstallerFiles" BeforeTargets="PrepareForBuild">
     <Error Condition="!Exists('$(MSBuildProjectDirectory)\icon.ico')" Text="Required file missing: icon.ico (place it next to NutriculaInstaller.csproj)." />
+    <Error Condition="!Exists('$(MSBuildProjectDirectory)\Fonts\Outfit-Regular.ttf')" Text="Required file missing: Fonts\Outfit-Regular.ttf" />
     <Error Condition="!Exists('$(MSBuildProjectDirectory)\Assets\Nutricula.ex4')" Text="Required file missing: Assets\Nutricula.ex4" />
     <Error Condition="!Exists('$(MSBuildProjectDirectory)\Assets\Nutricula.ex5')" Text="Required file missing: Assets\Nutricula.ex5" />
     <Error Condition="!Exists('$(MSBuildProjectDirectory)\Assets\Nutricula.ex4.sig')" Text="Required file missing: Assets\Nutricula.ex4.sig" />
