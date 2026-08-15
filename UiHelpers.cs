@@ -272,9 +272,11 @@ namespace NutriculaInstaller
         public static void DrawPlayGlyph(Graphics g, RectangleF circle, Color color)
         {
             g.SmoothingMode = SmoothingMode.AntiAlias;
-            float cx = circle.X + circle.Width / 2f;
+            // Nudged right for optical centering: a geometrically-centered play triangle
+            // reads as left-heavy since its visual mass sits toward the flat left edge.
+            float cx = circle.X + circle.Width / 2f + circle.Width * 0.05f;
             float cy = circle.Y + circle.Height / 2f;
-            float r = circle.Width * 0.24f;
+            float r = circle.Width * 0.17f;
             PointF[] triangle =
             {
                 new PointF(cx - r, cy - r),
@@ -289,8 +291,8 @@ namespace NutriculaInstaller
         public static void DrawShoppingBagGlyph(Graphics g, RectangleF circle, Color color)
         {
             g.SmoothingMode = SmoothingMode.AntiAlias;
-            float cx = circle.X + circle.Width / 2f;
-            float cy = circle.Y + circle.Height / 2f;
+            float cx = circle.X + circle.Width / 2f - circle.Width * 0.04f;
+            float cy = circle.Y + circle.Height / 2f - circle.Height * 0.08f;
             float s = circle.Width * 0.30f;
 
             float bodyTop = cy - s * 0.10f;
