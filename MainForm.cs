@@ -282,7 +282,7 @@ namespace NutriculaInstaller
             Label sectionTitle = new Label
             {
                 AutoSize = true,
-                Text = "Choose an installation option",
+                Text = "Choose an installation option:",
                 Font = new Font("Segoe UI Semibold", 13f),
                 ForeColor = UiHelpers.TextDark,
                 Location = new Point(0, 0)
@@ -291,8 +291,9 @@ namespace NutriculaInstaller
 
             Label sectionSubtitle = new Label
             {
-                AutoSize = true,
-                Text = "Tap an option to continue",
+                AutoSize = false,
+                Size = new Size(PageWidth, 30),
+                Text = "Nutricula will be automatically installed on every MetaTrader 4 and 5 version found on this computer.",
                 Font = new Font("Segoe UI", 9f),
                 ForeColor = UiHelpers.TextMuted,
                 Location = new Point(0, 27)
@@ -444,7 +445,7 @@ namespace NutriculaInstaller
             };
             runningPanel.Controls.Add(progressStatusLabel);
 
-            progressBar = new IndeterminateBar { Location = new Point(0, 42), Size = new Size(PageWidth, 8) };
+            progressBar = new IndeterminateBar { Location = new Point(0, 50), Size = new Size(PageWidth, 8) };
             runningPanel.Controls.Add(progressBar);
 
             subStatusLabel = new Label
