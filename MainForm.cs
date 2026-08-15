@@ -58,7 +58,7 @@ namespace NutriculaInstaller
 
         // Page fade-transition state
         private Panel lastShownPage;
-        private Timer fadeTimer;
+        private System.Windows.Forms.Timer fadeTimer;
         private Panel fadeOverlay;
         private Bitmap fadeOldSnapshot;
         private Bitmap fadeNewSnapshot;
@@ -503,7 +503,7 @@ namespace NutriculaInstaller
             fadeOverlay.BringToFront();
 
             // Quick fade: a handful of 15ms steps, ~100-120ms total.
-            fadeTimer = new Timer { Interval = 15 };
+            fadeTimer = new System.Windows.Forms.Timer { Interval = 15 };
             fadeTimer.Tick += FadeTimer_Tick;
             fadeTimer.Start();
         }
