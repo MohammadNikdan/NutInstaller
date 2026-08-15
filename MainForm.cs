@@ -2,7 +2,6 @@ using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Drawing2D;
-using System.Drawing.Imaging;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
@@ -56,23 +55,7 @@ namespace NutriculaInstaller
         private bool running;
         private InstallMode selectedMode = InstallMode.Free;
 
-        // Page fade-transition state
-        private Panel lastShownPage;
-        private System.Windows.Forms.Timer fadeTimer;
-        private Panel fadeOverlay;
-        private Bitmap fadeOldSnapshot;
-        private Bitmap fadeNewSnapshot;
-        private float fadeAlpha;
-
         private static readonly Color Brand = UiHelpers.BrandColor;
-
-        private sealed class BufferedOverlayPanel : Panel
-        {
-            public BufferedOverlayPanel()
-            {
-                SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, true);
-            }
-        }
 
         public MainForm()
         {
@@ -88,7 +71,6 @@ namespace NutriculaInstaller
 
         protected override void OnFormClosed(FormClosedEventArgs e)
         {
-            StopFadeTransition();
             cts.Cancel();
             cts.Dispose();
             base.OnFormClosed(e);
@@ -227,21 +209,31 @@ namespace NutriculaInstaller
             header.Controls.Add(byLabel);
             byLabel.Location = new Point(ClientSize.Width - 20 - byLabel.Width, 16);
 
-            HeaderIconButton webButton = new HeaderIconButton(UiHelpers.GlyphGlobe)
+            HeaderIconButton webButton;
+            HeaderIconButton chatButton;
             {
-                Location = new Point(ClientSize.Width - 20 - 34, 40)
-            };
-            webButton.Click += delegate { OpenUrl("https://www.NutriculaExpert.com"); };
-            header.Controls.Add(webButton);
-            headerToolTip.SetToolTip(webButton, "Visit our website");
+                // Center the two buttons as a group directly under the label above them,
+                // with equal spacing before, between, and after (space-evenly), rather
+                // than right-aligning them against the header edge.
+                const int buttonSize = 34;
+                float gap = (byLabel.Width - buttonSize * 2) / 3f;
+                if (gap < 4f) gap = 4f;
 
-            HeaderIconButton chatButton = new HeaderIconButton(UiHelpers.GlyphSendFill)
-            {
-                Location = new Point(webButton.Left - 8 - 34, 40)
-            };
+                int rowLeft = byLabel.Left;
+                int chatLeft = rowLeft + (int)Math.Round(gap);
+                int webLeft = chatLeft + buttonSize + (int)Math.Round(gap);
+
+                chatButton = new HeaderIconButton(UiHelpers.GlyphSendFill) { Location = new Point(chatLeft, 40) };
+                webButton = new HeaderIconButton(UiHelpers.GlyphGlobe) { Location = new Point(webLeft, 40) };
+            }
+
             chatButton.Click += delegate { OpenUrl("https://t.me/nutriculaexpertsupport"); };
             header.Controls.Add(chatButton);
             headerToolTip.SetToolTip(chatButton, "Chat with support on Telegram");
+
+            webButton.Click += delegate { OpenUrl("https://www.NutriculaExpert.com"); };
+            header.Controls.Add(webButton);
+            headerToolTip.SetToolTip(webButton, "Visit our website");
         }
 
         private void BuildFooter()
@@ -499,146 +491,12 @@ namespace NutriculaInstaller
         // =====================================================================
         private void ShowPage(Panel page)
         {
-            if (page == null || page == lastShownPage) return;
-
-            bool animate = lastShownPage != null && lastShownPage.Visible;
-
-            if (animate)
-            {
-                // Freeze the current view under an opaque overlay BEFORE anything
-                // underneath changes, so the page switch itself is never visible.
-                Bitmap oldSnapshot = CaptureContentHost();
-                BeginFadeCover(oldSnapshot);
-            }
-
+            if (page == null) return;
             pageSelect.Visible = page == pageSelect;
             pageCredentials.Visible = page == pageCredentials;
             pageProgress.Visible = page == pageProgress;
             page.BringToFront();
             footer.Visible = page != pageProgress;
-            lastShownPage = page;
-
-            if (animate)
-            {
-                // DrawToBitmap renders straight from each control's own paint logic;
-                // it doesn't require the control to be topmost or on-screen, so this
-                // capture happens invisibly behind the overlay set up above.
-                contentHost.PerformLayout();
-                Bitmap newSnapshot = CaptureContentHost();
-
-                // page.BringToFront() just reordered contentHost's children, which
-                // pushed the overlay behind the new page - bring it back to the front
-                // before starting the crossfade.
-                fadeOverlay.BringToFront();
-                StartFadeTransition(newSnapshot);
-            }
-        }
-
-        // =====================================================================
-        // Quick fade transition between pages
-        // =====================================================================
-        private Bitmap CaptureContentHost()
-        {
-            Bitmap bmp = new Bitmap(Math.Max(1, contentHost.Width), Math.Max(1, contentHost.Height));
-            contentHost.DrawToBitmap(bmp, new Rectangle(Point.Empty, contentHost.Size));
-            return bmp;
-        }
-
-        private void BeginFadeCover(Bitmap oldSnapshot)
-        {
-            StopFadeTransition();
-
-            fadeOldSnapshot = oldSnapshot;
-            fadeNewSnapshot = null;
-            fadeAlpha = 1f;
-
-            fadeOverlay = new BufferedOverlayPanel { Location = Point.Empty, Size = contentHost.Size, BackColor = UiHelpers.Background };
-            fadeOverlay.Paint += FadeOverlay_Paint;
-            contentHost.Controls.Add(fadeOverlay);
-            fadeOverlay.BringToFront();
-
-            // Force this to actually paint right now, synchronously, before anything
-            // underneath is touched - this is what prevents any flash of the old->new
-            // page switch happening on the real screen.
-            fadeOverlay.Refresh();
-        }
-
-        private void StartFadeTransition(Bitmap newSnapshot)
-        {
-            fadeNewSnapshot = newSnapshot;
-            fadeAlpha = 1f;
-
-            // Quick fade: a handful of steps at a smooth interval, ~150-180ms total.
-            fadeTimer = new System.Windows.Forms.Timer { Interval = 15 };
-            fadeTimer.Tick += FadeTimer_Tick;
-            fadeTimer.Start();
-        }
-
-        private void FadeTimer_Tick(object sender, EventArgs e)
-        {
-            fadeAlpha -= 0.07f;
-            if (fadeAlpha <= 0f)
-            {
-                StopFadeTransition();
-                return;
-            }
-            if (fadeOverlay != null)
-            {
-                // Invalidate() alone only *schedules* a repaint - if ticks arrive
-                // faster than the OS processes WM_PAINT, several ticks can get
-                // coalesced into a single final paint (looks like a flash/jump
-                // instead of a fade). Update() forces this frame to actually be
-                // drawn right now, before the next tick is allowed to run.
-                fadeOverlay.Invalidate();
-                fadeOverlay.Update();
-            }
-        }
-
-        private void FadeOverlay_Paint(object sender, PaintEventArgs e)
-        {
-            if (fadeNewSnapshot != null)
-                e.Graphics.DrawImageUnscaled(fadeNewSnapshot, Point.Empty);
-            if (fadeOldSnapshot != null && fadeAlpha > 0f)
-                DrawWithAlpha(e.Graphics, fadeOldSnapshot, fadeAlpha);
-        }
-
-        private static void DrawWithAlpha(Graphics g, Image img, float alpha)
-        {
-            alpha = Math.Max(0f, Math.Min(1f, alpha));
-            ColorMatrix matrix = new ColorMatrix { Matrix33 = alpha };
-            using (ImageAttributes attributes = new ImageAttributes())
-            {
-                attributes.SetColorMatrix(matrix, ColorMatrixFlag.Default, ColorAdjustType.Bitmap);
-                g.DrawImage(img, new Rectangle(0, 0, img.Width, img.Height), 0, 0, img.Width, img.Height, GraphicsUnit.Pixel, attributes);
-            }
-        }
-
-        private void StopFadeTransition()
-        {
-            if (fadeTimer != null)
-            {
-                fadeTimer.Stop();
-                fadeTimer.Tick -= FadeTimer_Tick;
-                fadeTimer.Dispose();
-                fadeTimer = null;
-            }
-            if (fadeOverlay != null)
-            {
-                fadeOverlay.Paint -= FadeOverlay_Paint;
-                contentHost.Controls.Remove(fadeOverlay);
-                fadeOverlay.Dispose();
-                fadeOverlay = null;
-            }
-            if (fadeOldSnapshot != null)
-            {
-                fadeOldSnapshot.Dispose();
-                fadeOldSnapshot = null;
-            }
-            if (fadeNewSnapshot != null)
-            {
-                fadeNewSnapshot.Dispose();
-                fadeNewSnapshot = null;
-            }
         }
 
         private void OnOptionTapped(InstallMode mode)
