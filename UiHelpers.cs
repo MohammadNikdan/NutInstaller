@@ -291,7 +291,7 @@ namespace NutriculaInstaller
         public static void DrawShoppingBagGlyph(Graphics g, RectangleF circle, Color color)
         {
             g.SmoothingMode = SmoothingMode.AntiAlias;
-            float cx = circle.X + circle.Width / 2f - circle.Width * 0.015f;
+            float cx = circle.X + circle.Width / 2f - circle.Width * 0.005f;
             float cy = circle.Y + circle.Height / 2f - circle.Height * 0.03f;
             float s = circle.Width * 0.30f;
 
