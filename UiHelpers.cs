@@ -114,6 +114,8 @@ namespace NutriculaInstaller
         public const string GlyphGlobe = "\uE774";
         public const string GlyphMessage = "\uE8BD";
         public const string GlyphSendFill = "\uE725";
+        public const string GlyphPlay = "\uE768";
+        public const string GlyphShoppingCart = "\uE7BF";
 
         public static Font IconFont(float size)
         {
@@ -363,6 +365,7 @@ namespace NutriculaInstaller
         public ButtonKind Kind { get; set; }
         public Color FillColor { get; set; }
         public Color TextColor { get; set; }
+        public bool UseCircularIcon { get; set; }
 
         private bool hovering;
         private bool pressed;
@@ -437,17 +440,52 @@ namespace NutriculaInstaller
             using (Font iconFont = UiHelpers.IconFont(10.5f))
             {
                 SizeF textSize = string.IsNullOrEmpty(Text2) ? SizeF.Empty : g.MeasureString(Text2, Font);
-                SizeF iconSize = string.IsNullOrEmpty(IconGlyph) ? SizeF.Empty : g.MeasureString(IconGlyph, iconFont);
-                float gap = (string.IsNullOrEmpty(IconGlyph) || string.IsNullOrEmpty(Text2)) ? 0f : 8f;
-                float totalWidth = iconSize.Width + gap + textSize.Width;
+
+                float iconBoxWidth = 0f;
+                float circleDiameter = 0f;
+                SizeF glyphSize = SizeF.Empty;
+
+                if (!string.IsNullOrEmpty(IconGlyph))
+                {
+                    if (UseCircularIcon)
+                    {
+                        circleDiameter = Math.Max(16f, Height - 16f);
+                        iconBoxWidth = circleDiameter;
+                    }
+                    else
+                    {
+                        glyphSize = g.MeasureString(IconGlyph, iconFont);
+                        iconBoxWidth = glyphSize.Width;
+                    }
+                }
+
+                float gap = (iconBoxWidth > 0f && !string.IsNullOrEmpty(Text2)) ? 8f : 0f;
+                float totalWidth = iconBoxWidth + gap + textSize.Width;
                 float startX = (Width - totalWidth) / 2f;
                 float centerY = Height / 2f;
 
                 using (Brush fgb = new SolidBrush(fg))
                 {
                     if (!string.IsNullOrEmpty(IconGlyph))
-                        g.DrawString(IconGlyph, iconFont, fgb, startX, centerY - iconSize.Height / 2f);
-                    g.DrawString(Text2, Font, fgb, startX + iconSize.Width + gap, centerY - textSize.Height / 2f);
+                    {
+                        if (UseCircularIcon)
+                        {
+                            RectangleF circleRect = new RectangleF(startX, centerY - circleDiameter / 2f, circleDiameter, circleDiameter);
+                            using (Brush cb = new SolidBrush(UiHelpers.BrandColor))
+                                g.FillEllipse(cb, circleRect);
+                            using (Font smallIconFont = UiHelpers.IconFont(circleDiameter * 0.42f))
+                            using (StringFormat sf = new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center })
+                            using (Brush whiteBrush = new SolidBrush(Color.White))
+                            {
+                                g.DrawString(IconGlyph, smallIconFont, whiteBrush, circleRect, sf);
+                            }
+                        }
+                        else
+                        {
+                            g.DrawString(IconGlyph, iconFont, fgb, startX, centerY - glyphSize.Height / 2f);
+                        }
+                    }
+                    g.DrawString(Text2, Font, fgb, startX + iconBoxWidth + gap, centerY - textSize.Height / 2f);
                 }
             }
         }
@@ -475,16 +513,32 @@ namespace NutriculaInstaller
             timer = new Timer { Interval = 16 };
             timer.Tick += delegate
             {
-                phase += 0.014f;
-                if (phase > 1.6f) phase = -0.6f;
+                phase += 0.06f;
+                // Loop back to "segment already visible at the left edge" instead of a
+                // fully off-screen negative phase - that off-screen pre-roll was what
+                // produced a visible pause before any motion appeared, and it was
+                // happening on every single lap, not just at startup.
+                if (phase > 1f) phase = StartPhase;
                 Invalidate();
             };
         }
 
+        private float StartPhase
+        {
+            get
+            {
+                float segW = Math.Max(24f, Width * 0.30f);
+                return Width > 0 ? segW / (Width + segW) : 0f;
+            }
+        }
+
         public void StartAnimating()
         {
-            phase = -0.6f;
+            // Begin already visible at the left edge - no invisible pre-roll before
+            // motion starts.
+            phase = StartPhase;
             Visible = true;
+            Invalidate();
             timer.Start();
         }
 
