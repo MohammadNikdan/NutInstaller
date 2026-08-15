@@ -83,7 +83,7 @@ namespace NutriculaInstaller
             ClientSize = new Size(760, 580);
             MinimumSize = new Size(760, 580);
             BackColor = UiHelpers.Background;
-            Font = UiHelpers.UiFont(9f);
+            Font = new Font("Segoe UI", 9f);
             FormBorderStyle = FormBorderStyle.FixedSingle;
             MaximizeBox = false;
             DoubleBuffered = true;
@@ -202,7 +202,7 @@ namespace NutriculaInstaller
             {
                 AutoSize = true,
                 Text = "by Highflyers co.",
-                Font = UiHelpers.UiFont(8f, FontStyle.Italic),
+                Font = new Font("Segoe UI", 8f, FontStyle.Italic),
                 ForeColor = Color.FromArgb(206, 211, 228),
                 BackColor = Color.Transparent
             };
@@ -262,7 +262,7 @@ namespace NutriculaInstaller
             {
                 AutoSize = true,
                 Text = "Choose an installation option",
-                Font = UiHelpers.UiFont(13f, FontStyle.Bold),
+                Font = new Font("Segoe UI Semibold", 13f),
                 ForeColor = UiHelpers.TextDark,
                 Location = new Point(0, 0)
             };
@@ -272,7 +272,7 @@ namespace NutriculaInstaller
             {
                 AutoSize = true,
                 Text = "Tap an option to continue",
-                Font = UiHelpers.UiFont(9f),
+                Font = new Font("Segoe UI", 9f),
                 ForeColor = UiHelpers.TextMuted,
                 Location = new Point(0, 27)
             };
@@ -303,7 +303,7 @@ namespace NutriculaInstaller
             credTitleLabel = new Label
             {
                 AutoSize = true,
-                Font = UiHelpers.UiFont(13f, FontStyle.Bold),
+                Font = new Font("Segoe UI Semibold", 13f),
                 ForeColor = UiHelpers.TextDark,
                 Location = new Point(0, 0)
             };
@@ -313,7 +313,7 @@ namespace NutriculaInstaller
             {
                 AutoSize = false,
                 Size = new Size(PageWidth, 34),
-                Font = UiHelpers.UiFont(9f),
+                Font = new Font("Segoe UI", 9f),
                 ForeColor = UiHelpers.TextMuted,
                 Location = new Point(0, 27)
             };
@@ -417,7 +417,7 @@ namespace NutriculaInstaller
                 AutoSize = false,
                 Size = new Size(480, 26),
                 Text = "Installing Nutricula...",
-                Font = UiHelpers.UiFont(11.5f, FontStyle.Bold),
+                Font = new Font("Segoe UI Semibold", 11.5f),
                 ForeColor = UiHelpers.TextDark,
                 TextAlign = ContentAlignment.MiddleCenter,
                 Location = new Point(0, 0)
@@ -431,7 +431,7 @@ namespace NutriculaInstaller
             {
                 AutoSize = false,
                 Size = new Size(480, 40),
-                Font = UiHelpers.UiFont(8.7f),
+                Font = new Font("Segoe UI", 8.7f),
                 ForeColor = UiHelpers.TextMuted,
                 TextAlign = ContentAlignment.MiddleCenter,
                 Location = new Point(0, 62)
@@ -476,7 +476,7 @@ namespace NutriculaInstaller
             {
                 Dock = DockStyle.Bottom,
                 Height = 20,
-                Font = UiHelpers.UiFont(7.2f),
+                Font = new Font("Segoe UI", 7.2f),
                 ForeColor = Color.Black,
                 TextAlign = ContentAlignment.MiddleCenter,
                 Visible = false
