@@ -146,7 +146,7 @@ namespace NutriculaInstaller
             Controls.Add(contentHost);
             contentHost.BringToFront();
 
-            pageWidth = Math.Max(240, contentHost.ClientSize.Width - contentHost.Padding.Left - contentHost.Padding.Right);
+            pageWidth = Math.Max(240, ClientSize.Width - contentHost.Padding.Left - contentHost.Padding.Right);
 
             BuildFooter();
 
@@ -376,7 +376,7 @@ namespace NutriculaInstaller
             backButton.Click += delegate { ShowPage(pageSelect); };
             page.Controls.Add(backButton);
 
-            installButton = new MaterialButton("Install", UiHelpers.GlyphCheck, ButtonKind.Filled)
+            installButton = new MaterialButton("Install", UiHelpers.GlyphDownload, ButtonKind.Filled)
             {
                 Location = new Point(pageWidth - 170, 308),
                 Size = new Size(170, 46),
