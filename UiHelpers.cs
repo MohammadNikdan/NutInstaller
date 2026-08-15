@@ -2,6 +2,8 @@ using System;
 using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Drawing.Text;
+using System.IO;
+using System.Runtime.InteropServices;
 using System.Windows.Forms;
 
 namespace NutriculaInstaller
@@ -12,6 +14,58 @@ namespace NutriculaInstaller
     /// </summary>
     internal static class UiHelpers
     {
+        // ===== App-wide text font (embedded, no install needed on the user's machine) =====
+        // The Outfit-Regular.ttf file only ships one weight, so "bold" text throughout
+        // the app is GDI-synthesized bold (FontStyle.Bold) rather than a real semibold
+        // weight file.
+        private static IntPtr embeddedFontMemory = IntPtr.Zero;
+        private static readonly FontFamily uiFontFamily = LoadEmbeddedFontFamily();
+
+        private static FontFamily LoadEmbeddedFontFamily()
+        {
+            try
+            {
+                var assembly = typeof(UiHelpers).Assembly;
+                using (Stream stream = assembly.GetManifestResourceStream("NutriculaInstaller.Fonts.Outfit-Regular.ttf"))
+                {
+                    if (stream == null) return FontFamily.GenericSansSerif;
+
+                    byte[] fontData = new byte[stream.Length];
+                    int total = 0;
+                    while (total < fontData.Length)
+                    {
+                        int read = stream.Read(fontData, total, fontData.Length - total);
+                        if (read <= 0) break;
+                        total += read;
+                    }
+
+                    IntPtr fontPtr = Marshal.AllocCoTaskMem(fontData.Length);
+                    Marshal.Copy(fontData, 0, fontPtr, fontData.Length);
+                    embeddedFontMemory = fontPtr; // kept alive for the app's lifetime, per PrivateFontCollection docs
+
+                    PrivateFontCollection collection = new PrivateFontCollection();
+                    collection.AddMemoryFont(fontPtr, fontData.Length);
+                    if (collection.Families.Length > 0)
+                        return collection.Families[0];
+                }
+            }
+            catch { }
+            return FontFamily.GenericSansSerif;
+        }
+
+        /// <summary>Creates a Font using the app's embedded Outfit font (falls back to a generic sans-serif if it failed to load).</summary>
+        public static Font UiFont(float size, FontStyle style = FontStyle.Regular)
+        {
+            try
+            {
+                return new Font(uiFontFamily, size, style, GraphicsUnit.Point);
+            }
+            catch
+            {
+                return new Font(FontFamily.GenericSansSerif, size, style, GraphicsUnit.Point);
+            }
+        }
+
         // ===== Palette (brand color kept identical to the original UI) =====
         public static readonly Color BrandColor = Color.FromArgb(39, 47, 80);
         public static readonly Color BrandLighter = Color.FromArgb(62, 71, 108);
@@ -108,43 +162,57 @@ namespace NutriculaInstaller
             }
         }
 
-        /// <summary>Draws a filled circular badge with short, bold, centered text (auto-shrinks to fit).</summary>
-        public static void DrawTextBadge(Graphics g, Rectangle rect, string text, Color bg, Color fg, float maxFontSize)
+        /// <summary>Finds the largest font size (down to a 6pt floor) at which `text` fits within `maxWidth`.</summary>
+        public static float ComputeFitFontSize(Graphics g, string text, float maxWidth, float maxFontSize)
+        {
+            float fontSize = maxFontSize;
+            while (fontSize > 6f)
+            {
+                using (Font candidate = UiFont(fontSize, FontStyle.Bold))
+                {
+                    if (g.MeasureString(text, candidate).Width <= maxWidth)
+                        return fontSize;
+                }
+                fontSize -= 0.5f;
+            }
+            return 6f;
+        }
+
+        private static float? sharedBadgeFontSize;
+
+        /// <summary>
+        /// Computes (once, then caches) the single font size that fits the longest of the
+        /// given badge texts, so every option-tile badge renders at the same size instead
+        /// of each shrinking independently based on its own word length.
+        /// </summary>
+        public static float GetSharedBadgeFontSize(Graphics g, float badgeDiameter, float maxFontSize, params string[] texts)
+        {
+            if (sharedBadgeFontSize.HasValue) return sharedBadgeFontSize.Value;
+
+            float maxWidth = badgeDiameter * 0.72f;
+            float smallest = maxFontSize;
+            foreach (string text in texts)
+            {
+                float fit = ComputeFitFontSize(g, text, maxWidth, maxFontSize);
+                if (fit < smallest) smallest = fit;
+            }
+            sharedBadgeFontSize = smallest;
+            return smallest;
+        }
+
+        /// <summary>Draws a filled circular badge with short, bold, centered text at an explicit font size.</summary>
+        public static void DrawTextBadge(Graphics g, Rectangle rect, string text, Color bg, Color fg, float fontSize)
         {
             g.SmoothingMode = SmoothingMode.AntiAlias;
             using (Brush b = new SolidBrush(bg))
                 g.FillEllipse(b, rect);
             if (string.IsNullOrEmpty(text)) return;
 
-            float maxWidth = rect.Width * 0.72f;
-            float fontSize = maxFontSize;
-            Font chosenFont = null;
-            try
+            using (Font f = UiFont(fontSize, FontStyle.Bold))
+            using (Brush fb = new SolidBrush(fg))
+            using (StringFormat sf = new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center })
             {
-                while (fontSize > 6f)
-                {
-                    using (Font candidate = new Font("Segoe UI Semibold", fontSize, FontStyle.Bold, GraphicsUnit.Point))
-                    {
-                        if (g.MeasureString(text, candidate).Width <= maxWidth)
-                        {
-                            chosenFont = new Font("Segoe UI Semibold", fontSize, FontStyle.Bold, GraphicsUnit.Point);
-                            break;
-                        }
-                    }
-                    fontSize -= 0.5f;
-                }
-                if (chosenFont == null)
-                    chosenFont = new Font("Segoe UI Semibold", 6f, FontStyle.Bold, GraphicsUnit.Point);
-
-                using (Brush fb = new SolidBrush(fg))
-                using (StringFormat sf = new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center })
-                {
-                    g.DrawString(text, chosenFont, fb, rect, sf);
-                }
-            }
-            finally
-            {
-                if (chosenFont != null) chosenFont.Dispose();
+                g.DrawString(text, f, fb, rect, sf);
             }
         }
 
@@ -234,17 +302,21 @@ namespace NutriculaInstaller
             int badgeSize = hovering ? 58 : 52;
             Rectangle badgeRect = new Rectangle(16 - (hovering ? 3 : 0), (Height - badgeSize) / 2, badgeSize, badgeSize);
             Color badgeBg = hovering ? UiHelpers.BrandLighter : UiHelpers.BrandColor;
-            UiHelpers.DrawTextBadge(g, badgeRect, badgeText, badgeBg, Color.White, hovering ? 12f : 11f);
+            // Fit against the longest of the three badge words ("SWITCH") so FREE/PRO/SWITCH
+            // all render at the exact same font size instead of each shrinking independently.
+            float baseFontSize = UiHelpers.GetSharedBadgeFontSize(g, 52f, 11f, "FREE", "PRO", "SWITCH");
+            float badgeFontSize = hovering ? baseFontSize + 1f : baseFontSize;
+            UiHelpers.DrawTextBadge(g, badgeRect, badgeText, badgeBg, Color.White, badgeFontSize);
 
             int textX = badgeRect.Right + 18;
             int textWidth = Width - textX - 46;
 
-            using (Font tf = new Font("Segoe UI Semibold", 10.5f))
+            using (Font tf = UiHelpers.UiFont(10.5f, FontStyle.Bold))
             using (Brush tb = new SolidBrush(UiHelpers.TextDark))
             {
                 g.DrawString(title, tf, tb, new RectangleF(textX, 17, textWidth, 22));
             }
-            using (Font sf = new Font("Segoe UI", 8.7f))
+            using (Font sf = UiHelpers.UiFont(8.7f))
             using (Brush sb = new SolidBrush(UiHelpers.TextMuted))
             {
                 g.DrawString(subtitle, sf, sb, new RectangleF(textX, 40, textWidth, 34));
@@ -286,7 +358,7 @@ namespace NutriculaInstaller
             TextColor = kind == ButtonKind.Filled ? Color.White : UiHelpers.TextDark;
             Height = 44;
             Cursor = Cursors.Hand;
-            Font = new Font("Segoe UI Semibold", 9.2f);
+            Font = UiHelpers.UiFont(9.2f, FontStyle.Bold);
             SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, true);
 
             MouseEnter += delegate { hovering = true; Invalidate(); };
