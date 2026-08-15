@@ -10,7 +10,7 @@ namespace NutriculaInstaller
 {
     public sealed class MainForm : Form
     {
-        private int pageWidth; // live content width, recalculated to match the actual (resizable) window
+        private int pageWidth; // fixed content width, computed once from the (now fixed-size) window
 
         private readonly InstallerService installer = new InstallerService();
         private readonly CancellationTokenSource cts = new CancellationTokenSource();
@@ -81,12 +81,12 @@ namespace NutriculaInstaller
         {
             Text = "Nutricula Expert Advisor Installer";
             StartPosition = FormStartPosition.CenterScreen;
-            ClientSize = new Size(500, 580);
-            MinimumSize = new Size(430, 480);
+            ClientSize = new Size(760, 640);
+            MinimumSize = new Size(760, 640);
             BackColor = UiHelpers.Background;
             Font = new Font("Segoe UI", 9f);
-            FormBorderStyle = FormBorderStyle.Sizable;
-            MaximizeBox = true;
+            FormBorderStyle = FormBorderStyle.FixedSingle;
+            MaximizeBox = false;
             DoubleBuffered = true;
             Icon = TryLoadIcon();
         }
@@ -253,7 +253,8 @@ namespace NutriculaInstaller
             {
                 Location = new Point(28, 14),
                 Size = new Size(190, 40),
-                UseCircularIcon = true
+                UseCircularIcon = true,
+                CustomIconDrawer = UiHelpers.DrawPlayGlyph
             };
             guideButton.Click += delegate { OpenUrl("https://www.youtube.com/"); };
             footer.Controls.Add(guideButton);
@@ -263,7 +264,8 @@ namespace NutriculaInstaller
                 Location = new Point(226, 14),
                 Size = new Size(215, 40),
                 UseCircularIcon = true,
-                TextColor = UiHelpers.BrandColor
+                TextColor = UiHelpers.BrandColor,
+                CustomIconDrawer = UiHelpers.DrawShoppingBagGlyph
             };
             buyButton.Click += delegate { OpenUrl("https://www.google.com/"); };
             footer.Controls.Add(buyButton);
