@@ -18,6 +18,18 @@ namespace NutriculaInstaller
         // The Outfit-Regular.ttf file only ships one weight, so "bold" text throughout
         // the app is GDI-synthesized bold (FontStyle.Bold) rather than a real semibold
         // weight file.
+        //
+        // Two separate registrations are needed for crisp text everywhere:
+        //  - PrivateFontCollection.AddMemoryFont makes the font available to GDI+
+        //    (our own custom-painted controls that call Graphics.DrawString directly).
+        //  - AddFontMemResourceEx (a native GDI call) registers the font process-wide
+        //    so plain WinForms controls (Label, TextBox, etc., which render through GDI,
+        //    not GDI+) can resolve it by name too. Without this, GDI can't find the
+        //    embedded font and silently substitutes an approximated font, which is what
+        //    produces the blurry/low-quality look on ordinary Label/TextBox text.
+        [DllImport("gdi32.dll", SetLastError = true)]
+        private static extern IntPtr AddFontMemResourceEx(IntPtr pbFont, uint cbFont, IntPtr pdv, [In] ref uint pcFonts);
+
         private static IntPtr embeddedFontMemory = IntPtr.Zero;
         private static readonly FontFamily uiFontFamily = LoadEmbeddedFontFamily();
 
@@ -43,6 +55,11 @@ namespace NutriculaInstaller
                     Marshal.Copy(fontData, 0, fontPtr, fontData.Length);
                     embeddedFontMemory = fontPtr; // kept alive for the app's lifetime, per PrivateFontCollection docs
 
+                    // Register with GDI (fixes Label/TextBox rendering quality).
+                    uint fontCount = 0;
+                    AddFontMemResourceEx(fontPtr, (uint)fontData.Length, IntPtr.Zero, ref fontCount);
+
+                    // Register with GDI+ (used by our own custom OnPaint drawing).
                     PrivateFontCollection collection = new PrivateFontCollection();
                     collection.AddMemoryFont(fontPtr, fontData.Length);
                     if (collection.Families.Length > 0)
@@ -168,7 +185,7 @@ namespace NutriculaInstaller
             float fontSize = maxFontSize;
             while (fontSize > 6f)
             {
-                using (Font candidate = UiFont(fontSize, FontStyle.Bold))
+                using (Font candidate = new Font("Segoe UI Semibold", fontSize, FontStyle.Bold, GraphicsUnit.Point))
                 {
                     if (g.MeasureString(text, candidate).Width <= maxWidth)
                         return fontSize;
@@ -208,8 +225,26 @@ namespace NutriculaInstaller
                 g.FillEllipse(b, rect);
             if (string.IsNullOrEmpty(text)) return;
 
-            using (Font f = UiFont(fontSize, FontStyle.Bold))
+            using (Font f = new Font("Segoe UI Semibold", fontSize, FontStyle.Bold, GraphicsUnit.Point))
             using (Brush fb = new SolidBrush(fg))
+            using (StringFormat sf = new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center })
+            {
+                g.DrawString(text, f, fb, rect, sf);
+            }
+        }
+
+        /// <summary>Draws a circular badge as just a colored outline (ring) with colored centered text - the resting state before hover, which then fills solid via DrawTextBadge.</summary>
+        public static void DrawTextBadgeOutline(Graphics g, Rectangle rect, string text, Color accent, Color fill, float fontSize)
+        {
+            g.SmoothingMode = SmoothingMode.AntiAlias;
+            using (Brush b = new SolidBrush(fill))
+                g.FillEllipse(b, rect);
+            using (Pen p = new Pen(accent, 2f))
+                g.DrawEllipse(p, Rectangle.Inflate(rect, -1, -1));
+            if (string.IsNullOrEmpty(text)) return;
+
+            using (Font f = new Font("Segoe UI Semibold", fontSize, FontStyle.Bold, GraphicsUnit.Point))
+            using (Brush fb = new SolidBrush(accent))
             using (StringFormat sf = new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center })
             {
                 g.DrawString(text, f, fb, rect, sf);
@@ -244,8 +279,6 @@ namespace NutriculaInstaller
         private readonly string subtitle;
         private bool hovering;
         private bool pressed;
-        private Rectangle? homeBounds;
-        private const int GrowPx = 4; // grows 4px per side (8px total) - stays clear of the 14px gap between tiles
 
         public OptionTile(InstallMode mode, string badgeText, string title, string subtitle)
         {
@@ -259,23 +292,8 @@ namespace NutriculaInstaller
             BackColor = UiHelpers.Background;
             SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, true);
 
-            MouseEnter += delegate
-            {
-                hovering = true;
-                // Location/Width are only set by the caller right after construction,
-                // so the "home" size is captured lazily on first hover instead.
-                if (homeBounds == null) homeBounds = Bounds;
-                Bounds = Rectangle.Inflate(homeBounds.Value, GrowPx, GrowPx);
-                BringToFront();
-                Invalidate();
-            };
-            MouseLeave += delegate
-            {
-                hovering = false;
-                pressed = false;
-                if (homeBounds != null) Bounds = homeBounds.Value;
-                Invalidate();
-            };
+            MouseEnter += delegate { hovering = true; Invalidate(); };
+            MouseLeave += delegate { hovering = false; pressed = false; Invalidate(); };
             MouseDown += delegate { pressed = true; Invalidate(); };
             MouseUp += delegate { pressed = false; Invalidate(); };
         }
@@ -299,24 +317,24 @@ namespace NutriculaInstaller
             Rectangle rect = new Rectangle(0, 0, Width - 1, Height - 1);
             UiHelpers.DrawRounded(g, rect, 14, cardFill, cardBorder);
 
-            int badgeSize = hovering ? 58 : 52;
-            Rectangle badgeRect = new Rectangle(16 - (hovering ? 3 : 0), (Height - badgeSize) / 2, badgeSize, badgeSize);
-            Color badgeBg = hovering ? UiHelpers.BrandLighter : UiHelpers.BrandColor;
+            Rectangle badgeRect = new Rectangle(16, (Height - 52) / 2, 52, 52);
             // Fit against the longest of the three badge words ("SWITCH") so FREE/PRO/SWITCH
             // all render at the exact same font size instead of each shrinking independently.
-            float baseFontSize = UiHelpers.GetSharedBadgeFontSize(g, 52f, 11f, "FREE", "PRO", "SWITCH");
-            float badgeFontSize = hovering ? baseFontSize + 1f : baseFontSize;
-            UiHelpers.DrawTextBadge(g, badgeRect, badgeText, badgeBg, Color.White, badgeFontSize);
+            float badgeFontSize = UiHelpers.GetSharedBadgeFontSize(g, 52f, 11f, "FREE", "PRO", "SWITCH");
+            if (hovering)
+                UiHelpers.DrawTextBadge(g, badgeRect, badgeText, UiHelpers.BrandColor, Color.White, badgeFontSize);
+            else
+                UiHelpers.DrawTextBadgeOutline(g, badgeRect, badgeText, UiHelpers.BrandColor, UiHelpers.Surface, badgeFontSize);
 
             int textX = badgeRect.Right + 18;
             int textWidth = Width - textX - 46;
 
-            using (Font tf = UiHelpers.UiFont(10.5f, FontStyle.Bold))
+            using (Font tf = new Font("Segoe UI Semibold", 10.5f))
             using (Brush tb = new SolidBrush(UiHelpers.TextDark))
             {
                 g.DrawString(title, tf, tb, new RectangleF(textX, 17, textWidth, 22));
             }
-            using (Font sf = UiHelpers.UiFont(8.7f))
+            using (Font sf = new Font("Segoe UI", 8.7f))
             using (Brush sb = new SolidBrush(UiHelpers.TextMuted))
             {
                 g.DrawString(subtitle, sf, sb, new RectangleF(textX, 40, textWidth, 34));
@@ -358,7 +376,7 @@ namespace NutriculaInstaller
             TextColor = kind == ButtonKind.Filled ? Color.White : UiHelpers.TextDark;
             Height = 44;
             Cursor = Cursors.Hand;
-            Font = UiHelpers.UiFont(9.2f, FontStyle.Bold);
+            Font = new Font("Segoe UI Semibold", 9.2f);
             SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, true);
 
             MouseEnter += delegate { hovering = true; Invalidate(); };
@@ -534,6 +552,7 @@ namespace NutriculaInstaller
         {
             Graphics g = e.Graphics;
             g.SmoothingMode = SmoothingMode.AntiAlias;
+            g.TextRenderingHint = TextRenderingHint.ClearTypeGridFit;
             Rectangle outer = new Rectangle(0, 0, Width, Height);
             using (Brush b = new SolidBrush(softColor))
                 g.FillEllipse(b, outer);
@@ -571,6 +590,7 @@ namespace NutriculaInstaller
         {
             Graphics g = e.Graphics;
             g.SmoothingMode = SmoothingMode.AntiAlias;
+            g.TextRenderingHint = TextRenderingHint.ClearTypeGridFit;
 
             Color pageBg = Parent != null ? Parent.BackColor : UiHelpers.BrandColor;
             using (Brush pageBrush = new SolidBrush(pageBg))
