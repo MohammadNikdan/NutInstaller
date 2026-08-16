@@ -30,11 +30,18 @@ namespace NutriculaInstaller
         // Credentials page
         private Label credTitleLabel;
         private Label credSubtitleLabel;
+        private Panel credentialsCard;
         private TextBox emailBox;
         private TextBox purchaseKeyBox;
+        private TextBox transferKeyBox;
+        private Label transferCaption;
+        private Panel transferFieldWrap;
         private Label helperLabel;
         private MaterialButton backButton;
         private MaterialButton installButton;
+
+        private const int CredentialsCardHeightBase = 210;   // Free/Premium: unchanged from before
+        private const int CredentialsCardHeightTransfer = 300; // Transfer: room for the extra field
 
         // Progress page
         private Panel runningPanel;
@@ -88,8 +95,8 @@ namespace NutriculaInstaller
 
             Text = "Nutricula Expert Advisor Installer";
             StartPosition = FormStartPosition.CenterScreen;
-            ClientSize = new Size(760, 564);
-            MinimumSize = new Size(760, 564);
+            ClientSize = new Size(760, 664);
+            MinimumSize = new Size(760, 664);
             BackColor = UiHelpers.Background;
             Font = new Font("Segoe UI", 9f);
             FormBorderStyle = FormBorderStyle.FixedSingle;
@@ -341,39 +348,48 @@ namespace NutriculaInstaller
             };
             page.Controls.Add(credSubtitleLabel);
 
-            Panel card = new Panel { Location = new Point(0, 78), Size = new Size(PageWidth, 210), BackColor = UiHelpers.Background };
-            card.Paint += delegate (object sender, PaintEventArgs e)
+            credentialsCard = new Panel { Location = new Point(0, 78), Size = new Size(PageWidth, CredentialsCardHeightBase), BackColor = UiHelpers.Background };
+            credentialsCard.Paint += delegate (object sender, PaintEventArgs e)
             {
                 e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
                 // Paint the page background first so the corners outside the rounded
                 // shape blend with the page instead of showing a square white patch.
                 using (Brush pageBrush = new SolidBrush(UiHelpers.Background))
-                    e.Graphics.FillRectangle(pageBrush, card.ClientRectangle);
-                UiHelpers.DrawRounded(e.Graphics, new Rectangle(0, 0, card.Width - 1, card.Height - 1), 14, UiHelpers.Surface, UiHelpers.Border);
+                    e.Graphics.FillRectangle(pageBrush, credentialsCard.ClientRectangle);
+                UiHelpers.DrawRounded(e.Graphics, new Rectangle(0, 0, credentialsCard.Width - 1, credentialsCard.Height - 1), 14, UiHelpers.Surface, UiHelpers.Border);
             };
-            page.Controls.Add(card);
+            page.Controls.Add(credentialsCard);
 
-            Label emailCaption = new Label { AutoSize = true, Text = "Email", Font = UiHelpers.UiFont(9.5f, FontStyle.Bold), ForeColor = UiHelpers.TextDark, Location = new Point(18, 16), BackColor = Color.Transparent };
-            card.Controls.Add(emailCaption);
-            Panel emailWrap = BuildFieldWrap(UiHelpers.GlyphMail, new Point(18, 36), card.Width - 36, out emailBox);
-            card.Controls.Add(emailWrap);
+            Label emailCaption = new Label { AutoSize = true, Text = "Email:", Font = UiHelpers.UiFont(9.5f, FontStyle.Bold), ForeColor = UiHelpers.TextDark, Location = new Point(18, 16), BackColor = Color.Transparent };
+            credentialsCard.Controls.Add(emailCaption);
+            Panel emailWrap = BuildFieldWrap(UiHelpers.GlyphMail, new Point(18, 36), credentialsCard.Width - 36, out emailBox);
+            credentialsCard.Controls.Add(emailWrap);
 
-            Label purchaseCaption = new Label { AutoSize = true, Text = "Purchase Key", Font = UiHelpers.UiFont(9.5f, FontStyle.Bold), ForeColor = UiHelpers.TextDark, Location = new Point(18, 96), BackColor = Color.Transparent };
-            card.Controls.Add(purchaseCaption);
-            Panel purchaseWrap = BuildFieldWrap(UiHelpers.GlyphKey, new Point(18, 116), card.Width - 36, out purchaseKeyBox);
-            card.Controls.Add(purchaseWrap);
+            Label purchaseCaption = new Label { AutoSize = true, Text = "Purchase Key:", Font = UiHelpers.UiFont(9.5f, FontStyle.Bold), ForeColor = UiHelpers.TextDark, Location = new Point(18, 96), BackColor = Color.Transparent };
+            credentialsCard.Controls.Add(purchaseCaption);
+            Panel purchaseWrap = BuildFieldWrap(UiHelpers.GlyphKey, new Point(18, 116), credentialsCard.Width - 36, out purchaseKeyBox);
+            credentialsCard.Controls.Add(purchaseWrap);
+
+            // Transfer Key: only relevant (visible + required) in Transfer mode. Hidden by
+            // default; LayoutCredentialsFields() toggles it and repositions everything
+            // below it when the mode changes.
+            transferCaption = new Label { AutoSize = true, Text = "Transfer Key:", Font = UiHelpers.UiFont(9.5f, FontStyle.Bold), ForeColor = UiHelpers.TextDark, Location = new Point(18, 176), BackColor = Color.Transparent, Visible = false };
+            credentialsCard.Controls.Add(transferCaption);
+            transferFieldWrap = BuildFieldWrap(UiHelpers.GlyphKey, new Point(18, 196), credentialsCard.Width - 36, out transferKeyBox);
+            transferFieldWrap.Visible = false;
+            credentialsCard.Controls.Add(transferFieldWrap);
 
             helperLabel = new Label
             {
                 AutoSize = false,
-                Size = new Size(card.Width - 36, 30),
+                Size = new Size(credentialsCard.Width - 36, 30),
                 Text = "Required for Premium installation and license transfer.",
                 Font = UiHelpers.UiFont(9f),
                 ForeColor = UiHelpers.TextMuted,
                 Location = new Point(18, 172),
                 BackColor = Color.Transparent
             };
-            card.Controls.Add(helperLabel);
+            credentialsCard.Controls.Add(helperLabel);
 
             backButton = new MaterialButton("Back", UiHelpers.GlyphBack, ButtonKind.Outline) { Location = new Point(0, 308), Size = new Size(140, 46) };
             backButton.Click += delegate { ShowPage(pageSelect); };
@@ -389,6 +405,29 @@ namespace NutriculaInstaller
             page.Controls.Add(installButton);
 
             return page;
+        }
+
+        /// <summary>
+        /// Shows/hides and repositions the Transfer Key field and everything below it
+        /// depending on mode. Premium mode is untouched (same card height, same button
+        /// position as before); Transfer mode grows the card to fit the extra field and
+        /// pushes the helper text and buttons down to match.
+        /// </summary>
+        private void LayoutCredentialsFields(InstallMode mode)
+        {
+            bool showTransfer = mode == InstallMode.Transfer;
+            transferCaption.Visible = showTransfer;
+            transferFieldWrap.Visible = showTransfer;
+
+            int cardHeight = showTransfer ? CredentialsCardHeightTransfer : CredentialsCardHeightBase;
+            credentialsCard.Size = new Size(PageWidth, cardHeight);
+            credentialsCard.Invalidate();
+
+            helperLabel.Location = new Point(18, showTransfer ? 252 : 172);
+
+            int buttonsY = credentialsCard.Top + cardHeight + 20;
+            backButton.Location = new Point(0, buttonsY);
+            installButton.Location = new Point(PageWidth - 170, buttonsY);
         }
 
         private Panel BuildFieldWrap(string glyph, Point location, int width, out TextBox textBox)
@@ -537,9 +576,10 @@ namespace NutriculaInstaller
             credTitleLabel.Text = mode == InstallMode.Premium ? "Activate Premium License" : "Transfer License to This Computer";
             credSubtitleLabel.Text = mode == InstallMode.Premium
                 ? "Enter your Email and Purchase Key to activate a license on this computer."
-                : "Enter your Email and Purchase Key to move your existing license to this computer.";
+                : "Enter your Email, Purchase Key, and Transfer Key to move your existing license to this computer.";
             helperLabel.ForeColor = UiHelpers.TextMuted;
             helperLabel.Text = "Required for Premium installation and license transfer.";
+            LayoutCredentialsFields(mode);
             ShowPage(pageCredentials);
         }
 
@@ -549,8 +589,11 @@ namespace NutriculaInstaller
 
             string email = emailBox.Text.Trim();
             string key = purchaseKeyBox.Text;
+            string transferKey = transferKeyBox != null ? transferKeyBox.Text : string.Empty;
+            bool requireTransferKey = selectedMode == InstallMode.Transfer;
+
             string validationError;
-            if (!ValidateCredentials(email, key, out validationError))
+            if (!ValidateCredentials(email, key, transferKey, requireTransferKey, out validationError))
             {
                 helperLabel.ForeColor = UiHelpers.Error;
                 helperLabel.Text = validationError;
@@ -590,6 +633,7 @@ namespace NutriculaInstaller
                     selectedMode,
                     emailBox != null ? emailBox.Text.Trim() : string.Empty,
                     purchaseKeyBox != null ? purchaseKeyBox.Text : string.Empty,
+                    transferKeyBox != null ? transferKeyBox.Text : string.Empty,
                     cts.Token,
                     progress,
                     AppendLog);
@@ -679,11 +723,17 @@ namespace NutriculaInstaller
             }
         }
 
-        private bool ValidateCredentials(string email, string key, out string error)
+        private bool ValidateCredentials(string email, string key, string transferKey, bool requireTransferKey, out string error)
         {
-            if (string.IsNullOrWhiteSpace(email) || string.IsNullOrWhiteSpace(key))
+            bool emailMissing = string.IsNullOrWhiteSpace(email);
+            bool keyMissing = string.IsNullOrWhiteSpace(key);
+            bool transferMissing = requireTransferKey && string.IsNullOrWhiteSpace(transferKey);
+
+            if (emailMissing || keyMissing || transferMissing)
             {
-                error = "Email and Purchase Key are both required.";
+                error = requireTransferKey
+                    ? "Email, Purchase Key, and Transfer Key are all required."
+                    : "Email and Purchase Key are both required.";
                 return false;
             }
 
