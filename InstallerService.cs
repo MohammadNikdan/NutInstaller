@@ -35,6 +35,7 @@ namespace NutriculaInstaller
             InstallMode mode,
             string email,
             string purchaseKey,
+            string transferKey,
             CancellationToken token,
             IProgress<ProgressUpdate> progress,
             Action<string> log)
@@ -76,7 +77,7 @@ namespace NutriculaInstaller
 
             // Both operations begin without waiting for one another.
             Task<bool> installTask = InstallFilesAsync(terminals, token, progress, log);
-            Task<ServerResult> serverTask = RequestLicenseAsync(mode, email, purchaseKey, token, log);
+            Task<ServerResult> serverTask = RequestLicenseAsync(mode, email, purchaseKey, transferKey, token, log);
 
             bool filesOk = false;
             ServerResult serverResult = null;
@@ -245,12 +246,18 @@ namespace NutriculaInstaller
             InstallMode mode,
             string email,
             string purchaseKey,
+            string transferKey,
             CancellationToken token,
             Action<string> log)
         {
             string machineId = MachineIdService.GenerateComputerId();
             string rndNumber = CryptoService.Generate32DigitRandomNumber();
-            string encodedPostData = CryptoService.BuildPostData(email, purchaseKey, machineId, rndNumber);
+            string encodedPostData = CryptoService.BuildPostData(
+                email,
+                purchaseKey,
+                machineId,
+                rndNumber,
+                mode == InstallMode.Transfer ? transferKey : null);
             string baseUrl = mode == InstallMode.Premium ? PremiumUrl : TransferUrl;
             string url = baseUrl + "?data=" + encodedPostData;
 
