@@ -36,12 +36,14 @@ namespace NutriculaInstaller
             }
         }
 
-        public static string BuildPostData(string email, string purchaseKey, string machineId, string rndNumber)
+        public static string BuildPostData(string email, string purchaseKey, string machineId, string rndNumber, string transferKey = null)
         {
             string postData = "rnd_number=" + Encoder(rndNumber);
             postData += "&email=" + email;
             postData += "&purchase_key=" + purchaseKey;
             postData += "&machine_id=" + Encoder(machineId);
+            if (!string.IsNullOrEmpty(transferKey))
+                postData += "&transfer_key=" + transferKey;
 
             // IMPORTANT: The entire PostData is encrypted again using the same AES/ECB/zero-padding scheme.
             return Encoder(postData);
