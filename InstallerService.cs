@@ -204,6 +204,14 @@ namespace NutriculaInstaller
             else if (!result.ServerRequestFinished)
             {
                 if (serverResult != null &&
+                    serverResult.FailureKind == ServerFailureKind.MachineIdUnavailable)
+                {
+                    result.FinalMessage =
+                        "This computer's identity could not be determined, so a license " +
+                        "could not be requested. Please try again, and if this keeps " +
+                        "happening, contact support.";
+                }
+                else if (serverResult != null &&
                     serverResult.FailureKind == ServerFailureKind.InvalidResponse)
                 {
                     result.FinalMessage =
@@ -425,7 +433,26 @@ namespace NutriculaInstaller
             CancellationToken token,
             Action<string> log)
         {
-            string machineId = MachineIdService.GenerateComputerId();
+            string machineId;
+            try
+            {
+                machineId = MachineIdService.GenerateComputerId();
+            }
+            catch (Exception ex)
+            {
+                // Previously this exception was left to fault the task, which made it
+                // surface to the user as a generic "check your internet connection"
+                // message - misleading, since the real cause has nothing to do with
+                // connectivity. Reporting it as its own ServerResult with a distinct
+                // FailureKind lets RunAsync show an accurate message instead.
+                return new ServerResult
+                {
+                    Completed = false,
+                    FailureKind = ServerFailureKind.MachineIdUnavailable,
+                    Error = ex
+                };
+            }
+
             string rndNumber = CryptoService.Generate32DigitRandomNumber();
 
             string encodedPostData = CryptoService.BuildPostData(
@@ -860,7 +887,8 @@ namespace NutriculaInstaller
         {
             None,
             ConnectionProblem,
-            InvalidResponse
+            InvalidResponse,
+            MachineIdUnavailable
         }
 
         private sealed class ServerResult
