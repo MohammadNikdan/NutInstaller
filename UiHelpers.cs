@@ -70,6 +70,58 @@ namespace NutriculaInstaller
             return FontFamily.GenericSansSerif;
         }
 
+        // ===== Embedded promo image (Assets/installerpic.jpg) =====
+        private static readonly Image installerPromoImage = LoadEmbeddedInstallerPic();
+
+        private static Image LoadEmbeddedInstallerPic()
+        {
+            try
+            {
+                var assembly = typeof(UiHelpers).Assembly;
+                using (Stream stream = assembly.GetManifestResourceStream("NutriculaInstaller.Assets.installerpic.jpg"))
+                {
+                    if (stream == null) return null;
+                    // Image.FromStream needs the stream to stay open for the lifetime of the
+                    // Image in some GDI+ paths, so copy into a standalone MemoryStream first
+                    // rather than wrapping the (about-to-be-disposed) resource stream directly.
+                    using (MemoryStream ms = new MemoryStream())
+                    {
+                        stream.CopyTo(ms);
+                        return Image.FromStream(ms);
+                    }
+                }
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        /// <summary>The embedded installer promo image, or null if it wasn't found/couldn't be loaded.</summary>
+        public static Image InstallerPromoImage
+        {
+            get { return installerPromoImage; }
+        }
+
+        /// <summary>
+        /// Creates a PictureBox showing the embedded promo image at a fixed size/position.
+        /// Returns an empty (invisible) placeholder Panel-backed PictureBox if the image
+        /// failed to load, so a missing asset never breaks the rest of the UI.
+        /// </summary>
+        public static PictureBox CreatePromoImageBox(Point location, Size size)
+        {
+            PictureBox box = new PictureBox
+            {
+                Location = location,
+                Size = size,
+                SizeMode = PictureBoxSizeMode.Zoom,
+                BackColor = Color.Transparent
+            };
+            if (installerPromoImage != null)
+                box.Image = installerPromoImage;
+            return box;
+        }
+
         /// <summary>Creates a Font using the app's embedded Outfit font (falls back to a generic sans-serif if it failed to load).</summary>
         public static Font UiFont(float size, FontStyle style = FontStyle.Regular)
         {
