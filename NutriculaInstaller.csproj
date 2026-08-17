@@ -82,8 +82,8 @@
       <LogicalName>NutriculaInstaller.Assets.MathUtils.dll</LogicalName>
     </EmbeddedResource>
 
-    <EmbeddedResource Include="Assets\NutriculaMachineId32.dll">
-      <LogicalName>NutriculaInstaller.Assets.NutriculaMachineId32.dll</LogicalName>
+    <EmbeddedResource Include="Assets\MachineId32.dll">
+      <LogicalName>NutriculaInstaller.Assets.MachineId32.dll</LogicalName>
     </EmbeddedResource>
 
     <EmbeddedResource Include="Assets\installerpic.jpg">
@@ -99,7 +99,7 @@
     <Error Condition="!Exists('$(MSBuildProjectDirectory)\Assets\Nutricula.ex4.sig')" Text="Required file missing: Assets\Nutricula.ex4.sig" />
     <Error Condition="!Exists('$(MSBuildProjectDirectory)\Assets\Nutricula.ex5.sig')" Text="Required file missing: Assets\Nutricula.ex5.sig" />
     <Error Condition="!Exists('$(MSBuildProjectDirectory)\Assets\MathUtils.dll')" Text="Required file missing: Assets\MathUtils.dll" />
-    <Error Condition="!Exists('$(MSBuildProjectDirectory)\Assets\NutriculaMachineId32.dll')" Text="Required file missing: Assets\NutriculaMachineId32.dll" />
+    <Error Condition="!Exists('$(MSBuildProjectDirectory)\Assets\MachineId32.dll')" Text="Required file missing: Assets\MachineId32.dll" />
     <Error Condition="!Exists('$(MSBuildProjectDirectory)\Assets\installerpic.jpg')" Text="Required file missing: Assets\installerpic.jpg" />
   </Target>
 
