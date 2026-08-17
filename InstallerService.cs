@@ -453,6 +453,13 @@ namespace NutriculaInstaller
                 };
             }
 
+            // Empty for physical machines - only VMs collect an IP at all. Sent
+            // separately (not just inside the machine_id hash) because machine_id is
+            // a one-way SHA-256 hash and the server cannot recover this value from
+            // it afterwards; sending it lets the server compare it against the
+            // connection's real, unforgeable source IP.
+            string localIp = MachineIdService.GetLastClientIp();
+
             string rndNumber = CryptoService.Generate32DigitRandomNumber();
 
             string encodedPostData = CryptoService.BuildPostData(
@@ -460,18 +467,14 @@ namespace NutriculaInstaller
                 purchaseKey,
                 machineId,
                 rndNumber,
-                mode == InstallMode.Transfer ? transferKey : null
+                mode == InstallMode.Transfer ? transferKey : null,
+                localIp
             );
 
             string baseUrl =
                 mode == InstallMode.Premium
                     ? PremiumUrl
                     : TransferUrl;
-
-            string url =
-                baseUrl +
-                "?data=" +
-                encodedPostData;
 
             log("Machine ID generated: " + machineId);
             log("Sending license request...");
@@ -486,12 +489,19 @@ namespace NutriculaInstaller
                 using (HttpClientHandler handler = new HttpClientHandler())
                 using (HttpClient client = new HttpClient(handler))
                 using (HttpRequestMessage request =
-                    new HttpRequestMessage(HttpMethod.Get, url))
+                    new HttpRequestMessage(HttpMethod.Post, baseUrl))
                 {
                     client.Timeout = TimeSpan.FromSeconds(60);
 
                     request.Headers.UserAgent.ParseAdd(
                         "NutriculaExpertInstaller/1.0"
+                    );
+
+                    request.Content = new FormUrlEncodedContent(
+                        new[]
+                        {
+                            new KeyValuePair<string, string>("data", encodedPostData)
+                        }
                     );
 
                     using (HttpResponseMessage response =
