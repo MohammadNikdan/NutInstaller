@@ -26,13 +26,13 @@ namespace NutriculaInstaller
         private static GenerateMachineIdDelegate generateMachineId;
         private static GetLastStatusDelegate getLastStatus;
 
-        [UnmanagedFunctionPointer(CallingConvention.StdCall)]
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
         private delegate int GenerateMachineIdDelegate(
             IntPtr output,
             int outputCapacity
         );
 
-        [UnmanagedFunctionPointer(CallingConvention.StdCall)]
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
         private delegate int GetLastStatusDelegate();
 
         [DllImport(
@@ -173,9 +173,10 @@ namespace NutriculaInstaller
                     );
                 }
 
-                // The DLL's .def file aliases the stdcall-decorated export
-                // ("Nutricula_GenerateMachineId@8") to this clean, undecorated name too,
-                // so a plain lookup works correctly here.
+                // The DLL's exported functions are __cdecl, which MinGW never
+                // decorates on x86 (unlike __stdcall, which gets an "@N" suffix) -
+                // so a plain lookup by this clean name always works, regardless of
+                // build tooling.
                 IntPtr generateAddress =
                     GetProcAddress(
                         dllHandle,
