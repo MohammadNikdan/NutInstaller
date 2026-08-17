@@ -43,6 +43,14 @@ namespace NutriculaInstaller
         private const int CredentialsCardHeightBase = 210;   // Free/Premium: unchanged from before
         private const int CredentialsCardHeightTransfer = 300; // Transfer: room for the extra field
 
+        // Fixed position/size for the promo image (installerpic.jpg), shown on the select
+        // page, the progress page (both running and result states), and the credentials
+        // page in Premium mode only (Transfer mode uses this space for the extra field).
+        // Y=366 clears every one of those pages' lowest content edge with margin to spare.
+        private const int PromoImageY = 366;
+        private const int PromoImageHeight = 88;
+        private PictureBox credentialsPromoImage;
+
         // Progress page
         private Panel runningPanel;
         private Panel resultPanel;
@@ -322,6 +330,8 @@ namespace NutriculaInstaller
             page.Controls.Add(premiumTile);
             page.Controls.Add(transferTile);
 
+            page.Controls.Add(UiHelpers.CreatePromoImageBox(new Point(0, PromoImageY), new Size(PageWidth, PromoImageHeight)));
+
             return page;
         }
 
@@ -404,6 +414,12 @@ namespace NutriculaInstaller
             installButton.Click += async delegate { await OnInstallTappedAsync(); };
             page.Controls.Add(installButton);
 
+            // Promo image: same fixed spot as the select/progress pages, but only relevant
+            // in Premium mode - Transfer mode uses this space for the extra field instead.
+            credentialsPromoImage = UiHelpers.CreatePromoImageBox(new Point(0, PromoImageY), new Size(PageWidth, PromoImageHeight));
+            credentialsPromoImage.Visible = false;
+            page.Controls.Add(credentialsPromoImage);
+
             return page;
         }
 
@@ -418,6 +434,7 @@ namespace NutriculaInstaller
             bool showTransfer = mode == InstallMode.Transfer;
             transferCaption.Visible = showTransfer;
             transferFieldWrap.Visible = showTransfer;
+            credentialsPromoImage.Visible = !showTransfer;
 
             int cardHeight = showTransfer ? CredentialsCardHeightTransfer : CredentialsCardHeightBase;
             credentialsCard.Size = new Size(PageWidth, cardHeight);
@@ -537,14 +554,18 @@ namespace NutriculaInstaller
             // of breathing room above the edge) rather than crowding the result card.
             resultSummaryLabel = new Label
             {
-                Dock = DockStyle.Bottom,
-                Height = 20,
+                Location = new Point(0, 318),
+                Size = new Size(PageWidth, 20),
                 Font = new Font("Segoe UI", 7.2f),
                 ForeColor = Color.Black,
                 TextAlign = ContentAlignment.MiddleCenter,
                 Visible = false
             };
             page.Controls.Add(resultSummaryLabel);
+
+            // Same fixed spot as the select page - visible throughout both the running
+            // and result states, since neither of them extends this far down.
+            page.Controls.Add(UiHelpers.CreatePromoImageBox(new Point(0, PromoImageY), new Size(PageWidth, PromoImageHeight)));
 
             return page;
         }
