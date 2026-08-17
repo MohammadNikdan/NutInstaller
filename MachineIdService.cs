@@ -25,6 +25,7 @@ namespace NutriculaInstaller
 
         private static GenerateMachineIdDelegate generateMachineId;
         private static GetLastStatusDelegate getLastStatus;
+        private static GetLastClientIpDelegate getLastClientIp;
 
         [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
         private delegate int GenerateMachineIdDelegate(
@@ -34,6 +35,12 @@ namespace NutriculaInstaller
 
         [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
         private delegate int GetLastStatusDelegate();
+
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+        private delegate int GetLastClientIpDelegate(
+            IntPtr output,
+            int outputCapacity
+        );
 
         [DllImport(
             "kernel32.dll",
@@ -128,6 +135,45 @@ namespace NutriculaInstaller
             }
         }
 
+        /// <summary>
+        /// Returns the IP address that was folded into the hash on the most recent
+        /// GenerateComputerId() call, or "" if the machine wasn't classified as a VM
+        /// (physical machines never collect one) or no adapter IP was found.
+        /// machine_id itself is a one-way SHA-256 hash, so this is the only way to
+        /// recover the claimed IP - sent separately so the server can compare it
+        /// against the connection's real, unforgeable source address.
+        /// </summary>
+        public static string GetLastClientIp()
+        {
+            EnsureLoaded();
+
+            const int capacity = 256;
+            IntPtr buffer = IntPtr.Zero;
+
+            try
+            {
+                buffer = Marshal.AllocHGlobal(capacity);
+                Marshal.WriteByte(buffer, 0, 0);
+
+                int result = getLastClientIp(buffer, capacity);
+                if (result != 1)
+                    return string.Empty;
+
+                return Marshal.PtrToStringAnsi(buffer) ?? string.Empty;
+            }
+            catch
+            {
+                // Best-effort only - never let this break the license request over
+                // an optional, supplementary value.
+                return string.Empty;
+            }
+            finally
+            {
+                if (buffer != IntPtr.Zero)
+                    Marshal.FreeHGlobal(buffer);
+            }
+        }
+
         private static int SafeGetLastStatus()
         {
             try
@@ -144,7 +190,8 @@ namespace NutriculaInstaller
         {
             if (dllHandle != IntPtr.Zero &&
                 generateMachineId != null &&
-                getLastStatus != null)
+                getLastStatus != null &&
+                getLastClientIp != null)
             {
                 return;
             }
@@ -153,7 +200,8 @@ namespace NutriculaInstaller
             {
                 if (dllHandle != IntPtr.Zero &&
                     generateMachineId != null &&
-                    getLastStatus != null)
+                    getLastStatus != null &&
+                    getLastClientIp != null)
                 {
                     return;
                 }
@@ -207,6 +255,21 @@ namespace NutriculaInstaller
                     );
                 }
 
+                IntPtr clientIpAddress =
+                    GetProcAddress(
+                        dllHandle,
+                        "Nutricula_GetLastClientIp"
+                    );
+
+                if (clientIpAddress == IntPtr.Zero)
+                {
+                    throw new MachineIdException(
+                        "The exported function " +
+                        "'Nutricula_GetLastClientIp' " +
+                        "was not found in MachineId32.dll."
+                    );
+                }
+
                 generateMachineId =
                     Marshal.GetDelegateForFunctionPointer<
                         GenerateMachineIdDelegate
@@ -216,6 +279,11 @@ namespace NutriculaInstaller
                     Marshal.GetDelegateForFunctionPointer<
                         GetLastStatusDelegate
                     >(statusAddress);
+
+                getLastClientIp =
+                    Marshal.GetDelegateForFunctionPointer<
+                        GetLastClientIpDelegate
+                    >(clientIpAddress);
             }
         }
 
