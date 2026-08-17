@@ -12,10 +12,10 @@ namespace NutriculaInstaller
         // runs as a 32-bit process regardless of the OS - only the 32-bit DLL is ever
         // needed here.
         private const string ResourceName =
-            "NutriculaInstaller.Assets.NutriculaMachineId32.dll";
+            "NutriculaInstaller.Assets.MachineId32.dll";
 
         private const string DllFileName =
-            "NutriculaMachineId32.dll";
+            "MachineId32.dll";
 
         private const int OutputCapacity = 65;
 
@@ -167,7 +167,7 @@ namespace NutriculaInstaller
                     int error = Marshal.GetLastWin32Error();
 
                     throw new MachineIdException(
-                        "Could not load NutriculaMachineId32.dll. " +
+                        "Could not load MachineId32.dll. " +
                         "Win32 error: " + error +
                         ". Path: " + dllPath
                     );
@@ -187,7 +187,7 @@ namespace NutriculaInstaller
                     throw new MachineIdException(
                         "The exported function " +
                         "'Nutricula_GenerateMachineId' " +
-                        "was not found in NutriculaMachineId32.dll."
+                        "was not found in MachineId32.dll."
                     );
                 }
 
@@ -202,7 +202,7 @@ namespace NutriculaInstaller
                     throw new MachineIdException(
                         "The exported function " +
                         "'Nutricula_GetLastStatus' " +
-                        "was not found in NutriculaMachineId32.dll."
+                        "was not found in MachineId32.dll."
                     );
                 }
 
