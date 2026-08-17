@@ -44,9 +44,8 @@ namespace NutriculaInstaller
         private const int CredentialsCardHeightTransfer = 300; // Transfer: room for the extra field
 
         // Fixed position/size for the promo image (installerpic.jpg), shown on the select
-        // page, the progress page (both running and result states), and the credentials
-        // page in Premium mode only (Transfer mode uses this space for the extra field).
-        // Y=366 clears every one of those pages' lowest content edge with margin to spare.
+        // page and the credentials page in Premium mode only (hidden during/after install,
+        // and in Transfer mode where this space is used for the extra field instead).
         private const int PromoImageY = 366;
         private const int PromoImageHeight = 88;
         private PictureBox credentialsPromoImage;
@@ -393,7 +392,7 @@ namespace NutriculaInstaller
             {
                 AutoSize = false,
                 Size = new Size(credentialsCard.Width - 36, 30),
-                Text = "Required for Premium installation and license transfer.",
+                Text = "Required for Premium installation.",
                 Font = UiHelpers.UiFont(9f),
                 ForeColor = UiHelpers.TextMuted,
                 Location = new Point(18, 172),
@@ -554,18 +553,14 @@ namespace NutriculaInstaller
             // of breathing room above the edge) rather than crowding the result card.
             resultSummaryLabel = new Label
             {
-                Location = new Point(0, 318),
-                Size = new Size(PageWidth, 20),
+                Dock = DockStyle.Bottom,
+                Height = 20,
                 Font = new Font("Segoe UI", 7.2f),
                 ForeColor = Color.Black,
                 TextAlign = ContentAlignment.MiddleCenter,
                 Visible = false
             };
             page.Controls.Add(resultSummaryLabel);
-
-            // Same fixed spot as the select page - visible throughout both the running
-            // and result states, since neither of them extends this far down.
-            page.Controls.Add(UiHelpers.CreatePromoImageBox(new Point(0, PromoImageY), new Size(PageWidth, PromoImageHeight)));
 
             return page;
         }
@@ -599,7 +594,9 @@ namespace NutriculaInstaller
                 ? "Enter your Email and Purchase Key to activate a license on this computer."
                 : "Enter your Email, Purchase Key, and Transfer Key to move your existing license to this computer.";
             helperLabel.ForeColor = UiHelpers.TextMuted;
-            helperLabel.Text = "Required for Premium installation and license transfer.";
+            helperLabel.Text = mode == InstallMode.Premium
+                ? "Required for Premium installation."
+                : "Required for license transfer.";
             LayoutCredentialsFields(mode);
             ShowPage(pageCredentials);
         }
@@ -698,7 +695,30 @@ namespace NutriculaInstaller
             if (resultBadge != null)
                 resultBadge.Left = (w - resultBadge.Width) / 2;
 
-            const int buttonY = 164;
+            // The message can wrap to multiple lines for long text - measure how tall it
+            // actually needs to be and push the buttons (and everything after them) down
+            // to match, instead of a fixed height that would just clip long text.
+            // maxButtonY keeps the buttons safely within the fixed-size window regardless
+            // of how long the message gets - the window itself never resizes, so this is
+            // what actually guarantees the buttons stay visible/clickable.
+            const int maxButtonY = 310;
+            int messageHeight = 56;
+            if (resultMessageLabel != null)
+            {
+                string text = resultMessageLabel.Text ?? string.Empty;
+                Size measured = TextRenderer.MeasureText(
+                    text,
+                    resultMessageLabel.Font,
+                    new Size(w, int.MaxValue),
+                    TextFormatFlags.WordBreak | TextFormatFlags.HorizontalCenter | TextFormatFlags.NoPadding);
+                messageHeight = Math.Max(56, measured.Height + 12);
+                int maxMessageHeight = maxButtonY - 108;
+                if (messageHeight > maxMessageHeight) messageHeight = maxMessageHeight;
+                resultMessageLabel.Size = new Size(w, messageHeight);
+            }
+
+            int buttonY = Math.Min(100 + messageHeight + 8, maxButtonY);
+
             if (success)
             {
                 tryAgainButton.Visible = false;
