@@ -8,11 +8,14 @@ namespace NutriculaInstaller
 {
     internal static class MachineIdService
     {
+        // The installer builds as PlatformTarget=x86 (see the .csproj), so it always
+        // runs as a 32-bit process regardless of the OS - only the 32-bit DLL is ever
+        // needed here.
         private const string ResourceName =
-            "NutriculaInstaller.Assets.MachineId32.dll";
+            "NutriculaInstaller.Assets.NutriculaMachineId32.dll";
 
         private const string DllFileName =
-            "MachineId32.dll";
+            "NutriculaMachineId32.dll";
 
         private const int OutputCapacity = 65;
 
@@ -164,12 +167,15 @@ namespace NutriculaInstaller
                     int error = Marshal.GetLastWin32Error();
 
                     throw new MachineIdException(
-                        "Could not load MachineId32.dll. " +
+                        "Could not load NutriculaMachineId32.dll. " +
                         "Win32 error: " + error +
                         ". Path: " + dllPath
                     );
                 }
 
+                // The DLL's .def file aliases the stdcall-decorated export
+                // ("Nutricula_GenerateMachineId@8") to this clean, undecorated name too,
+                // so a plain lookup works correctly here.
                 IntPtr generateAddress =
                     GetProcAddress(
                         dllHandle,
@@ -181,7 +187,7 @@ namespace NutriculaInstaller
                     throw new MachineIdException(
                         "The exported function " +
                         "'Nutricula_GenerateMachineId' " +
-                        "was not found in MachineId32.dll."
+                        "was not found in NutriculaMachineId32.dll."
                     );
                 }
 
@@ -196,7 +202,7 @@ namespace NutriculaInstaller
                     throw new MachineIdException(
                         "The exported function " +
                         "'Nutricula_GetLastStatus' " +
-                        "was not found in MachineId32.dll."
+                        "was not found in NutriculaMachineId32.dll."
                     );
                 }
 
