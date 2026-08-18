@@ -2,366 +2,325 @@ using System;
 using System.IO;
 using System.Reflection;
 using System.Runtime.InteropServices;
-using System.Threading;
 
 namespace NutriculaInstaller
 {
     internal static class MachineIdService
     {
-        // The installer builds as PlatformTarget=x86 (see the .csproj), so it always
-        // runs as a 32-bit process regardless of the OS - only the 32-bit DLL is ever
-        // needed here.
-        private const string ResourceName =
-            "NutriculaInstaller.Assets.MachineId32.dll";
-
-        private const string DllFileName =
-            "MachineId32.dll";
-
-        private const int OutputCapacity = 65;
-
+        private const string ResourceName = "NutriculaInstaller.Assets.MachineId32.dll";
+        private const string DllFileName = "MachineId32.dll";
+        private const int MachineIdOutputCapacity = 65;
+        private const int DevicePublicKeyCapacity = 256;
+        private const int DeviceKeyHashCapacity = 65;
+        private const int LicensePathCapacity = 1024;
+        private const int SignOutputCapacity = 128;
+        private const int GcmOutputCapacity = 131072;
         private static readonly object SyncRoot = new object();
-
         private static IntPtr dllHandle = IntPtr.Zero;
-
         private static GenerateMachineIdDelegate generateMachineId;
         private static GetLastStatusDelegate getLastStatus;
+        private static IsWineEnvironmentDelegate isWineEnvironment;
         private static GetLastClientIpDelegate getLastClientIp;
+        private static GetDevicePublicKeyDelegate getDevicePublicKey;
+        private static GetDeviceKeyHashDelegate getDeviceKeyHash;
+        private static GetLicensePathDelegate getLicensePath;
+        private static SignChallengeDelegate signChallenge;
+        private static GcmProtectDelegate gcmProtect;
+        private static GcmUnprotectDelegate gcmUnprotect;
 
         [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
-        private delegate int GenerateMachineIdDelegate(
-            IntPtr output,
-            int outputCapacity
-        );
-
+        private delegate int GenerateMachineIdDelegate(IntPtr output, int outputCapacity);
         [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
         private delegate int GetLastStatusDelegate();
-
         [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
-        private delegate int GetLastClientIpDelegate(
-            IntPtr output,
-            int outputCapacity
-        );
+        private delegate int IsWineEnvironmentDelegate();
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+        private delegate int GetLastClientIpDelegate(IntPtr output, int outputCapacity);
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+        private delegate int GetDevicePublicKeyDelegate(IntPtr output, int outputCapacity);
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+        private delegate int GetDeviceKeyHashDelegate(IntPtr output, int outputCapacity);
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+        private delegate int GetLicensePathDelegate(IntPtr output, int outputCapacity);
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+        private delegate int SignChallengeDelegate(IntPtr message, int messageLength, IntPtr signature, int signatureCapacity);
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+        private delegate int GcmProtectDelegate(IntPtr plaintext, int plaintextLength, IntPtr output, int outputCapacity);
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+        private delegate int GcmUnprotectDelegate(IntPtr envelope, int envelopeLength, IntPtr output, int outputCapacity);
 
-        [DllImport(
-            "kernel32.dll",
-            CharSet = CharSet.Unicode,
-            SetLastError = true
-        )]
-        private static extern IntPtr LoadLibraryW(
-            string lpFileName
-        );
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        private static extern IntPtr LoadLibraryW(string lpFileName);
 
-        [DllImport(
-            "kernel32.dll",
-            CharSet = CharSet.Ansi,
-            ExactSpelling = true,
-            SetLastError = true
-        )]
-        private static extern IntPtr GetProcAddress(
-            IntPtr hModule,
-            string lpProcName
-        );
+        [DllImport("kernel32.dll", CharSet = CharSet.Ansi, ExactSpelling = true, SetLastError = true)]
+        private static extern IntPtr GetProcAddress(IntPtr hModule, string lpProcName);
 
         public static string GenerateComputerId()
         {
             EnsureLoaded();
-
             IntPtr buffer = IntPtr.Zero;
-
             try
             {
-                buffer = Marshal.AllocHGlobal(OutputCapacity);
-
-                for (int i = 0; i < OutputCapacity; i++)
-                    Marshal.WriteByte(buffer, i, 0);
-
-                int result = generateMachineId(
-                    buffer,
-                    OutputCapacity
-                );
-
+                buffer = Marshal.AllocHGlobal(MachineIdOutputCapacity);
+                for (int i = 0; i < MachineIdOutputCapacity; i++) Marshal.WriteByte(buffer, i, 0);
+                int result = generateMachineId(buffer, MachineIdOutputCapacity);
                 if (result != 1)
                 {
-                    int status = SafeGetLastStatus();
-
-                    throw new MachineIdException(
-                        "Machine ID generation failed. " +
-                        "DLL return code: " + result +
-                        ", DLL status: " + status + "."
-                    );
+                    throw new MachineIdException("Machine ID generation failed. DLL return code: " + result + ", DLL status: " + SafeGetLastStatus() + ".");
                 }
-
-                string machineId =
-                    Marshal.PtrToStringAnsi(buffer);
-
-                if (string.IsNullOrEmpty(machineId))
-                {
-                    throw new MachineIdException(
-                        "Machine ID DLL returned an empty result."
-                    );
-                }
-
-                if (machineId.Length != 64)
-                {
-                    throw new MachineIdException(
-                        "Machine ID DLL returned an invalid " +
-                        "length: " + machineId.Length + "."
-                    );
-                }
-
+                string machineId = Marshal.PtrToStringAnsi(buffer);
+                if (string.IsNullOrEmpty(machineId) || machineId.Length != 64)
+                    throw new MachineIdException("Machine ID DLL returned an invalid result.");
                 for (int i = 0; i < machineId.Length; i++)
                 {
                     char c = machineId[i];
-
-                    bool valid =
-                        (c >= '0' && c <= '9') ||
-                        (c >= 'A' && c <= 'F');
-
-                    if (!valid)
-                    {
-                        throw new MachineIdException(
-                            "Machine ID DLL returned invalid " +
-                            "hexadecimal data."
-                        );
-                    }
+                    if (!((c >= '0' && c <= '9') || (c >= 'A' && c <= 'F')))
+                        throw new MachineIdException("Machine ID DLL returned invalid hexadecimal data.");
                 }
-
                 return machineId;
             }
             finally
             {
-                if (buffer != IntPtr.Zero)
-                    Marshal.FreeHGlobal(buffer);
+                if (buffer != IntPtr.Zero) Marshal.FreeHGlobal(buffer);
             }
         }
 
         /// <summary>
-        /// Returns the IP address that was folded into the hash on the most recent
-        /// GenerateComputerId() call, or "" if the machine wasn't classified as a VM
-        /// (physical machines never collect one) or no adapter IP was found.
-        /// machine_id itself is a one-way SHA-256 hash, so this is the only way to
-        /// recover the claimed IP - sent separately so the server can compare it
-        /// against the connection's real, unforgeable source address.
+        /// Asks the DLL directly whether it detected a Wine/CrossOver environment,
+        /// rather than the installer re-implementing (and potentially diverging
+        /// from) the same detection logic - the DLL's check (wine_get_version
+        /// export probe) is the more reliable one and should be the single
+        /// source of truth.
         /// </summary>
+        public static bool IsWineEnvironment()
+        {
+            EnsureLoaded();
+            try { return isWineEnvironment() != 0; }
+            catch { return false; }
+        }
+
         public static string GetLastClientIp()
         {
             EnsureLoaded();
-
             const int capacity = 256;
             IntPtr buffer = IntPtr.Zero;
-
             try
             {
                 buffer = Marshal.AllocHGlobal(capacity);
-                Marshal.WriteByte(buffer, 0, 0);
-
-                int result = getLastClientIp(buffer, capacity);
-                if (result != 1)
-                    return string.Empty;
-
-                return Marshal.PtrToStringAnsi(buffer) ?? string.Empty;
+                for (int i = 0; i < capacity; i++) Marshal.WriteByte(buffer, i, 0);
+                return getLastClientIp(buffer, capacity) == 1
+                    ? (Marshal.PtrToStringAnsi(buffer) ?? string.Empty)
+                    : string.Empty;
             }
-            catch
+            catch { return string.Empty; }
+            finally
             {
-                // Best-effort only - never let this break the license request over
-                // an optional, supplementary value.
-                return string.Empty;
+                if (buffer != IntPtr.Zero) Marshal.FreeHGlobal(buffer);
+            }
+        }
+
+        public static string GetDevicePublicKey()
+        {
+            EnsureLoaded();
+            IntPtr buffer = IntPtr.Zero;
+            try
+            {
+                buffer = Marshal.AllocHGlobal(DevicePublicKeyCapacity);
+                for (int i = 0; i < DevicePublicKeyCapacity; i++) Marshal.WriteByte(buffer, i, 0);
+                int result = getDevicePublicKey(buffer, DevicePublicKeyCapacity);
+                if (result != 1) throw new DeviceKeyException("Device public key is unavailable.");
+                string key = Marshal.PtrToStringAnsi(buffer);
+                if (string.IsNullOrEmpty(key)) throw new DeviceKeyException("Device public key is empty.");
+                return key;
             }
             finally
             {
-                if (buffer != IntPtr.Zero)
-                    Marshal.FreeHGlobal(buffer);
+                if (buffer != IntPtr.Zero) Marshal.FreeHGlobal(buffer);
+            }
+        }
+
+
+        public static string GetDeviceKeyHash()
+        {
+            EnsureLoaded();
+            IntPtr buffer = Marshal.AllocHGlobal(DeviceKeyHashCapacity);
+            try
+            {
+                for (int i = 0; i < DeviceKeyHashCapacity; i++) Marshal.WriteByte(buffer, i, 0);
+                int result = getDeviceKeyHash(buffer, DeviceKeyHashCapacity);
+                if (result != 1) throw new DeviceKeyException("Device key hash is unavailable.");
+                return Marshal.PtrToStringAnsi(buffer) ?? throw new DeviceKeyException("Device key hash is empty.");
+            }
+            finally { Marshal.FreeHGlobal(buffer); }
+        }
+
+        public static string GetLicensePath()
+        {
+            EnsureLoaded();
+            IntPtr buffer = Marshal.AllocHGlobal(LicensePathCapacity);
+            try
+            {
+                for (int i = 0; i < LicensePathCapacity; i++) Marshal.WriteByte(buffer, i, 0);
+                int result = getLicensePath(buffer, LicensePathCapacity);
+                if (result != 1) throw new DeviceKeyException("License path is unavailable.");
+                return Marshal.PtrToStringAnsi(buffer) ?? string.Empty;
+            }
+            finally { Marshal.FreeHGlobal(buffer); }
+        }
+
+        private static void SafeFreeHGlobal(IntPtr ptr, int length)
+        {
+            if (ptr == IntPtr.Zero) return;
+            for (int i = 0; i < length; i++) Marshal.WriteByte(ptr, i, 0);
+            Marshal.FreeHGlobal(ptr);
+        }
+
+        public static string ProtectPayloadGcm(string plaintext)
+        {
+            if (plaintext == null) throw new ArgumentNullException("plaintext");
+            EnsureLoaded();
+            byte[] input = System.Text.Encoding.UTF8.GetBytes(plaintext);
+            IntPtr inputPtr = IntPtr.Zero;
+            IntPtr outputPtr = IntPtr.Zero;
+            try
+            {
+                inputPtr = Marshal.AllocHGlobal(input.Length == 0 ? 1 : input.Length);
+                if (input.Length > 0) Marshal.Copy(input, 0, inputPtr, input.Length);
+                outputPtr = Marshal.AllocHGlobal(GcmOutputCapacity);
+                for (int i = 0; i < GcmOutputCapacity; i++) Marshal.WriteByte(outputPtr, i, 0);
+                int result = gcmProtect(inputPtr, input.Length, outputPtr, GcmOutputCapacity);
+                if (result <= 0) throw new CryptoException("GCM encryption failed. DLL return code: " + result + ".");
+                return Marshal.PtrToStringAnsi(outputPtr) ?? throw new CryptoException("GCM returned an empty envelope.");
+            }
+            finally
+            {
+                // inputPtr held the plaintext (email, purchase_key, device key, etc.) -
+                // zero it before freeing, not just the managed copy.
+                SafeFreeHGlobal(inputPtr, input.Length == 0 ? 1 : input.Length);
+                if (outputPtr != IntPtr.Zero) Marshal.FreeHGlobal(outputPtr); // ciphertext, not sensitive
+                Array.Clear(input, 0, input.Length);
+            }
+        }
+
+        public static string UnprotectPayloadGcm(string envelope)
+        {
+            if (envelope == null) throw new ArgumentNullException("envelope");
+            EnsureLoaded();
+            byte[] input = System.Text.Encoding.ASCII.GetBytes(envelope);
+            IntPtr inputPtr = IntPtr.Zero;
+            IntPtr outputPtr = IntPtr.Zero;
+            try
+            {
+                inputPtr = Marshal.AllocHGlobal(input.Length == 0 ? 1 : input.Length);
+                if (input.Length > 0) Marshal.Copy(input, 0, inputPtr, input.Length);
+                outputPtr = Marshal.AllocHGlobal(GcmOutputCapacity);
+                for (int i = 0; i < GcmOutputCapacity; i++) Marshal.WriteByte(outputPtr, i, 0);
+                int result = gcmUnprotect(inputPtr, input.Length, outputPtr, GcmOutputCapacity);
+                if (result <= 0) throw new CryptoException("GCM decryption/authentication failed. DLL return code: " + result + ".");
+                byte[] output = new byte[result];
+                Marshal.Copy(outputPtr, output, 0, result);
+                return System.Text.Encoding.UTF8.GetString(output);
+            }
+            finally
+            {
+                if (inputPtr != IntPtr.Zero) Marshal.FreeHGlobal(inputPtr); // ciphertext, not sensitive
+                // outputPtr held the decrypted lease plaintext - zero it before freeing.
+                SafeFreeHGlobal(outputPtr, GcmOutputCapacity);
+                Array.Clear(input, 0, input.Length);
+            }
+        }
+
+        public static string SignChallenge(string canonicalMessage)
+        {
+            if (canonicalMessage == null) throw new ArgumentNullException("canonicalMessage");
+            EnsureLoaded();
+            byte[] message = System.Text.Encoding.UTF8.GetBytes(canonicalMessage);
+            IntPtr messagePtr = IntPtr.Zero;
+            IntPtr signaturePtr = IntPtr.Zero;
+            try
+            {
+                messagePtr = Marshal.AllocHGlobal(message.Length == 0 ? 1 : message.Length);
+                if (message.Length > 0) Marshal.Copy(message, 0, messagePtr, message.Length);
+                signaturePtr = Marshal.AllocHGlobal(SignOutputCapacity);
+                for (int i = 0; i < SignOutputCapacity; i++) Marshal.WriteByte(signaturePtr, i, 0);
+                int signatureLength = signChallenge(messagePtr, message.Length, signaturePtr, SignOutputCapacity);
+                if (signatureLength <= 0) throw new DeviceKeyException("Device signature failed. DLL return code: " + signatureLength + ".");
+                byte[] signature = new byte[signatureLength];
+                Marshal.Copy(signaturePtr, signature, 0, signatureLength);
+                return Convert.ToBase64String(signature);
+            }
+            finally
+            {
+                SafeFreeHGlobal(messagePtr, message.Length == 0 ? 1 : message.Length);
+                if (signaturePtr != IntPtr.Zero) Marshal.FreeHGlobal(signaturePtr); // signature, not sensitive
+                Array.Clear(message, 0, message.Length);
             }
         }
 
         private static int SafeGetLastStatus()
         {
-            try
-            {
-                return getLastStatus();
-            }
-            catch
-            {
-                return -999;
-            }
+            try { return getLastStatus(); } catch { return -999; }
         }
 
         private static void EnsureLoaded()
         {
-            if (dllHandle != IntPtr.Zero &&
-                generateMachineId != null &&
-                getLastStatus != null &&
-                getLastClientIp != null)
-            {
-                return;
-            }
-
+            if (dllHandle != IntPtr.Zero && generateMachineId != null && getLastStatus != null && isWineEnvironment != null && getLastClientIp != null && getDevicePublicKey != null && getDeviceKeyHash != null && getLicensePath != null && signChallenge != null && gcmProtect != null && gcmUnprotect != null) return;
             lock (SyncRoot)
             {
-                if (dllHandle != IntPtr.Zero &&
-                    generateMachineId != null &&
-                    getLastStatus != null &&
-                    getLastClientIp != null)
-                {
-                    return;
-                }
-
+                if (dllHandle != IntPtr.Zero && generateMachineId != null && getLastStatus != null && isWineEnvironment != null && getLastClientIp != null && getDevicePublicKey != null && getDeviceKeyHash != null && getLicensePath != null && signChallenge != null && gcmProtect != null && gcmUnprotect != null) return;
                 string dllPath = ExtractDllToTemp();
-
                 dllHandle = LoadLibraryW(dllPath);
+                if (dllHandle == IntPtr.Zero) throw new MachineIdException("Could not load MachineId32.dll. Win32 error: " + Marshal.GetLastWin32Error() + ". Path: " + dllPath);
 
-                if (dllHandle == IntPtr.Zero)
-                {
-                    int error = Marshal.GetLastWin32Error();
-
-                    throw new MachineIdException(
-                        "Could not load MachineId32.dll. " +
-                        "Win32 error: " + error +
-                        ". Path: " + dllPath
-                    );
-                }
-
-                // The DLL's exported functions are __cdecl, which MinGW never
-                // decorates on x86 (unlike __stdcall, which gets an "@N" suffix) -
-                // so a plain lookup by this clean name always works, regardless of
-                // build tooling.
-                IntPtr generateAddress =
-                    GetProcAddress(
-                        dllHandle,
-                        "Nutricula_GenerateMachineId"
-                    );
-
-                if (generateAddress == IntPtr.Zero)
-                {
-                    throw new MachineIdException(
-                        "The exported function " +
-                        "'Nutricula_GenerateMachineId' " +
-                        "was not found in MachineId32.dll."
-                    );
-                }
-
-                IntPtr statusAddress =
-                    GetProcAddress(
-                        dllHandle,
-                        "Nutricula_GetLastStatus"
-                    );
-
-                if (statusAddress == IntPtr.Zero)
-                {
-                    throw new MachineIdException(
-                        "The exported function " +
-                        "'Nutricula_GetLastStatus' " +
-                        "was not found in MachineId32.dll."
-                    );
-                }
-
-                IntPtr clientIpAddress =
-                    GetProcAddress(
-                        dllHandle,
-                        "Nutricula_GetLastClientIp"
-                    );
-
-                if (clientIpAddress == IntPtr.Zero)
-                {
-                    throw new MachineIdException(
-                        "The exported function " +
-                        "'Nutricula_GetLastClientIp' " +
-                        "was not found in MachineId32.dll."
-                    );
-                }
-
-                generateMachineId =
-                    Marshal.GetDelegateForFunctionPointer<
-                        GenerateMachineIdDelegate
-                    >(generateAddress);
-
-                getLastStatus =
-                    Marshal.GetDelegateForFunctionPointer<
-                        GetLastStatusDelegate
-                    >(statusAddress);
-
-                getLastClientIp =
-                    Marshal.GetDelegateForFunctionPointer<
-                        GetLastClientIpDelegate
-                    >(clientIpAddress);
+                generateMachineId = LoadDelegate<GenerateMachineIdDelegate>("Nutricula_GenerateMachineId");
+                getLastStatus = LoadDelegate<GetLastStatusDelegate>("Nutricula_GetLastStatus");
+                isWineEnvironment = LoadDelegate<IsWineEnvironmentDelegate>("Nutricula_IsWineEnvironment");
+                getLastClientIp = LoadDelegate<GetLastClientIpDelegate>("Nutricula_GetLastClientIp");
+                getDevicePublicKey = LoadDelegate<GetDevicePublicKeyDelegate>("Nutricula_GetDevicePublicKey");
+                getDeviceKeyHash = LoadDelegate<GetDeviceKeyHashDelegate>("Nutricula_GetDeviceKeyHash");
+                getLicensePath = LoadDelegate<GetLicensePathDelegate>("Nutricula_GetLicensePath");
+                signChallenge = LoadDelegate<SignChallengeDelegate>("Nutricula_SignChallenge");
+                gcmProtect = LoadDelegate<GcmProtectDelegate>("Nutricula_ProtectPayloadGcm");
+                gcmUnprotect = LoadDelegate<GcmUnprotectDelegate>("Nutricula_UnprotectPayloadGcm");
             }
+        }
+
+        private static T LoadDelegate<T>(string name) where T : class
+        {
+            IntPtr address = GetProcAddress(dllHandle, name);
+            if (address == IntPtr.Zero) throw new MachineIdException("Export not found: " + name);
+            return Marshal.GetDelegateForFunctionPointer(address, typeof(T)) as T;
         }
 
         private static string ExtractDllToTemp()
         {
-            string root =
-                Path.Combine(
-                    Path.GetTempPath(),
-                    "NutriculaInstaller",
-                    "MachineId"
-                );
-
+            string root = Path.Combine(Path.GetTempPath(), "NutriculaInstaller", "MachineId");
             Directory.CreateDirectory(root);
-
-            string dllPath =
-                Path.Combine(
-                    root,
-                    DllFileName
-                );
-
-            Assembly assembly =
-                typeof(MachineIdService).Assembly;
-
-            using (Stream input =
-                assembly.GetManifestResourceStream(
-                    ResourceName
-                ))
+            string dllPath = Path.Combine(root, DllFileName);
+            Assembly assembly = typeof(MachineIdService).Assembly;
+            using (Stream input = assembly.GetManifestResourceStream(ResourceName))
             {
-                if (input == null)
-                {
-                    throw new MachineIdException(
-                        "Embedded Machine ID DLL resource was not found: " +
-                        ResourceName
-                    );
-                }
-
-                string tempPath =
-                    dllPath + ".tmp";
-
-                using (FileStream output =
-                    new FileStream(
-                        tempPath,
-                        FileMode.Create,
-                        FileAccess.Write,
-                        FileShare.None
-                    ))
-                {
-                    input.CopyTo(output);
-                }
-
-                if (File.Exists(dllPath))
-                    File.Delete(dllPath);
-
-                File.Move(
-                    tempPath,
-                    dllPath
-                );
+                if (input == null) throw new MachineIdException("Embedded Machine ID DLL resource was not found: " + ResourceName);
+                string tempPath = dllPath + ".tmp";
+                using (FileStream output = new FileStream(tempPath, FileMode.Create, FileAccess.Write, FileShare.None)) input.CopyTo(output);
+                if (File.Exists(dllPath)) File.Delete(dllPath);
+                File.Move(tempPath, dllPath);
             }
-
             return dllPath;
         }
 
         internal sealed class MachineIdException : Exception
         {
-            public MachineIdException(
-                string message
-            )
-                : base(message)
-            {
-            }
-
-            public MachineIdException(
-                string message,
-                Exception innerException
-            )
-                : base(message, innerException)
-            {
-            }
+            public MachineIdException(string message) : base(message) { }
+            public MachineIdException(string message, Exception innerException) : base(message, innerException) { }
+        }
+        internal sealed class DeviceKeyException : Exception
+        {
+            public DeviceKeyException(string message) : base(message) { }
+        }
+        internal sealed class CryptoException : Exception
+        {
+            public CryptoException(string message) : base(message) { }
         }
     }
 }
