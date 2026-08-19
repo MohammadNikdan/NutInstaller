@@ -764,34 +764,7 @@ namespace NutriculaInstaller
                     resultMessageLabel.Select(reminderStart, reminderLength);
                     resultMessageLabel.SelectionFont = UiHelpers.UiFont(11f, FontStyle.Regular);
                     resultMessageLabel.SelectionColor = Color.Black;
-
-                    string[] boldParts =
-                    {
-                        "MetaTrader",
-                        "Tools",
-                        "Options",
-                        "Experts",
-                        "Allow algorithmic (automated) trading",
-                        "Allow DLL imports"
-                    };
-
-                    foreach (string boldPart in boldParts)
-                    {
-                        int searchStart = reminderStart;
-
-                        while (searchStart < text.Length)
-                        {
-                            int index = text.IndexOf(boldPart, searchStart, StringComparison.Ordinal);
-                            if (index < 0)
-                                break;
-
-                            resultMessageLabel.Select(index, boldPart.Length);
-                            resultMessageLabel.SelectionFont = UiHelpers.UiFont(11f, FontStyle.Bold);
-                            resultMessageLabel.SelectionColor = Color.Black;
-
-                            searchStart = index + boldPart.Length;
-                        }
-                    }
+                    
                 }
             }
 
@@ -830,7 +803,7 @@ namespace NutriculaInstaller
                 resultMessageLabel.Size = new Size(w, messageHeight);
             }
             
-            int buttonY = resultMessageLabel.Top + messageHeight + (success ? 14 : 20);
+            int buttonY = resultMessageLabel.Top + messageHeight + (success ? 12 : 23);
 
             if (success)
             {
