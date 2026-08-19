@@ -658,6 +658,10 @@ namespace NutriculaInstaller
 
                 ShowResult(result.OverallSuccess, result.FinalMessage, result.Mt4Count, result.Mt5Count);
             }
+            catch (OperationCanceledException)
+            {
+                ShowResult(false, "The installation was cancelled.", 0, 0);
+            }
             catch (Exception ex)
             {
                 ShowResult(false, "The installation could not be completed: " + ex.Message, 0, 0);
