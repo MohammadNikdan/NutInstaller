@@ -66,16 +66,16 @@ namespace NutriculaInstaller
                 int result = generateMachineId(buffer, MachineIdOutputCapacity);
                 if (result != 1)
                 {
-                    throw new MachineIdException("Machine ID generation failed. DLL return code: " + result + ", DLL status: " + SafeGetLastStatus() + ".");
+                    throw new MachineIdException("This computer's setup could not be completed.");
                 }
                 string machineId = Marshal.PtrToStringAnsi(buffer);
                 if (string.IsNullOrEmpty(machineId) || machineId.Length != 64)
-                    throw new MachineIdException("Machine ID DLL returned an invalid result.");
+                    throw new MachineIdException("This computer's setup returned an unexpected result.");
                 for (int i = 0; i < machineId.Length; i++)
                 {
                     char c = machineId[i];
                     if (!((c >= '0' && c <= '9') || (c >= 'A' && c <= 'F')))
-                        throw new MachineIdException("Machine ID DLL returned invalid hexadecimal data.");
+                        throw new MachineIdException("This computer's setup returned unexpected data.");
                 }
                 return machineId;
             }
@@ -128,9 +128,9 @@ namespace NutriculaInstaller
                 buffer = Marshal.AllocHGlobal(DevicePublicKeyCapacity);
                 for (int i = 0; i < DevicePublicKeyCapacity; i++) Marshal.WriteByte(buffer, i, 0);
                 int result = getDevicePublicKey(buffer, DevicePublicKeyCapacity);
-                if (result != 1) throw new DeviceKeyException("Device public key is unavailable.");
+                if (result != 1) throw new DeviceKeyException("This computer's setup is unavailable.");
                 string key = Marshal.PtrToStringAnsi(buffer);
-                if (string.IsNullOrEmpty(key)) throw new DeviceKeyException("Device public key is empty.");
+                if (string.IsNullOrEmpty(key)) throw new DeviceKeyException("This computer's setup returned no data.");
                 return key;
             }
             finally
@@ -148,8 +148,8 @@ namespace NutriculaInstaller
             {
                 for (int i = 0; i < DeviceKeyHashCapacity; i++) Marshal.WriteByte(buffer, i, 0);
                 int result = getDeviceKeyHash(buffer, DeviceKeyHashCapacity);
-                if (result != 1) throw new DeviceKeyException("Device key hash is unavailable.");
-                return Marshal.PtrToStringAnsi(buffer) ?? throw new DeviceKeyException("Device key hash is empty.");
+                if (result != 1) throw new DeviceKeyException("This computer's setup is unavailable.");
+                return Marshal.PtrToStringAnsi(buffer) ?? throw new DeviceKeyException("This computer's setup returned no data.");
             }
             finally { Marshal.FreeHGlobal(buffer); }
         }
@@ -162,7 +162,7 @@ namespace NutriculaInstaller
             {
                 for (int i = 0; i < LicensePathCapacity; i++) Marshal.WriteByte(buffer, i, 0);
                 int result = getLicensePath(buffer, LicensePathCapacity);
-                if (result != 1) throw new DeviceKeyException("License path is unavailable.");
+                if (result != 1) throw new DeviceKeyException("Could not determine a required file location.");
                 return Marshal.PtrToStringAnsi(buffer) ?? string.Empty;
             }
             finally { Marshal.FreeHGlobal(buffer); }
@@ -189,8 +189,8 @@ namespace NutriculaInstaller
                 outputPtr = Marshal.AllocHGlobal(GcmOutputCapacity);
                 for (int i = 0; i < GcmOutputCapacity; i++) Marshal.WriteByte(outputPtr, i, 0);
                 int result = gcmProtect(inputPtr, input.Length, outputPtr, GcmOutputCapacity);
-                if (result <= 0) throw new CryptoException("GCM encryption failed. DLL return code: " + result + ".");
-                return Marshal.PtrToStringAnsi(outputPtr) ?? throw new CryptoException("GCM returned an empty envelope.");
+                if (result <= 0) throw new CryptoException("Could not prepare the request.");
+                return Marshal.PtrToStringAnsi(outputPtr) ?? throw new CryptoException("Could not prepare the request.");
             }
             finally
             {
@@ -216,7 +216,7 @@ namespace NutriculaInstaller
                 outputPtr = Marshal.AllocHGlobal(GcmOutputCapacity);
                 for (int i = 0; i < GcmOutputCapacity; i++) Marshal.WriteByte(outputPtr, i, 0);
                 int result = gcmUnprotect(inputPtr, input.Length, outputPtr, GcmOutputCapacity);
-                if (result <= 0) throw new CryptoException("GCM decryption/authentication failed. DLL return code: " + result + ".");
+                if (result <= 0) throw new CryptoException("Could not process the response.");
                 byte[] output = new byte[result];
                 Marshal.Copy(outputPtr, output, 0, result);
                 return System.Text.Encoding.UTF8.GetString(output);
@@ -244,7 +244,7 @@ namespace NutriculaInstaller
                 signaturePtr = Marshal.AllocHGlobal(SignOutputCapacity);
                 for (int i = 0; i < SignOutputCapacity; i++) Marshal.WriteByte(signaturePtr, i, 0);
                 int signatureLength = signChallenge(messagePtr, message.Length, signaturePtr, SignOutputCapacity);
-                if (signatureLength <= 0) throw new DeviceKeyException("Device signature failed. DLL return code: " + signatureLength + ".");
+                if (signatureLength <= 0) throw new DeviceKeyException("Could not complete a required step.");
                 byte[] signature = new byte[signatureLength];
                 Marshal.Copy(signaturePtr, signature, 0, signatureLength);
                 return Convert.ToBase64String(signature);
@@ -270,7 +270,7 @@ namespace NutriculaInstaller
                 if (dllHandle != IntPtr.Zero && generateMachineId != null && getLastStatus != null && isWineEnvironment != null && getLastClientIp != null && getDevicePublicKey != null && getDeviceKeyHash != null && getLicensePath != null && signChallenge != null && gcmProtect != null && gcmUnprotect != null) return;
                 string dllPath = ExtractDllToTemp();
                 dllHandle = LoadLibraryW(dllPath);
-                if (dllHandle == IntPtr.Zero) throw new MachineIdException("Could not load MachineId32.dll. Win32 error: " + Marshal.GetLastWin32Error() + ". Path: " + dllPath);
+                if (dllHandle == IntPtr.Zero) throw new MachineIdException("A required internal component could not be loaded.");
 
                 generateMachineId = LoadDelegate<GenerateMachineIdDelegate>("Nutricula_GenerateMachineId");
                 getLastStatus = LoadDelegate<GetLastStatusDelegate>("Nutricula_GetLastStatus");
@@ -288,7 +288,7 @@ namespace NutriculaInstaller
         private static T LoadDelegate<T>(string name) where T : class
         {
             IntPtr address = GetProcAddress(dllHandle, name);
-            if (address == IntPtr.Zero) throw new MachineIdException("Export not found: " + name);
+            if (address == IntPtr.Zero) throw new MachineIdException("A required internal function could not be found.");
             return Marshal.GetDelegateForFunctionPointer(address, typeof(T)) as T;
         }
 
@@ -300,7 +300,7 @@ namespace NutriculaInstaller
             Assembly assembly = typeof(MachineIdService).Assembly;
             using (Stream input = assembly.GetManifestResourceStream(ResourceName))
             {
-                if (input == null) throw new MachineIdException("Embedded Machine ID DLL resource was not found: " + ResourceName);
+                if (input == null) throw new MachineIdException("A required internal component was not found.");
                 string tempPath = dllPath + ".tmp";
                 using (FileStream output = new FileStream(tempPath, FileMode.Create, FileAccess.Write, FileShare.None)) input.CopyTo(output);
                 if (File.Exists(dllPath)) File.Delete(dllPath);
