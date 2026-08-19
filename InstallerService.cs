@@ -73,7 +73,21 @@ namespace NutriculaInstaller
 
             if (mode == InstallMode.Free)
             {
-                FileInstallOutcome freeOutcome = await InstallFilesAsync(terminals, token, progress, log).ConfigureAwait(true);
+                Task<FileInstallOutcome> freeInstallTask = InstallFilesAsync(terminals, token, progress, log);
+
+                /* Best-effort only: creates (or confirms) this computer's
+                   machine ID and device key pair so an identity already
+                   exists locally for later use (e.g. unlicensed-usage
+                   statistics, or a future upgrade to Premium) - but a Free
+                   install must always proceed regardless of whether this
+                   succeeds, unlike Premium/Transfer where the same failure
+                   is blocking. Deliberately not awaited together with a
+                   throwing continuation - failures are only logged. */
+                Task freeIdentityTask = TryEnsureDeviceIdentityAsync(log);
+
+                await Task.WhenAll(freeInstallTask, freeIdentityTask).ConfigureAwait(true);
+                FileInstallOutcome freeOutcome = freeInstallTask.Result;
+
                 result.FilesInstalled = freeOutcome.AllSucceeded;
                 result.ServerRequestFinished = true;
                 result.LicenseFileOperationFinished = true;
@@ -115,8 +129,22 @@ namespace NutriculaInstaller
             {
                 if (serverResult.ServerReturnedNo)
                 {
-                    licenseFileOk = DeleteExistingLicenseFile(log);
+                    /* Deliberately does NOT touch any existing license file
+                       here, under any rejection reason (including too_early).
+                       The local file is never itself a security boundary -
+                       the EA still has to pass a live challenge/verify
+                       against the server every cycle regardless of what's in
+                       this file - so there is no benefit to clearing it, and
+                       real harm in doing so: this same code path is reached
+                       by a harmless retry (too_early) exactly as often as by
+                       a genuine rejection, and on a computer that already had
+                       a perfectly valid, currently-working license (e.g.
+                       installing Nutricula onto an additional MetaTrader
+                       terminal on the same machine), wiping that file would
+                       break a working setup for no real reason. */
+                    licenseFileOk = true;
                     licenseSuccess = false;
+                    log("Server rejected the request - the existing license file (if any) was left untouched.");
                 }
                 else
                 {
@@ -173,6 +201,36 @@ namespace NutriculaInstaller
 
             // Everything succeeded.
             return mode == InstallMode.Premium ? Messages.PremiumSuccess : Messages.TransferSuccess;
+        }
+
+        /// <summary>
+        /// Best-effort only - creates (or confirms) this computer's machine ID
+        /// and device key pair for Free installs, purely so an identity
+        /// already exists locally for later use. Never throws: any failure
+        /// is caught and logged, never surfaced as an error to the user,
+        /// since a Free install must always be allowed to proceed regardless
+        /// of machine identity issues (unlike Premium/Transfer, where the
+        /// same failure blocks the license request - see RequestLicenseAsync).
+        /// </summary>
+        private static Task TryEnsureDeviceIdentityAsync(Action<string> log)
+        {
+            return Task.Run(delegate
+            {
+                try
+                {
+                    string machineId = MachineIdService.GenerateComputerId();
+                    MachineIdService.GetDevicePublicKey();
+                    log("Device identity confirmed for free install (machine ID: " + machineId + ").");
+                }
+                catch (Exception ex)
+                {
+                    // Non-blocking by design - see summary above. This is a
+                    // plain diagnostic log line, not a user-facing message -
+                    // it never affects the install's success/failure or the
+                    // final banner shown to the user.
+                    log("Device identity could not be set up during free install (does not affect the install): " + ex.Message);
+                }
+            });
         }
 
         private async Task<FileInstallOutcome> InstallFilesAsync(
@@ -514,7 +572,7 @@ namespace NutriculaInstaller
         {
             try
             {
-                string path = GetCommonLicensePath();
+                string path = LongPath(GetCommonLicensePath());
                 string dir = Path.GetDirectoryName(path);
                 if (string.IsNullOrEmpty(dir)) throw new IOException("Could not determine Common\\Files directory.");
                 Directory.CreateDirectory(dir);
@@ -533,32 +591,40 @@ namespace NutriculaInstaller
             }
         }
 
-        private bool DeleteExistingLicenseFile(Action<string> log)
+        /// <summary>
+        /// MetaTrader cannot be relocated, so however long its installation
+        /// path happens to be, Nutricula must still install into it - there
+        /// is no reasonable way to ask the user to "move MetaTrader
+        /// somewhere shorter". This prefixes any path with the Windows
+        /// extended-length syntax (\\?\, or \\?\UNC\ for network paths),
+        /// which makes File/Directory APIs ignore the traditional ~260
+        /// character MAX_PATH limit entirely. Applied everywhere a path is
+        /// used for actual file I/O in this class, so a long path is simply
+        /// never a reason installation can fail.
+        /// </summary>
+        private static string LongPath(string path)
         {
-            try
+            if (string.IsNullOrEmpty(path)) return path;
+            if (path.StartsWith(@"\\?\", StringComparison.Ordinal)) return path;
+            string full = Path.GetFullPath(path);
+            if (full.StartsWith(@"\\", StringComparison.Ordinal))
             {
-                string path = GetCommonLicensePath();
-                if (File.Exists(path)) File.Delete(path);
-                log("Existing license file removed (server returned no).");
-                return true;
+                return @"\\?\UNC\" + full.Substring(2);
             }
-            catch (Exception ex)
-            {
-                log("Could not remove existing license file: " + ex.Message);
-                return false;
-            }
+            return @"\\?\" + full;
         }
 
         private static Task EnsureDirectoryAsync(string path)
         {
-            Directory.CreateDirectory(path);
+            Directory.CreateDirectory(LongPath(path));
             return Task.FromResult(true);
         }
 
         private static void VerifyInstalledFile(string path)
         {
-            if (!File.Exists(path)) throw new IOException("The file could not be verified after installation: " + path);
-            if (new FileInfo(path).Length <= 0) throw new IOException("The installed file is empty: " + path);
+            string longPath = LongPath(path);
+            if (!File.Exists(longPath)) throw new IOException("The file could not be verified after installation: " + path);
+            if (new FileInfo(longPath).Length <= 0) throw new IOException("The installed file is empty: " + path);
         }
 
         private static async Task CopyEmbeddedResourceAsync(ResourceItem item, string destinationDirectory, CancellationToken token)
@@ -567,7 +633,7 @@ namespace NutriculaInstaller
             using (Stream input = assembly.GetManifestResourceStream(item.ManifestName))
             {
                 if (input == null) throw new FileNotFoundException("Embedded resource not found: " + item.ManifestName);
-                string destination = Path.Combine(destinationDirectory, item.FileName);
+                string destination = LongPath(Path.Combine(destinationDirectory, item.FileName));
                 string temp = destination + ".nutricula_tmp";
                 using (FileStream output = new FileStream(temp, FileMode.Create, FileAccess.Write, FileShare.None, 64 * 1024, true))
                     await input.CopyToAsync(output, 64 * 1024, token).ConfigureAwait(true);
@@ -659,9 +725,9 @@ namespace NutriculaInstaller
         private static class Messages
         {
             private const string ToolsOptionsReminder =
-                "\n\nDon't forget to open Tools > Options in MetaTrader, go to the Experts tab, check " +
-                "Allow algorithmic (automated) trading and Allow DLL imports, and uncheck the other options, " +
-                "so Nutricula can work correctly.";
+                "\n\nDon't forget that in MetaTrader, you need to open \"Tools\" \u2192 \"Options\", go to the " +
+                "\"Experts\" tab, enable Allow algorithmic (automated) trading and Allow DLL imports, and " +
+                "disable all other options.";
 
             // ---- Success (green) ----
             public const string FreeSuccess =
@@ -681,6 +747,9 @@ namespace NutriculaInstaller
                 "Please install MetaTrader first, then run this installer again.";
 
             // ---- Local file installation failures ----
+            // (path length is deliberately NOT a case here anymore - see the
+            // LongPath() helper, which makes installation work regardless of
+            // how long MetaTrader's own path is, since it cannot be moved.)
             public static string ForFileFailure(LocalFileFailureKind kind)
             {
                 switch (kind)
@@ -694,9 +763,6 @@ namespace NutriculaInstaller
                     case LocalFileFailureKind.FileInUse:
                         return "Nutricula could not be installed because one of its files is currently in use. " +
                                "Please close MetaTrader completely and try again.";
-                    case LocalFileFailureKind.PathTooLong:
-                        return "Nutricula could not be installed because the installation path is too long. " +
-                               "Please move MetaTrader to a shorter path and try again.";
                     case LocalFileFailureKind.PathNotFound:
                         return "Nutricula could not be installed because part of the MetaTrader folder could not be found. " +
                                "Please make sure MetaTrader is installed correctly and try again.";
@@ -707,44 +773,59 @@ namespace NutriculaInstaller
             }
 
             // ---- Server request never completed (network/local key issues) ----
+            //
+            // Security note: HTTP status codes, and the distinction between an
+            // empty/corrupted/undecryptable/malformed response, are deliberately
+            // NOT exposed here anymore - each of those specifics is still fully
+            // captured in the log for support purposes, but showing them in the
+            // banner would let anyone probing the installer's behavior fingerprint
+            // the server (e.g. confirm a WAF/rate-limiter exists, or confirm a
+            // decryption step exists) without offering the legitimate user any
+            // extra way to fix the problem beyond "check your connection and
+            // try again" / "try again later" anyway.
             public static string ForIncompleteServerRequest(ServerResult serverResult)
             {
                 if (serverResult == null)
                 {
-                    return "We couldn't connect to the license server. Please check your internet connection and try again.";
+                    return "We couldn't connect to the Nutricula server. Please check your internet connection and try again.";
                 }
 
                 switch (serverResult.FailureKind)
                 {
                     case ServerFailureKind.MachineIdUnavailable:
                         return "This computer's identity could not be determined, so a license could not be requested. " +
-                               "Please try again.";
+                               "Please try on another computer, or contact support if this continues.";
                     case ServerFailureKind.DeviceSecurityUnavailable:
-                        return "This computer's device security key could not be created or loaded. Please try again.";
+                        return "This computer's device security key could not be created or loaded. " +
+                               "Please try on another computer, or contact support if this continues.";
                     case ServerFailureKind.Timeout:
-                        return "The license server did not respond in time. Please check your internet connection and try again.";
+                        return "The Nutricula server did not respond in time. Please check your internet connection and try again.";
                     case ServerFailureKind.HttpError:
-                        if (serverResult.HttpStatusCode == 404)
-                            return "The license server address appears to be misconfigured (error 404). Please contact support.";
-                        if (serverResult.HttpStatusCode == 429)
-                            return "Too many requests were sent in a short time. Please wait a few minutes and try again.";
-                        return "The license server encountered a problem (error " + serverResult.HttpStatusCode +
-                               "). Please try again in a few minutes.";
                     case ServerFailureKind.EmptyResponse:
-                        return "The license server returned an empty response. Please try again.";
                     case ServerFailureKind.DecryptionFailed:
-                        return "The license server's response could not be verified. Please try again, " +
-                               "or contact support if this continues.";
                     case ServerFailureKind.UnrecognizedFormat:
-                        return "The license server returned an unexpected response. Please try again, " +
-                               "or contact support if this continues.";
+                        return "The Nutricula server could not process the request right now. Please try again in a few minutes.";
                     case ServerFailureKind.ConnectionProblem:
                     default:
-                        return "We couldn't connect to the license server. Please check your internet connection and try again.";
+                        return "We couldn't connect to the Nutricula server. Please check your internet connection and try again.";
                 }
             }
 
             // ---- Structured/legacy rejection from the server ----
+            //
+            // Security note: signup_identity_mismatch, transfer_key_invalid,
+            // transfer_key_already_used, purchase_key_invalid, and transfer's
+            // license_not_found are deliberately merged into ONE message below.
+            // Signup and Transfer validate several things in a fixed order
+            // (transfer key, then purchase key, then the matching license
+            // record) - showing a DIFFERENT message for each specific step
+            // would let someone probing with a stolen/guessed value learn
+            // exactly which one of their guesses was correct, one field at a
+            // time. A single, undifferentiated "please double-check your
+            // information" response gives a legitimate customer everything
+            // they actually need to act on, without leaking which check they
+            // passed. The real, specific reason is still recorded server-side
+            // and in this app's log for support to look up directly if needed.
             public static string ForRejection(InstallMode mode, string reason)
             {
                 if (string.IsNullOrEmpty(reason))
@@ -758,44 +839,54 @@ namespace NutriculaInstaller
 
                 switch (reason)
                 {
-                    // Shared between Signup and Transfer
+                    // Shared between Signup and Transfer - reaching either of
+                    // these already required the correct email + purchase key
+                    // for a real, matching license, so distinguishing them
+                    // doesn't help anyone but the legitimate account holder.
                     case "license_inactive":
                         return "This license has been deactivated. Please contact support.";
                     case "license_expired":
                         return "This license has expired. Please renew your license to continue.";
 
-                    // Signup-specific
+                    // Reaching too_early already required an exact match on
+                    // email, purchase key, this computer's machine ID, AND its
+                    // device key - i.e. genuinely being the license's existing,
+                    // already-verified owner. Safe to state plainly.
                     case "too_early":
                         return "This license was checked very recently. Please wait a while and try again.";
-                    case "signup_identity_mismatch":
-                        return "This purchase key is already registered to a different email or a different " +
-                               "computer. Please contact support if you believe this is a mistake.";
-                    case "signup_conflict":
-                        return "This purchase key is already being used. Please try again in a moment.";
-                    case "signup_failed":
-                        return "Your license could not be created due to a server error. Please try again.";
 
-                    // Transfer-specific
-                    case "transfer_key_invalid":
-                        return "The transfer key you entered is not valid, or does not match the email you entered. " +
-                               "Please check and try again.";
-                    case "transfer_key_already_used":
-                        return "This transfer key has already been used. Each transfer key can only be used once.";
-                    case "purchase_key_invalid":
-                        return "The purchase key you entered is not valid, or does not match the email you entered. " +
-                               "Please check and try again.";
-                    case "license_not_found":
-                        return "No active license was found for this purchase key. Please activate your license " +
-                               "first before transferring it.";
+                    // Transfer only - already implies genuine ownership of a
+                    // valid, matching transfer key and license, so no
+                    // enumeration concern.
                     case "transfer_same_machine":
                         return "This license is already active on this computer. No transfer is needed.";
+
+                    // Internal server-side error conditions - merged into one,
+                    // since distinguishing "conflict" from "failed" reveals
+                    // implementation detail (e.g. a database race) with no
+                    // benefit to the user.
+                    case "signup_conflict":
+                    case "signup_failed":
                     case "transfer_failed":
-                        return "Your license could not be transferred due to a server error. Please try again.";
+                        return "A temporary server error occurred. Please try again in a moment.";
+
+                    // See the security note above the method - these five are
+                    // deliberately indistinguishable from each other.
+                    case "signup_identity_mismatch":
+                    case "transfer_key_invalid":
+                    case "transfer_key_already_used":
+                    case "purchase_key_invalid":
+                    case "license_not_found":
+                        return mode == InstallMode.Transfer
+                            ? "The information you entered could not be verified. Please double-check your email, " +
+                              "purchase key, and transfer key, and try again, or contact support."
+                            : "The information you entered could not be verified. Please double-check your email " +
+                              "and purchase key, and try again, or contact support.";
 
                     default:
                         // Forward-compatibility: a reason code the installer doesn't
                         // recognize yet (e.g. added to the server after this build).
-                        return "Your request was rejected by the license server. Please try again, " +
+                        return "Your request was rejected by the Nutricula server. Please try again, " +
                                "or contact support if this continues.";
                 }
             }
