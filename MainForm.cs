@@ -762,8 +762,8 @@ namespace NutriculaInstaller
                     int reminderLength = text.Length - reminderStart;
 
                     resultMessageLabel.Select(reminderStart, reminderLength);
-                    resultMessageLabel.SelectionFont = UiHelpers.UiFont(11f, FontStyle.Regular);
-                    resultMessageLabel.SelectionColor = Color.Black;
+                    resultMessageLabel.SelectionFont = UiHelpers.UiFont(10f, FontStyle.Regular);
+                    resultMessageLabel.SelectionColor = Color.FromArgb(110, 110, 110);
                     
                 }
             }
