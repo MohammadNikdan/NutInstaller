@@ -768,12 +768,12 @@ namespace NutriculaInstaller
             if (resultBadge != null)
                 resultBadge.Left = (w - resultBadge.Width) / 2;
 
-            int messageHeight = 56;
-
+            int messageHeight = 0;
+            
             if (resultMessageLabel != null)
             {
                 string text = resultMessageLabel.Text ?? string.Empty;
-
+            
                 Size measured = TextRenderer.MeasureText(
                     text,
                     resultMessageLabel.Font,
@@ -781,17 +781,17 @@ namespace NutriculaInstaller
                     TextFormatFlags.WordBreak |
                     TextFormatFlags.HorizontalCenter |
                     TextFormatFlags.NoPadding);
-
-                messageHeight = Math.Max(56, measured.Height + 12);
-
+            
+                messageHeight = measured.Height + 2;
+            
                 const int maxMessageHeight = 170;
                 if (messageHeight > maxMessageHeight)
                     messageHeight = maxMessageHeight;
-
+            
                 resultMessageLabel.Size = new Size(w, messageHeight);
             }
-
-            int buttonY = 100 + messageHeight + 14;
+            
+            int buttonY = resultMessageLabel.Top + messageHeight + 8;
 
             if (success)
             {
