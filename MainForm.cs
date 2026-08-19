@@ -582,6 +582,9 @@ namespace NutriculaInstaller
             protected override void WndProc(ref Message m)
             {
                 const int WM_SETCURSOR = 0x0020;
+                const int WM_LBUTTONDOWN = 0x0201;
+                const int WM_MOUSEMOVE = 0x0200;
+                const int WM_LBUTTONUP = 0x0202;
         
                 if (m.Msg == WM_SETCURSOR)
                 {
@@ -589,10 +592,30 @@ namespace NutriculaInstaller
                     return;
                 }
         
+                if (m.Msg == WM_LBUTTONDOWN ||
+                    m.Msg == WM_MOUSEMOVE ||
+                    m.Msg == WM_LBUTTONUP)
+                {
+                    SelectionLength = 0;
+                    SelectionStart = 0;
+                    return;
+                }
+        
                 base.WndProc(ref m);
             }
+        
+            protected override bool IsInputKey(Keys keyData)
+            {
+                if (keyData == Keys.Control ||
+                    keyData == Keys.A ||
+                    keyData == Keys.C)
+                {
+                    return false;
+                }
+        
+                return base.IsInputKey(keyData);
+            }
         }
-
         // =====================================================================
         // Navigation / flow
         // =====================================================================
@@ -807,7 +830,7 @@ namespace NutriculaInstaller
                 resultMessageLabel.Size = new Size(w, messageHeight);
             }
             
-            int buttonY = resultMessageLabel.Top + messageHeight + 20;
+            int buttonY = resultMessageLabel.Top + messageHeight + (success ? 14 : 20);
 
             if (success)
             {
