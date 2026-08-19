@@ -57,7 +57,7 @@ namespace NutriculaInstaller
         private Label progressStatusLabel;
         private Label subStatusLabel;
         private ResultBadge resultBadge;
-        private Label resultMessageLabel;
+        private RichTextBox resultMessageLabel;
         private Label resultSummaryLabel;
         private MaterialButton finishButton;
         private MaterialButton tryAgainButton;
@@ -514,7 +514,13 @@ namespace NutriculaInstaller
             };
             runningPanel.Controls.Add(subStatusLabel);
 
-            resultPanel = new Panel { Location = new Point(0, 90), Size = new Size(PageWidth, 220), BackColor = UiHelpers.Background, Visible = false };
+            resultPanel = new Panel
+            {
+                Location = new Point(0, 90),
+                Size = new Size(PageWidth, 360),
+                BackColor = UiHelpers.Background,
+                Visible = false
+            };
             page.Controls.Add(resultPanel);
             // Fixed-size children (badge, buttons) can't self-center via Anchor, so redo
             // their centering whenever this panel's width changes (including on window resize).
@@ -523,12 +529,18 @@ namespace NutriculaInstaller
             resultBadge = new ResultBadge { Location = new Point((PageWidth - 84) / 2, 0) };
             resultPanel.Controls.Add(resultBadge);
 
-            resultMessageLabel = new Label
+            resultMessageLabel = new RichTextBox
             {
-                AutoSize = false,
+                DetectUrls = false,
+                ReadOnly = true,
+                BorderStyle = BorderStyle.None,
+                BackColor = UiHelpers.Background,
+                ForeColor = UiHelpers.TextDark,
+                ScrollBars = RichTextBoxScrollBars.None,
+                WordWrap = true,
+                TabStop = false,
                 Size = new Size(PageWidth, 56),
                 Font = UiHelpers.UiFont(11f, FontStyle.Bold),
-                TextAlign = ContentAlignment.MiddleCenter,
                 Location = new Point(0, 100)
             };
             resultPanel.Controls.Add(resultMessageLabel);
@@ -677,8 +689,7 @@ namespace NutriculaInstaller
             progressBar.StopAnimating();
             runningPanel.Visible = false;
             resultBadge.SetSuccess(success);
-            resultMessageLabel.ForeColor = success ? UiHelpers.Success : UiHelpers.Error;
-            resultMessageLabel.Text = message;
+            SetResultMessage(success, message);
 
             if (success)
             {
@@ -690,6 +701,64 @@ namespace NutriculaInstaller
             resultPanel.Visible = true;
         }
 
+        private void SetResultMessage(bool success, string message)
+        {
+            resultMessageLabel.Clear();
+
+            string text = message ?? string.Empty;
+            resultMessageLabel.AppendText(text);
+
+            resultMessageLabel.Select(0, resultMessageLabel.TextLength);
+            resultMessageLabel.SelectionAlignment = HorizontalAlignment.Center;
+            resultMessageLabel.SelectionFont = UiHelpers.UiFont(11f, FontStyle.Bold);
+            resultMessageLabel.SelectionColor = success ? UiHelpers.Success : UiHelpers.Error;
+
+            if (success)
+            {
+                string marker = "\n\nDon't forget that in MetaTrader";
+                int reminderStart = text.IndexOf(marker, StringComparison.Ordinal);
+
+                if (reminderStart >= 0)
+                {
+                    int reminderLength = text.Length - reminderStart;
+
+                    resultMessageLabel.Select(reminderStart, reminderLength);
+                    resultMessageLabel.SelectionFont = UiHelpers.UiFont(11f, FontStyle.Regular);
+                    resultMessageLabel.SelectionColor = Color.Black;
+
+                    string[] boldParts =
+                    {
+                        "MetaTrader",
+                        "Tools",
+                        "Options",
+                        "Experts",
+                        "Allow algorithmic (automated) trading",
+                        "Allow DLL imports"
+                    };
+
+                    foreach (string boldPart in boldParts)
+                    {
+                        int searchStart = reminderStart;
+
+                        while (searchStart < text.Length)
+                        {
+                            int index = text.IndexOf(boldPart, searchStart, StringComparison.Ordinal);
+                            if (index < 0)
+                                break;
+
+                            resultMessageLabel.Select(index, boldPart.Length);
+                            resultMessageLabel.SelectionFont = UiHelpers.UiFont(11f, FontStyle.Bold);
+                            resultMessageLabel.SelectionColor = Color.Black;
+
+                            searchStart = index + boldPart.Length;
+                        }
+                    }
+                }
+            }
+
+            resultMessageLabel.Select(0, 0);
+        }
+
         private void LayoutResultButtons(bool success)
         {
             if (resultPanel == null || finishButton == null || tryAgainButton == null) return;
@@ -699,29 +768,30 @@ namespace NutriculaInstaller
             if (resultBadge != null)
                 resultBadge.Left = (w - resultBadge.Width) / 2;
 
-            // The message can wrap to multiple lines for long text - measure how tall it
-            // actually needs to be and push the buttons (and everything after them) down
-            // to match, instead of a fixed height that would just clip long text.
-            // maxButtonY keeps the buttons safely within the fixed-size window regardless
-            // of how long the message gets - the window itself never resizes, so this is
-            // what actually guarantees the buttons stay visible/clickable.
-            const int maxButtonY = 310;
             int messageHeight = 56;
+
             if (resultMessageLabel != null)
             {
                 string text = resultMessageLabel.Text ?? string.Empty;
+
                 Size measured = TextRenderer.MeasureText(
                     text,
                     resultMessageLabel.Font,
-                    new Size(w, int.MaxValue),
-                    TextFormatFlags.WordBreak | TextFormatFlags.HorizontalCenter | TextFormatFlags.NoPadding);
+                    new Size(w - 24, int.MaxValue),
+                    TextFormatFlags.WordBreak |
+                    TextFormatFlags.HorizontalCenter |
+                    TextFormatFlags.NoPadding);
+
                 messageHeight = Math.Max(56, measured.Height + 12);
-                int maxMessageHeight = maxButtonY - 108;
-                if (messageHeight > maxMessageHeight) messageHeight = maxMessageHeight;
+
+                const int maxMessageHeight = 170;
+                if (messageHeight > maxMessageHeight)
+                    messageHeight = maxMessageHeight;
+
                 resultMessageLabel.Size = new Size(w, messageHeight);
             }
 
-            int buttonY = Math.Min(100 + messageHeight + 8, maxButtonY);
+            int buttonY = 100 + messageHeight + 14;
 
             if (success)
             {
