@@ -792,12 +792,19 @@ namespace NutriculaInstaller
 
                 switch (serverResult.FailureKind)
                 {
+                    // Security note: merged into one generic message -
+                    // separately naming "computer identity" and "device
+                    // security key" as distinct failure points would confirm
+                    // to anyone probing the installer that two separate,
+                    // named mechanisms exist internally. A single vague
+                    // message gives a legitimate user the same next step
+                    // (retry, then contact support) without confirming
+                    // anything about how the client-side identity/security
+                    // layer is actually built.
                     case ServerFailureKind.MachineIdUnavailable:
-                        return "This computer's identity could not be determined, so a license could not be requested. " +
-                               "Please try on another computer, or contact support if this continues.";
                     case ServerFailureKind.DeviceSecurityUnavailable:
-                        return "This computer's device security key could not be created or loaded. " +
-                               "Please try on another computer, or contact support if this continues.";
+                        return "We couldn't complete this operation on this computer. " +
+                               "Please try again, or contact support if this continues.";
                     case ServerFailureKind.Timeout:
                         return "The Nutricula server did not respond in time. Please check your internet connection and try again.";
                     case ServerFailureKind.HttpError:
@@ -892,9 +899,14 @@ namespace NutriculaInstaller
             }
 
             // ---- Approved by the server, but couldn't be saved locally ----
+            // Security note: no longer says "verified, but could not be
+            // saved" - that phrasing confirms a two-stage process (server
+            // verification succeeds, THEN a separate local-save step can
+            // fail), which is more architectural detail than a user needs to
+            // act on the problem (retry, or run as Administrator).
             public const string LicenseFileSaveFailed =
-                "Your license was verified, but it could not be saved on this computer. Please close MetaTrader " +
-                "and try again, or run this installer as Administrator.";
+                "The installation could not be completed on this computer. Please try again, " +
+                "or run this installer as Administrator.";
         }
     }
 
