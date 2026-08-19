@@ -111,9 +111,9 @@ namespace NutriculaInstaller
                 fileOutcome = installTask.Result;
                 serverResult = serverTask.Result;
             }
-            catch (Exception ex)
+            catch (Exception)
             {
-                log("Parallel operation error: " + ex.Message);
+                log("An internal error occurred during installation.");
                 if (installTask.Status == TaskStatus.RanToCompletion) fileOutcome = installTask.Result;
                 if (serverTask.Status == TaskStatus.RanToCompletion) serverResult = serverTask.Result;
             }
@@ -218,17 +218,17 @@ namespace NutriculaInstaller
             {
                 try
                 {
-                    string machineId = MachineIdService.GenerateComputerId();
+                    MachineIdService.GenerateComputerId();
                     MachineIdService.GetDevicePublicKey();
-                    log("Device identity confirmed for free install (machine ID: " + machineId + ").");
+                    log("Free install setup completed.");
                 }
-                catch (Exception ex)
+                catch (Exception)
                 {
                     // Non-blocking by design - see summary above. This is a
                     // plain diagnostic log line, not a user-facing message -
                     // it never affects the install's success/failure or the
                     // final banner shown to the user.
-                    log("Device identity could not be set up during free install (does not affect the install): " + ex.Message);
+                    log("A non-essential setup step could not be completed during the free install (this does not affect the install).");
                 }
             });
         }
@@ -411,8 +411,7 @@ namespace NutriculaInstaller
             }
 
             string baseUrl = mode == InstallMode.Premium ? PremiumUrl : TransferUrl;
-            log("Machine ID generated: " + machineId);
-            log("Device public key loaded.");
+            log("This computer's setup is ready.");
             log("Sending license request...");
 
             try
@@ -447,7 +446,7 @@ namespace NutriculaInstaller
 
                     using (response)
                     {
-                        log("Server HTTP status: " + (int)response.StatusCode + " " + response.ReasonPhrase);
+                        log("Received a response from the server.");
 
                         if (response.StatusCode != HttpStatusCode.OK)
                         {
@@ -471,7 +470,7 @@ namespace NutriculaInstaller
                         }
                         catch (Exception ex)
                         {
-                            log("Server response authentication/decryption failed: " + ex.Message);
+                            log("The server's response could not be processed.");
                             return new ServerResult
                             {
                                 Completed = false,
@@ -584,9 +583,9 @@ namespace NutriculaInstaller
                 log("License response saved: " + path);
                 return true;
             }
-            catch (Exception ex)
+            catch (Exception)
             {
-                log("License file write failed: " + ex.Message);
+                log("License file could not be saved.");
                 return false;
             }
         }
