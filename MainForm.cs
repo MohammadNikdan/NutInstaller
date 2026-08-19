@@ -539,10 +539,22 @@ namespace NutriculaInstaller
                 ScrollBars = RichTextBoxScrollBars.None,
                 WordWrap = true,
                 TabStop = false,
+                Cursor = Cursors.Default,
                 Size = new Size(PageWidth, 56),
                 Font = UiHelpers.UiFont(11f, FontStyle.Bold),
                 Location = new Point(0, 100)
             };
+            
+            resultMessageLabel.MouseMove += delegate
+            {
+                resultMessageLabel.Cursor = Cursors.Default;
+            };
+            
+            resultMessageLabel.MouseEnter += delegate
+            {
+                resultMessageLabel.Cursor = Cursors.Default;
+            };
+            
             resultPanel.Controls.Add(resultMessageLabel);
 
             finishButton = new MaterialButton("Finish", UiHelpers.GlyphCheck, ButtonKind.Filled)
@@ -791,7 +803,7 @@ namespace NutriculaInstaller
                 resultMessageLabel.Size = new Size(w, messageHeight);
             }
             
-            int buttonY = resultMessageLabel.Top + messageHeight + 8;
+            int buttonY = resultMessageLabel.Top + messageHeight + 14;
 
             if (success)
             {
