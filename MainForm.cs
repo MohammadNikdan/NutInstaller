@@ -529,7 +529,7 @@ namespace NutriculaInstaller
             resultBadge = new ResultBadge { Location = new Point((PageWidth - 84) / 2, 0) };
             resultPanel.Controls.Add(resultBadge);
 
-            resultMessageLabel = new RichTextBox
+            resultMessageLabel = new NonIBeamRichTextBox
             {
                 DetectUrls = false,
                 ReadOnly = true,
@@ -539,22 +539,10 @@ namespace NutriculaInstaller
                 ScrollBars = RichTextBoxScrollBars.None,
                 WordWrap = true,
                 TabStop = false,
-                Cursor = Cursors.Default,
                 Size = new Size(PageWidth, 56),
                 Font = UiHelpers.UiFont(11f, FontStyle.Bold),
                 Location = new Point(0, 100)
             };
-            
-            resultMessageLabel.MouseMove += delegate
-            {
-                resultMessageLabel.Cursor = Cursors.Default;
-            };
-            
-            resultMessageLabel.MouseEnter += delegate
-            {
-                resultMessageLabel.Cursor = Cursors.Default;
-            };
-            
             resultPanel.Controls.Add(resultMessageLabel);
 
             finishButton = new MaterialButton("Finish", UiHelpers.GlyphCheck, ButtonKind.Filled)
@@ -587,6 +575,22 @@ namespace NutriculaInstaller
             page.Controls.Add(resultSummaryLabel);
 
             return page;
+        }
+
+        private sealed class NonIBeamRichTextBox : RichTextBox
+        {
+            protected override void WndProc(ref Message m)
+            {
+                const int WM_SETCURSOR = 0x0020;
+        
+                if (m.Msg == WM_SETCURSOR)
+                {
+                    Cursor.Current = Cursors.Default;
+                    return;
+                }
+        
+                base.WndProc(ref m);
+            }
         }
 
         // =====================================================================
@@ -803,7 +807,7 @@ namespace NutriculaInstaller
                 resultMessageLabel.Size = new Size(w, messageHeight);
             }
             
-            int buttonY = resultMessageLabel.Top + messageHeight + 14;
+            int buttonY = resultMessageLabel.Top + messageHeight + 20;
 
             if (success)
             {
