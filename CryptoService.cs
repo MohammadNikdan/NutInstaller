@@ -16,7 +16,7 @@ namespace NutriculaInstaller
             string devicePublicKey = null)
         {
             if (string.IsNullOrEmpty(devicePublicKey))
-                throw new InvalidOperationException("Device public key is required.");
+                throw new InvalidOperationException("Required information is missing.");
 
             string postData =
                 "v=3" +
