@@ -32,6 +32,12 @@ try {
     $email = trim(nutricula_required_field($fields, 'email'));
     $purchaseKey = trim(nutricula_required_field($fields, 'purchase_key'));
     $transferKey = trim(nutricula_required_field($fields, 'transfer_key'));
+    /* Never stored, logged, or compared in plaintext beyond this point - see
+       nutricula_transfer_keys_used.transfer_key_hash. The plaintext value
+       itself is only ever used transiently here to validate against EDD
+       (nutricula_find_edd_transfer_purchase_in below), which needs the real
+       value to check against the purchase record. */
+    $transferKeyHash = hash('sha256', $transferKey);
     $rndNumber = trim(nutricula_required_field($fields, 'rnd_number'));
     $newMachineId = strtoupper(trim(nutricula_required_field($fields, 'machine_id')));
     $newDevicePublicKey = trim(nutricula_required_field($fields, 'device_public_key'));
@@ -77,12 +83,14 @@ try {
 
     /* --- Step 2: this transfer_key must not have been used before. This is
        a cheap first-pass gate on an unlocked read; the UNIQUE constraint on
-       nutricula_transfer_keys_used.transfer_key is what actually enforces
-       this at the database level against a race (see the INSERT near the
-       end, wrapped the same way signup.php handles a duplicate purchase_key). */
-    $usedCheck = $conn->prepare('SELECT id FROM nutricula_transfer_keys_used WHERE transfer_key=? LIMIT 1');
+       nutricula_transfer_keys_used.transfer_key_hash is what actually
+       enforces this at the database level against a race (see the INSERT
+       near the end, wrapped the same way signup.php handles a duplicate
+       purchase_key). Queried and stored as a SHA-256 hash, never plaintext -
+       see the column comment in schema_device_type_change.sql. */
+    $usedCheck = $conn->prepare('SELECT id FROM nutricula_transfer_keys_used WHERE transfer_key_hash=? LIMIT 1');
     if (!$usedCheck) throw new RuntimeException('DB prepare failed.');
-    $usedCheck->bind_param('s', $transferKey);
+    $usedCheck->bind_param('s', $transferKeyHash);
     $usedCheck->execute();
     $alreadyUsed = $usedCheck->get_result()->fetch_assoc();
     $usedCheck->close();
@@ -165,6 +173,27 @@ try {
         $conn->close();
         nutricula_reject($config, 'license_inactive');
     }
+
+    /* Defense in depth: re-assert the same identity invariants that were
+       checked on the earlier unlocked read (purchase_key, email, product_id)
+       against the freshly locked row, not just its mutable state
+       (status/expiry/machine) below. In the current codebase these three
+       fields are never modified by anything after signup, so this is
+       unlikely to ever actually fire - but for an authorization path this
+       sensitive, re-asserting every invariant on the exact row about to be
+       mutated costs nothing and removes any dependency on that assumption
+       continuing to hold as the system evolves. Same rejection reason as
+       the identical mismatch check on the unlocked read above, so this
+       never becomes a distinguishable new information-disclosure path. */
+    if ((string)$lockedLicense['purchase_key'] !== $purchaseKey ||
+        strcasecmp((string)$lockedLicense['user_email'], $email) !== 0 ||
+        (int)$lockedLicense['product_id'] !== $productId) {
+        $conn->rollback();
+        nutricula_log_activity($conn, $licenseDbId, $newMachineId, $newDeviceKeyHash, $localIp, $observedIp, 'transfer', 'license_not_found', $riskScore);
+        $conn->close();
+        nutricula_reject($config, 'license_not_found');
+    }
+
     if ((int)$lockedLicense['license_expires_at'] <= $finalNow) {
         $conn->rollback();
         nutricula_log_activity($conn, $licenseDbId, $newMachineId, $newDeviceKeyHash, $localIp, $observedIp, 'transfer', 'license_expired', $riskScore);
@@ -230,7 +259,7 @@ try {
 
     $insertUsed = $conn->prepare(
         'INSERT INTO nutricula_transfer_keys_used
-         (transfer_key, user_email, license_id, old_license_uuid, new_license_uuid,
+         (transfer_key_hash, user_email, license_id, old_license_uuid, new_license_uuid,
           old_machine_id, old_device_public_key_hash, old_last_observed_ip,
           new_machine_id, new_device_public_key_hash, new_observed_ip, new_claimed_local_ip,
           transferred_at)
@@ -239,7 +268,7 @@ try {
     if (!$insertUsed) throw new RuntimeException('DB prepare failed.');
     $insertUsed->bind_param(
         'ssisssssssss',
-        $transferKey,
+        $transferKeyHash,
         $email,
         $licenseDbId,
         $oldLicenseUuid,
