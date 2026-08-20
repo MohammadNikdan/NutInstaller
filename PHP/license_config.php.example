@@ -13,8 +13,10 @@ return [
         'api_token' => 'YOUR_EDD_API_TOKEN',
     ],
 
-    /* Must match the 32-byte key compiled into MachineId32.dll. */
-    'transport_key_hex' => '23194cf5337966ecae618441f65ef7c1b12ebb02e2cf91ab79c8da029e74b4df',
+    /* Must match the 32-byte key compiled into MachineId32.dll AND
+       NutriculaLicenseCheck's TRANSPORT_KEY - generate your own with e.g.
+       `openssl rand -hex 32`, never reuse an example/sample value. */
+    'transport_key_hex' => 'YOUR_32_BYTE_TRANSPORT_KEY_AS_64_HEX_CHARS',
 
     /* Existing server-side RSA private key used to sign the final license lease. */
     'server_signing_private_key_path' => '/home/nutricu1/domains/nutriculaexpert.ir/private_keys/license-signing-private.pem',
