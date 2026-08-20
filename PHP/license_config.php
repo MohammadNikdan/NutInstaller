@@ -13,8 +13,10 @@ return [
         'api_token' => '1d172ba1b118ed96ecbabef36c8289c4',
     ],
 
-    /* Must match the 32-byte key compiled into MachineId32.dll. */
-    'transport_key_hex' => '23194cf5337966ecae618441f65ef7c1b12ebb02e2cf91ab79c8da029e74b4df',
+    /* Must match the 32-byte key compiled into MachineId32.dll AND
+       NutriculaLicenseCheck's TRANSPORT_KEY. Rotated - see the DLL source
+       comments for the exact rotation context. */
+    'transport_key_hex' => 'b5670921af23eab24f8005a971b19b4fa07cfe8890527c9404312e5ecfcd5ad5',
 
     /* Existing server-side RSA private key used to sign the final license lease. */
     'server_signing_private_key_path' => '/home/nutricu1/domains/nutriculaexpert.ir/private_keys/license-signing-private.pem',
