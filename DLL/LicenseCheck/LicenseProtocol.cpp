@@ -13,17 +13,17 @@
 namespace
 {
     // Byte-for-byte identical to license_config.php's transport_key_hex and
-    // MachineId32.dll's TRANSPORT_KEY - independently re-verified here
-    // against the exact same hex string (23194cf5337966ecae618441f65ef7c1b
-    // 12ebb02e2cf91ab79c8da029e74b4df) already confirmed matching in the
-    // earlier build. Do not change this without changing it identically in
-    // BOTH the PHP config and the Machine ID DLL - a mismatch here is a
-    // silent, total protocol break.
+    // MachineId32.dll's TRANSPORT_KEY - rotated value, independently
+    // re-verified here against the exact same hex string
+    // (b5670921af23eab24f8005a971b19b4fa07cfe8890527c9404312e5ecfcd5ad5)
+    // confirmed matching after rotation. Do not change this without
+    // changing it identically in BOTH the PHP config and the Machine ID
+    // DLL - a mismatch here is a silent, total protocol break.
     const unsigned char TRANSPORT_KEY[32] = {
-        0x23,0x19,0x4C,0xF5,0x33,0x79,0x66,0xEC,
-        0xAE,0x61,0x84,0x41,0xF6,0x5E,0xF7,0xC1,
-        0xB1,0x2E,0xBB,0x02,0xE2,0xCF,0x91,0xAB,
-        0x79,0xC8,0xDA,0x02,0x9E,0x74,0xB4,0xDF
+        0xB5,0x67,0x09,0x21,0xAF,0x23,0xEA,0xB2,
+        0x4F,0x80,0x05,0xA9,0x71,0xB1,0x9B,0x4F,
+        0xA0,0x7C,0xFE,0x88,0x90,0x52,0x7C,0x94,
+        0x04,0x31,0x2E,0x5E,0xCF,0xCD,0x5A,0xD5
     };
 
     BCRYPT_KEY_HANDLE g_rsaPublicKey = nullptr;
