@@ -40,14 +40,20 @@ thread_local std::wstring g_lastClientIp;
 thread_local std::string g_lastPlatformProfile;
 std::mutex g_keyMutex;
 
-/* New transport key. This key is NOT a license secret; it only protects the
-   application protocol payload. Authorization rests on ECDSA device proof and
-   the server's signed lease. */
+/* Transport key (rotated). This key is NOT a license secret; it only
+   protects the application protocol payload. Authorization rests on ECDSA
+   device proof and the server's signed lease. Must match
+   license_config.php's transport_key_hex AND NutriculaLicenseCheck's
+   TRANSPORT_KEY byte-for-byte - a mismatch here is a silent, total
+   protocol break. Rotated value, freshly generated with a CSPRNG
+   (openssl rand -hex 32), replacing the value that had been sitting
+   unrotated in license_config.php.example (a real risk if that .example
+   file was ever exposed anywhere). */
 static const unsigned char TRANSPORT_KEY[32] = {
-    0x23,0x19,0x4C,0xF5,0x33,0x79,0x66,0xEC,
-    0xAE,0x61,0x84,0x41,0xF6,0x5E,0xF7,0xC1,
-    0xB1,0x2E,0xBB,0x02,0xE2,0xCF,0x91,0xAB,
-    0x79,0xC8,0xDA,0x02,0x9E,0x74,0xB4,0xDF
+    0xB5,0x67,0x09,0x21,0xAF,0x23,0xEA,0xB2,
+    0x4F,0x80,0x05,0xA9,0x71,0xB1,0x9B,0x4F,
+    0xA0,0x7C,0xFE,0x88,0x90,0x52,0x7C,0x94,
+    0x04,0x31,0x2E,0x5E,0xCF,0xCD,0x5A,0xD5
 };
 
 const wchar_t* KEY_MAGIC = L"NUTDKEY3";
