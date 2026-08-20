@@ -13,7 +13,8 @@ namespace NutriculaInstaller
             string rndNumber,
             string transferKey = null,
             string localIp = null,
-            string devicePublicKey = null)
+            string devicePublicKey = null,
+            string platformProfile = null)
         {
             if (string.IsNullOrEmpty(devicePublicKey))
                 throw new InvalidOperationException("Required information is missing.");
@@ -32,6 +33,14 @@ namespace NutriculaInstaller
 
             if (!string.IsNullOrEmpty(localIp))
                 postData += "&local_ip=" + Uri.EscapeDataString(localIp);
+
+            // Replaces local_ip's old (and never actually reliable) role of
+            // letting the server classify VM/VPS - platform_profile is a
+            // generic category label ("WINDOWS", "WINDOWS_VM", "MACOS_WINE",
+            // "LINUX_WINE") reported directly by the machine ID DLL's own
+            // platform detection, not inferred from IP presence.
+            if (!string.IsNullOrEmpty(platformProfile))
+                postData += "&platform_profile=" + Uri.EscapeDataString(platformProfile);
 
             postData +=
                 "&device_public_key=" + Uri.EscapeDataString(devicePublicKey);
