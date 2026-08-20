@@ -108,16 +108,22 @@ CREATE TABLE nutricula_unlicensed_checkins (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 /* One row per successfully-used transfer key. The UNIQUE key on
-   transfer_key is what actually enforces "a transfer key can only be used
-   once" at the database level (not just application logic) - the same
+   transfer_key_hash is what actually enforces "a transfer key can only be
+   used once" at the database level (not just application logic) - the same
    defense-in-depth pattern used for purchase_key uniqueness in signup.
+   Stores a SHA-256 hash of the transfer key, never the plaintext value -
+   even though the key is already single-use by the time a row exists here
+   (so this table alone can't be used to replay it), hashing costs nothing
+   and means a database-level compromise never exposes any transfer key
+   value directly, matching the same non-reversible-storage principle
+   already used for device_public_key_hash elsewhere in this schema.
    Captures full source ("old_*") and destination ("new_*") computer
    identity plus timing, specifically so support can answer "when and from
    which computer to which computer was my license transferred" precisely
    if a customer ever disputes having used their transfer key. */
 CREATE TABLE nutricula_transfer_keys_used (
     id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-    transfer_key VARCHAR(255) NOT NULL,
+    transfer_key_hash CHAR(64) NOT NULL,
     user_email VARCHAR(320) NOT NULL,
     license_id BIGINT UNSIGNED NOT NULL,
     old_license_uuid CHAR(36) NOT NULL,
@@ -131,10 +137,39 @@ CREATE TABLE nutricula_transfer_keys_used (
     new_claimed_local_ip VARCHAR(45) NULL,
     transferred_at DATETIME NOT NULL,
     PRIMARY KEY (id),
-    UNIQUE KEY uq_transfer_key (transfer_key),
+    UNIQUE KEY uq_transfer_key_hash (transfer_key_hash),
     KEY idx_transfer_license (license_id),
     KEY idx_transfer_email (user_email),
     CONSTRAINT fk_transfer_license
         FOREIGN KEY (license_id) REFERENCES nutricula_licenses(id)
         ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+/* ============================================================================
+   MIGRATION for an EXISTING database (run this instead of the CREATE TABLE
+   statements above if nutricula_licenses / nutricula_transfer_keys_used
+   already exist in production).
+   ============================================================================ */
+
+-- 1) device_type ENUM expansion (Mac/Linux/VM platform classification).
+ALTER TABLE nutricula_licenses
+    MODIFY COLUMN device_type ENUM('windows','windows_vm','macos_wine','linux_wine','unknown')
+    NOT NULL DEFAULT 'unknown';
+
+-- 2) transfer_key -> transfer_key_hash (store a SHA-256 hash, never plaintext).
+--    Run in this exact order: add the new column, backfill it from the old
+--    plaintext column, THEN drop the old unique key and column. Any row that
+--    exists at this point represents an already-consumed transfer key, so
+--    backfilling from plaintext one final time before removing it is safe.
+ALTER TABLE nutricula_transfer_keys_used
+    ADD COLUMN transfer_key_hash CHAR(64) NULL AFTER id;
+
+UPDATE nutricula_transfer_keys_used
+    SET transfer_key_hash = SHA2(transfer_key, 256)
+    WHERE transfer_key_hash IS NULL;
+
+ALTER TABLE nutricula_transfer_keys_used
+    MODIFY COLUMN transfer_key_hash CHAR(64) NOT NULL,
+    DROP INDEX uq_transfer_key,
+    ADD UNIQUE KEY uq_transfer_key_hash (transfer_key_hash),
+    DROP COLUMN transfer_key;
