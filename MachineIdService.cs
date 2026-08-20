@@ -21,6 +21,7 @@ namespace NutriculaInstaller
         private static GetLastStatusDelegate getLastStatus;
         private static IsWineEnvironmentDelegate isWineEnvironment;
         private static GetLastClientIpDelegate getLastClientIp;
+        private static GetLastPlatformProfileDelegate getLastPlatformProfile;
         private static GetDevicePublicKeyDelegate getDevicePublicKey;
         private static GetDeviceKeyHashDelegate getDeviceKeyHash;
         private static GetLicensePathDelegate getLicensePath;
@@ -36,6 +37,8 @@ namespace NutriculaInstaller
         private delegate int IsWineEnvironmentDelegate();
         [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
         private delegate int GetLastClientIpDelegate(IntPtr output, int outputCapacity);
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+        private delegate int GetLastPlatformProfileDelegate(IntPtr output, int outputCapacity);
         [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
         private delegate int GetDevicePublicKeyDelegate(IntPtr output, int outputCapacity);
         [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
@@ -109,6 +112,31 @@ namespace NutriculaInstaller
                 buffer = Marshal.AllocHGlobal(capacity);
                 for (int i = 0; i < capacity; i++) Marshal.WriteByte(buffer, i, 0);
                 return getLastClientIp(buffer, capacity) == 1
+                    ? (Marshal.PtrToStringAnsi(buffer) ?? string.Empty)
+                    : string.Empty;
+            }
+            catch { return string.Empty; }
+            finally
+            {
+                if (buffer != IntPtr.Zero) Marshal.FreeHGlobal(buffer);
+            }
+        }
+
+        // Short, generic category label ("WINDOWS", "WINDOWS_VM",
+        // "MACOS_WINE", "LINUX_WINE") for the most recently generated
+        // machine_id - carries no raw hardware data or IP, safe to send to
+        // the server for device_type classification and risk scoring
+        // without needing IP at all.
+        public static string GetLastPlatformProfile()
+        {
+            EnsureLoaded();
+            const int capacity = 64;
+            IntPtr buffer = IntPtr.Zero;
+            try
+            {
+                buffer = Marshal.AllocHGlobal(capacity);
+                for (int i = 0; i < capacity; i++) Marshal.WriteByte(buffer, i, 0);
+                return getLastPlatformProfile(buffer, capacity) == 1
                     ? (Marshal.PtrToStringAnsi(buffer) ?? string.Empty)
                     : string.Empty;
             }
@@ -264,10 +292,10 @@ namespace NutriculaInstaller
 
         private static void EnsureLoaded()
         {
-            if (dllHandle != IntPtr.Zero && generateMachineId != null && getLastStatus != null && isWineEnvironment != null && getLastClientIp != null && getDevicePublicKey != null && getDeviceKeyHash != null && getLicensePath != null && signChallenge != null && gcmProtect != null && gcmUnprotect != null) return;
+            if (dllHandle != IntPtr.Zero && generateMachineId != null && getLastStatus != null && isWineEnvironment != null && getLastClientIp != null && getLastPlatformProfile != null && getDevicePublicKey != null && getDeviceKeyHash != null && getLicensePath != null && signChallenge != null && gcmProtect != null && gcmUnprotect != null) return;
             lock (SyncRoot)
             {
-                if (dllHandle != IntPtr.Zero && generateMachineId != null && getLastStatus != null && isWineEnvironment != null && getLastClientIp != null && getDevicePublicKey != null && getDeviceKeyHash != null && getLicensePath != null && signChallenge != null && gcmProtect != null && gcmUnprotect != null) return;
+                if (dllHandle != IntPtr.Zero && generateMachineId != null && getLastStatus != null && isWineEnvironment != null && getLastClientIp != null && getLastPlatformProfile != null && getDevicePublicKey != null && getDeviceKeyHash != null && getLicensePath != null && signChallenge != null && gcmProtect != null && gcmUnprotect != null) return;
                 string dllPath = ExtractDllToTemp();
                 dllHandle = LoadLibraryW(dllPath);
                 if (dllHandle == IntPtr.Zero) throw new MachineIdException("A required internal component could not be loaded.");
@@ -276,6 +304,7 @@ namespace NutriculaInstaller
                 getLastStatus = LoadDelegate<GetLastStatusDelegate>("Nutricula_GetLastStatus");
                 isWineEnvironment = LoadDelegate<IsWineEnvironmentDelegate>("Nutricula_IsWineEnvironment");
                 getLastClientIp = LoadDelegate<GetLastClientIpDelegate>("Nutricula_GetLastClientIp");
+                getLastPlatformProfile = LoadDelegate<GetLastPlatformProfileDelegate>("Nutricula_GetLastPlatformProfile");
                 getDevicePublicKey = LoadDelegate<GetDevicePublicKeyDelegate>("Nutricula_GetDevicePublicKey");
                 getDeviceKeyHash = LoadDelegate<GetDeviceKeyHashDelegate>("Nutricula_GetDeviceKeyHash");
                 getLicensePath = LoadDelegate<GetLicensePathDelegate>("Nutricula_GetLicensePath");
