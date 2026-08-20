@@ -1,0 +1,49 @@
+<?php
+return [
+    'db' => [
+        'host' => 'localhost',
+        'name' => 'nutricul_entire_db',
+        'user' => 'nutricul_licenser',
+        'pass' => 'c$rXp%WmQ3e@C!tR2#+meV',
+        'charset' => 'utf8mb4',
+    ],
+
+    'edd' => [
+        'api_key' => '06c301e69d7758cf6e082d10b9c92c41',
+        'api_token' => '1d172ba1b118ed96ecbabef36c8289c4',
+    ],
+
+    /* Must match the 32-byte key compiled into MachineId32.dll. */
+    'transport_key_hex' => '23194cf5337966ecae618441f65ef7c1b12ebb02e2cf91ab79c8da029e74b4df',
+
+    /* Existing server-side RSA private key used to sign the final license lease. */
+    'server_signing_private_key_path' => '/home/nutricu1/domains/nutriculaexpert.ir/private_keys/license-signing-private.pem',
+
+    'challenge_ttl_seconds' => 60,
+
+    /* Informational only (not enforced by itself) - the nominal length of one
+       MQL request cycle. MQL's own TTL is 55:00 minutes; it sends its next
+       request at 54:00 + random(0..60s) after the timestamp recorded in its
+       license file. This constant is only used to compute a display-friendly
+       "current cycle ends around" value if ever needed - actual enforcement
+       is entirely via min_request_gap_seconds below. */
+    'license_cycle_seconds' => 3300, // 55 minutes
+
+    /* THE enforced anti-abuse gate. A new request (challenge, or an existing-
+       license signup) for the same license/device is rejected if fewer than
+       this many seconds have passed since the last request (successful or
+       rejected) for that license. There is deliberately NO upper bound. */
+    'min_request_gap_seconds' => 3180, // 53 minutes
+
+    /* Set true ONLY when the origin is locked to trusted Cloudflare proxy ranges. */
+    'trust_cloudflare_connecting_ip' => false,
+
+    /* Keep this list current with Cloudflare's published IP ranges if the option above is enabled. */
+    'trusted_proxy_cidrs' => [
+        // '173.245.48.0/20',
+        // '103.21.244.0/22',
+        // '103.22.200.0/22',
+        // '103.31.4.0/22',
+        // ...
+    ],
+];
