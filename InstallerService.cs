@@ -390,6 +390,7 @@ namespace NutriculaInstaller
             }
 
             string localIp = MachineIdService.GetLastClientIp();
+            string platformProfile = MachineIdService.GetLastPlatformProfile();
             string rndNumber = CryptoService.Generate32DigitRandomNumber();
 
             string encodedPostData;
@@ -402,7 +403,8 @@ namespace NutriculaInstaller
                     rndNumber,
                     mode == InstallMode.Transfer ? transferKey : null,
                     localIp,
-                    devicePublicKey
+                    devicePublicKey,
+                    platformProfile
                 );
             }
             catch (Exception ex)
