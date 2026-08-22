@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>مرجع کامل کلیدها — Nutricula License System</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Vazirmatn:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap');
+:root{
+  --bg:#0d1117; --bg-card:#161d27; --border:#26303c; --border-soft:#1c242e;
+  --text:#e6edf3; --text-dim:#8b98a5; --text-faint:#5c6773;
+  --accent:#5fb3a3; --accent-soft:#5fb3a333; --accent-bright:#7fd4c4;
+  --warn:#e0a458; --warn-soft:#e0a45822;
+  --danger:#e2685f; --danger-soft:#e2685f1c;
+  --key-color:#c98bd9; --key-soft:#c98bd91c;
+  --mono:'JetBrains Mono',monospace; --sans:'Vazirmatn',sans-serif;
+}
+*{box-sizing:border-box;margin:0;padding:0;}
+body{font-family:var(--sans);background:var(--bg);color:var(--text);line-height:1.85;font-size:16px;}
+.main{max-width:1100px;margin:0 auto;padding:56px 32px;}
+.hero-eyebrow{font-family:var(--mono);color:var(--accent);font-size:13px;letter-spacing:.1em;text-transform:uppercase;margin-bottom:14px;font-weight:600;}
+h1{font-size:32px;font-weight:800;margin-bottom:14px;letter-spacing:-.01em;}
+.hero p{color:var(--text-dim);font-size:16px;margin-bottom:24px;max-width:760px;}
+h2{font-size:22px;font-weight:700;margin-bottom:14px;}
+.callout{border-radius:10px;padding:18px 22px;margin:20px 0;font-size:14.5px;border:1px solid;}
+.callout.info{background:var(--accent-soft);border-color:#5fb3a355;color:#a8d9cd;}
+.callout.warn{background:var(--warn-soft);border-color:#e0a45855;color:#f0c896;}
+.callout b{color:inherit;}
+hr{border:none;border-top:1px solid var(--border);margin:44px 0;}
+
+.key-card{background:var(--bg-card);border:1px solid var(--border);border-radius:12px;padding:26px 28px;margin-bottom:22px;}
+.key-card.symmetric{border-right:4px solid var(--accent);}
+.key-card.asymmetric{border-right:4px solid var(--key-color);}
+.key-title{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:4px;}
+.key-title h3{font-size:19px;font-weight:800;}
+.badge{font-family:var(--mono);font-size:10.5px;padding:3px 10px;border-radius:20px;font-weight:700;letter-spacing:.03em;}
+.badge.sym{background:var(--accent-soft);color:var(--accent-bright);}
+.badge.asym{background:var(--key-soft);color:var(--key-color);}
+.key-subtitle{font-family:var(--mono);font-size:13px;color:var(--text-faint);margin-bottom:16px;}
+
+.kv-grid{display:grid;grid-template-columns:140px 1fr;gap:10px 18px;font-size:14.5px;}
+.kv-grid dt{color:var(--text-faint);font-weight:600;}
+.kv-grid dd{color:var(--text-dim);}
+.kv-grid dd b{color:var(--text);}
+code.inline{font-family:var(--mono);background:var(--bg);padding:2px 7px;border-radius:5px;font-size:13px;color:var(--accent-bright);border:1px solid var(--border-soft);}
+
+.file-tag{display:inline-block;font-family:var(--mono);font-size:12.5px;background:var(--bg);border:1px solid var(--border-soft);color:var(--accent-bright);padding:3px 9px;border-radius:6px;margin:2px 3px 2px 0;}
+.file-tag.secret{color:var(--danger);border-color:#e2685f44;}
+
+.howto{background:var(--bg);border:1px solid var(--border-soft);border-radius:8px;padding:14px 18px;margin-top:14px;font-size:14px;color:var(--text-dim);}
+.howto b{color:var(--text);}
+.howto ol{padding-right:20px;margin-top:6px;}
+.howto li{margin-bottom:4px;}
+
+table.summary{width:100%;border-collapse:collapse;margin:20px 0;font-size:13.5px;}
+table.summary th{text-align:right;font-family:var(--mono);font-size:11px;letter-spacing:.04em;color:var(--text-faint);text-transform:uppercase;padding:9px 10px;border-bottom:1px solid var(--border);font-weight:600;}
+table.summary td{padding:10px 10px;border-bottom:1px solid var(--border-soft);color:var(--text-dim);vertical-align:top;}
+table.summary tr:last-child td{border-bottom:none;}
+table.summary td b{color:var(--text);}
+
+.diagram-box{background:var(--bg-card);border:1px solid var(--border);border-radius:10px;padding:22px;font-family:var(--mono);font-size:13px;color:var(--text-dim);white-space:pre;overflow-x:auto;line-height:1.6;direction:ltr;text-align:left;margin:18px 0;}
+.diagram-box .n1{color:var(--accent-bright);}
+
+.step-list{counter-reset:step;margin:20px 0;}
+.step{display:flex;gap:16px;margin-bottom:16px;}
+.step-num{counter-increment:step;flex-shrink:0;width:30px;height:30px;border-radius:50%;background:var(--accent-soft);color:var(--accent-bright);display:flex;align-items:center;justify-content:center;font-family:var(--mono);font-weight:700;font-size:14px;}
+.step-num::before{content:counter(step);}
+.step-body{flex:1;padding-top:3px;}
+.step-body b{color:var(--text);}
+.step-body p{color:var(--text-dim);font-size:14px;margin-top:3px;}
+</style>
+</head>
+<body>
+<div class="main">
+
+<div class="hero-eyebrow">مرجع کامل — معماری Keys/ + KeyBaker (چیدمان جدید)</div>
+<h1>هر کلید، عیناً از خروجی openssl</h1>
+<p>هر فایل داخل <code class="inline">Keys/</code> دقیقاً همان چیزی است که openssl تولید می‌کند — بدون هیچ تبدیل دستی. <code class="inline">KeyBaker.exe</code> همیشه به‌عنوان اولین قدم هر build خودکار اجرا می‌شود.</p>
+
+<div class="diagram-box">Full Source (Except Installer)\
+    ├── Builders\          ← همهٔ build_*.bat اینجا
+    │   └── Builds\        ← خروجی build ها همینجا (داخل Builders، نه هم‌سطحش)
+    ├── Coordinator\
+    ├── LicenseCheck\
+    ├── MachineID\
+    ├── <span class="n1">Keys\   ← فایل‌های خام PEM/hex + KeyBaker.exe</span>
+    ├── PHPs\
+    └── SignTool\</div>
+
+<div class="callout info">ساخت اولیهٔ <code class="inline">KeyBaker.exe</code>: یک‌بار <code class="inline">build_KeyBaker.bat</code> را اجرا کنید. بعد از آن، هر <code class="inline">build_*.bat</code> دیگر خودش این ابزار را صدا می‌زند.</div>
+
+<div class="callout warn">Installer (کد C#) هیچ کلید رمزنگاری هاردکد‌شده‌ای ندارد — فقط فایل‌های باینری آماده را کپی می‌کند.</div>
+
+<hr>
+
+<h2>بعد از تغییر هر کلید — چیکار کنیم؟</h2>
+
+<div class="callout info"><b>توصیهٔ من (موافق پیشنهاد شما):</b> بعد از تغییر <b>هر</b> کلید، به‌جای اینکه سعی کنید حفظ کنید دقیقاً کدام باینری‌ها تحت‌تأثیرند، همیشه <b>هر ۹ فایل <code class="inline">build_*.bat</code></b> را اجرا کنید، خروجی‌ها را در Assets نصب‌کننده جایگزین کنید، و یک‌بار هم Installer را rebuild کنید. دلیل: وابستگی‌های بین کلیدها و باینری‌ها پیچیده‌اند (هر کلید چند باینری متفاوت را همزمان تحت‌تأثیر قرار می‌دهد — جدول پایین را ببینید) و ریسک فراموش‌کردن یک rebuild خیلی گران‌تر از چند دقیقه زمان اجرای همهٔ builderهاست. اگر می‌خواهید دقیق‌تر و کم‌هزینه‌تر عمل کنید، جدول زیر حداقل‌های واقعی هر کلید را نشان می‌دهد.</div>
+
+<h3 style="margin:24px 0 10px;">آیا Manifest هم باید عوض شود؟</h3>
+<p style="color:var(--text-dim);margin-bottom:14px;">بله — با تغییر <b>هر یک</b> از ۴ کلید (نه فقط بعضی‌ها)، بایت‌های باینری‌های مرتبط عوض می‌شود، پس هش SHA-256شان هم عوض می‌شود، و Manifest قدیمی دیگر با فایل‌های واقعی مطابقت نخواهد داشت. <b>همیشه بعد از تغییر هر کلید، یک Manifest جدید بسازید و امضا کنید و در دیتابیس (ردیف جدید، نه ویرایش قدیمی) ثبت کنید.</b></p>
+
+<h3 style="margin:24px 0 10px;">آیا SignTool هم باید rebuild شود؟</h3>
+<p style="color:var(--text-dim);">فقط اگر <b>کلید Vendor</b> تغییر کرده باشد — چون کلید خصوصی امضا مستقیم داخل خود <code class="inline">NutriculaSignTool.exe</code> کامپایل می‌شود. برای بقیهٔ سه کلید (Transport، Server، Coordinator/IPC)، <code class="inline">SignTool.exe</code> موجود همچنان قابل‌استفاده است — فقط دوباره آن را روی باینری‌های <b>جدید</b> اجرا کنید تا Manifest تازه بسازد.</p>
+
+<h3 style="margin:24px 0 10px;">دربارهٔ Nutricula.ex4/ex5</h3>
+<p style="color:var(--text-dim);">درست است — هیچ کلیدی داخل این دو فایل نیست. تغییر هیچ‌کدام از ۴ کلید، نیازی به تغییر یا کامپایل مجدد ex4/ex5 ندارد؛ فقط چون Manifest هش این دو فایل را هم نگه می‌دارد، باید مسیرشان دوباره به Sign Tool داده شود (حتی بدون تغییر خودشان) تا در Manifest جدید دوباره ثبت شوند.</p>
+
+<hr>
+
+<div class="key-card symmetric">
+<div class="key-title"><h3>۱. Transport Key</h3><span class="badge sym">AES-256-GCM</span></div>
+<div class="key-subtitle">تک‌کلیدی</div>
+<dl class="kv-grid">
+  <dt>کاربرد</dt><dd>رمزنگاری کانال ارتباطی بین Coordinator/MachineId و سرور PHP.</dd>
+  <dt>فایل کلید</dt><dd><span class="file-tag secret">Keys/TransportKey.txt</span> — حساس؛ محتوا: فقط ۶۴ کاراکتر هگز خام، دقیقاً خروجی <code class="inline">openssl rand -hex 32</code></dd>
+  <dt>مصرف‌کننده</dt><dd><code class="inline">LicenseCheck/TransportKeyPrivate.h</code> و <code class="inline">MachineID/NutriculaMachineId.cpp</code></dd>
+  <dt>روی سرور</dt><dd><code class="inline">Private/license_config.php</code> → <code class="inline">transport_key_hex</code></dd>
+</dl>
+<div class="howto"><b>برای تغییرش:</b>
+<ol>
+<li><code class="inline">openssl rand -hex 32</code></li>
+<li>خروجی را عیناً در <span class="file-tag secret">Keys/TransportKey.txt</span> جایگزین کنید</li>
+<li>همان مقدار را در <code class="inline">license_config.php</code> هم بگذارید</li>
+<li>هر ۴ باینری Coordinator <b>+ MachineId32/64.dll</b> را دوباره بسازید</li>
+<li>Manifest جدید بسازید (SignTool نیازی به rebuild ندارد)</li>
+</ol>
+</div>
+<div class="callout warn">این کلید در <b>دو جای مستقل</b> کامپایل می‌شود — Coordinator (ارتباط مداوم با license_check.php) و MachineId (payload خرید/انتقال Installer). هر دو باید rebuild شوند.</div>
+</div>
+
+<div class="key-card asymmetric">
+<div class="key-title"><h3>۲. Server License Signing Key</h3><span class="badge asym">RSA-4096</span></div>
+<div class="key-subtitle">جفت‌کلید</div>
+<dl class="kv-grid">
+  <dt>کاربرد</dt><dd>امضای هر پاسخ لایسنس توسط سرور.</dd>
+  <dt>فایل خصوصی</dt><dd>هرگز در این پروژه نبوده — <code class="inline">Private/Keys/ServerLicenseSigningKey_Private.pem</code> روی سرور</dd>
+  <dt>فایل عمومی</dt><dd><span class="file-tag">Keys/ServerLicenseSigningKey_Public.pem</span> — PEM خام</dd>
+  <dt>مصرف‌کننده</dt><dd><code class="inline">LicenseCheck/ServerPublicKeyEmbedded.h</code></dd>
+</dl>
+<div class="howto"><b>برای تغییرش:</b>
+<ol>
+<li>خصوصی را خودتان روی سرور جایگزین کنید</li>
+<li>PEM عمومی جدید را عیناً در <span class="file-tag">Keys/ServerLicenseSigningKey_Public.pem</span> جایگزین کنید</li>
+<li>DLL نازک + هر ۴ باینری Coordinator دوباره ساخته شوند</li>
+<li>Manifest جدید بسازید (SignTool نیازی به rebuild ندارد)</li>
+</ol>
+</div>
+</div>
+
+<div class="key-card asymmetric">
+<div class="key-title"><h3>۳. Vendor Signing Key</h3><span class="badge asym">ECDSA P-384</span></div>
+<div class="key-subtitle">جفت‌کلید</div>
+<dl class="kv-grid">
+  <dt>کاربرد</dt><dd>امضای Manifest با <code class="inline">NutriculaSignTool</code>.</dd>
+  <dt>فایل خصوصی</dt><dd><span class="file-tag secret">Keys/VendorSigningKey_Private.pem</span> — حساس، PEM خام</dd>
+  <dt>فایل عمومی</dt><dd><span class="file-tag">Keys/VendorSigningKey_Public.pem</span> — PEM خام</dd>
+  <dt>مصرف‌کننده</dt><dd><code class="inline">Coordinator/VendorIdentityPrivate.h</code> (فقط SignTool) و <code class="inline">Coordinator/VendorIdentity.h</code> (Coordinator)</dd>
+</dl>
+<div class="howto"><b>برای تغییرش:</b>
+<ol>
+<li><code class="inline">openssl ecparam -name secp384r1 -genkey -noout -out priv.pem</code></li>
+<li><code class="inline">openssl ec -in priv.pem -pubout -out pub.pem</code></li>
+<li>محتوای هرکدام را عیناً در فایل مربوطه جایگزین کنید</li>
+<li>هر ۴ باینری Coordinator <b>و خود SignTool.exe</b> دوباره ساخته شوند</li>
+<li>Manifest جدید بسازید و امضا کنید</li>
+</ol>
+</div>
+<div class="callout warn">تنها کلیدی که تغییرش <b>SignTool.exe</b> را هم مجبور به rebuild می‌کند — چون کلید امضا مستقیم داخل خود این ابزار کامپایل شده است.</div>
+</div>
+
+<div class="key-card asymmetric">
+<div class="key-title"><h3>۴. Coordinator/IPC Identity Key</h3><span class="badge asym">ECDSA P-384</span></div>
+<div class="key-subtitle">جفت‌کلید</div>
+<dl class="kv-grid">
+  <dt>کاربرد</dt><dd>احراز هویت محلی بین DLL نازک و Coordinator روی Named Pipe.</dd>
+  <dt>فایل خصوصی</dt><dd><span class="file-tag secret">Keys/CoordinatorIdentityKey_Private.pem</span> — حساس، PEM خام؛ واقعاً داخل باینری توزیعی Service/Broker کامپایل می‌شود</dd>
+  <dt>فایل عمومی</dt><dd><span class="file-tag">Keys/CoordinatorIdentityKey_Public.pem</span> — PEM خام</dd>
+  <dt>مصرف‌کننده</dt><dd><code class="inline">Coordinator/CoordinatorIdentityPrivate.h</code> و <code class="inline">Coordinator/CoordinatorIdentity.h</code> (هم در DLL هم در Coordinator)</dd>
+</dl>
+<div class="howto"><b>برای تغییرش:</b> مثل کلید Vendor بالا — ولی این‌بار <b>هم DLL نازک هم Coordinator</b> (هر ۶ باینری) باید دوباره ساخته شوند. Manifest جدید بسازید (SignTool نیازی به rebuild ندارد).</div>
+</div>
+
+<hr>
+
+<h3 style="margin-bottom:14px;">جمع‌بندی نهایی</h3>
+<table class="summary">
+<tr><th>کلید</th><th>فایل حساس</th><th>حداقل rebuild لازم</th><th>Manifest جدید؟</th><th>SignTool rebuild؟</th></tr>
+<tr><td>Transport Key</td><td><span class="file-tag secret">TransportKey.txt</span></td><td>هر ۴ باینری Coordinator + MachineId32/64.dll</td><td>بله</td><td>خیر</td></tr>
+<tr><td>Server Signing Key</td><td>هیچ‌کدام</td><td>DLL نازک + هر ۴ باینری Coordinator</td><td>بله</td><td>خیر</td></tr>
+<tr><td>Vendor Signing Key</td><td><span class="file-tag secret">VendorSigningKey_Private.pem</span></td><td>هر ۴ باینری Coordinator</td><td>بله</td><td><b>بله</b></td></tr>
+<tr><td>Coordinator/IPC Key</td><td><span class="file-tag secret">CoordinatorIdentityKey_Private.pem</span></td><td>DLL نازک + هر ۴ باینری Coordinator</td><td>بله</td><td>خیر</td></tr>
+</table>
+
+<div class="callout info"><b>یادآوری از توصیهٔ بالا:</b> صرف‌نظر از این جدول، ساده‌ترین و امن‌ترین روش این است که بعد از هر تغییر کلید، همهٔ ۹ builder + Installer را یک‌بار اجرا کنید.</div>
+
+</div>
+</body>
+</html>
