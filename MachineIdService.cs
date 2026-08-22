@@ -20,7 +20,6 @@ namespace NutriculaInstaller
         private static GenerateMachineIdDelegate generateMachineId;
         private static GetLastStatusDelegate getLastStatus;
         private static IsWineEnvironmentDelegate isWineEnvironment;
-        private static GetLastClientIpDelegate getLastClientIp;
         private static GetLastPlatformProfileDelegate getLastPlatformProfile;
         private static GetDevicePublicKeyDelegate getDevicePublicKey;
         private static GetDeviceKeyHashDelegate getDeviceKeyHash;
@@ -35,8 +34,6 @@ namespace NutriculaInstaller
         private delegate int GetLastStatusDelegate();
         [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
         private delegate int IsWineEnvironmentDelegate();
-        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
-        private delegate int GetLastClientIpDelegate(IntPtr output, int outputCapacity);
         [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
         private delegate int GetLastPlatformProfileDelegate(IntPtr output, int outputCapacity);
         [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
@@ -102,24 +99,38 @@ namespace NutriculaInstaller
             catch { return false; }
         }
 
+        // Rewritten 2026-08-22: no longer calls into MachineId32/64.dll at
+        // all - the export this used to call (Nutricula_GetLastClientIp)
+        // was removed from the DLL as presumed-dead code, which broke this
+        // call outright (LoadDelegate throws on a missing export, taking
+        // down the whole Installer with it). On top of that, even before
+        // removal this export was ALREADY non-functional - the DLL's
+        // underlying g_lastClientIp variable was never assigned anywhere,
+        // so this always returned an empty string regardless. Rather than
+        // resurrecting a DLL export whose only job was already broken,
+        // this is now a genuine, working, purely-.NET implementation -
+        // local_ip is only ever used server-side for logging/statistics
+        // (never a security or license decision - see
+        // nutricula_computer_based_signup.php's own comments on this),
+        // so an empty result here (e.g. no active network interface) is
+        // completely safe and simply means that log field stays blank.
         public static string GetLastClientIp()
         {
-            EnsureLoaded();
-            const int capacity = 256;
-            IntPtr buffer = IntPtr.Zero;
             try
             {
-                buffer = Marshal.AllocHGlobal(capacity);
-                for (int i = 0; i < capacity; i++) Marshal.WriteByte(buffer, i, 0);
-                return getLastClientIp(buffer, capacity) == 1
-                    ? (Marshal.PtrToStringAnsi(buffer) ?? string.Empty)
-                    : string.Empty;
+                foreach (var ni in System.Net.NetworkInformation.NetworkInterface.GetAllNetworkInterfaces())
+                {
+                    if (ni.OperationalStatus != System.Net.NetworkInformation.OperationalStatus.Up) continue;
+                    if (ni.NetworkInterfaceType == System.Net.NetworkInformation.NetworkInterfaceType.Loopback) continue;
+                    foreach (var addr in ni.GetIPProperties().UnicastAddresses)
+                    {
+                        if (addr.Address.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork)
+                            return addr.Address.ToString();
+                    }
+                }
             }
-            catch { return string.Empty; }
-            finally
-            {
-                if (buffer != IntPtr.Zero) Marshal.FreeHGlobal(buffer);
-            }
+            catch { /* best-effort only - see comment above on why an empty result here is always safe */ }
+            return string.Empty;
         }
 
         // Short, generic category label ("WINDOWS", "WINDOWS_VM",
@@ -292,10 +303,10 @@ namespace NutriculaInstaller
 
         private static void EnsureLoaded()
         {
-            if (dllHandle != IntPtr.Zero && generateMachineId != null && getLastStatus != null && isWineEnvironment != null && getLastClientIp != null && getLastPlatformProfile != null && getDevicePublicKey != null && getDeviceKeyHash != null && getLicensePath != null && signChallenge != null && gcmProtect != null && gcmUnprotect != null) return;
+            if (dllHandle != IntPtr.Zero && generateMachineId != null && getLastStatus != null && isWineEnvironment != null && getLastPlatformProfile != null && getDevicePublicKey != null && getDeviceKeyHash != null && getLicensePath != null && signChallenge != null && gcmProtect != null && gcmUnprotect != null) return;
             lock (SyncRoot)
             {
-                if (dllHandle != IntPtr.Zero && generateMachineId != null && getLastStatus != null && isWineEnvironment != null && getLastClientIp != null && getLastPlatformProfile != null && getDevicePublicKey != null && getDeviceKeyHash != null && getLicensePath != null && signChallenge != null && gcmProtect != null && gcmUnprotect != null) return;
+                if (dllHandle != IntPtr.Zero && generateMachineId != null && getLastStatus != null && isWineEnvironment != null && getLastPlatformProfile != null && getDevicePublicKey != null && getDeviceKeyHash != null && getLicensePath != null && signChallenge != null && gcmProtect != null && gcmUnprotect != null) return;
                 string dllPath = ExtractDllToTemp();
                 dllHandle = LoadLibraryW(dllPath);
                 if (dllHandle == IntPtr.Zero) throw new MachineIdException("A required internal component could not be loaded.");
@@ -303,7 +314,6 @@ namespace NutriculaInstaller
                 generateMachineId = LoadDelegate<GenerateMachineIdDelegate>("Nutricula_GenerateMachineId");
                 getLastStatus = LoadDelegate<GetLastStatusDelegate>("Nutricula_GetLastStatus");
                 isWineEnvironment = LoadDelegate<IsWineEnvironmentDelegate>("Nutricula_IsWineEnvironment");
-                getLastClientIp = LoadDelegate<GetLastClientIpDelegate>("Nutricula_GetLastClientIp");
                 getLastPlatformProfile = LoadDelegate<GetLastPlatformProfileDelegate>("Nutricula_GetLastPlatformProfile");
                 getDevicePublicKey = LoadDelegate<GetDevicePublicKeyDelegate>("Nutricula_GetDevicePublicKey");
                 getDeviceKeyHash = LoadDelegate<GetDeviceKeyHashDelegate>("Nutricula_GetDeviceKeyHash");
