@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Drawing2D;
+using System.Security.Principal;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
@@ -636,7 +637,28 @@ namespace NutriculaInstaller
 
             if (mode == InstallMode.Free)
             {
+                // The Free tier never needs the License Service (which
+                // requires Administrator to register) - it always uses the
+                // user-level Broker instead, so there is deliberately no
+                // Administrator check on this path at all. Free installs
+                // must work with a completely ordinary, non-elevated run.
                 StartInstall();
+                return;
+            }
+
+            // Premium activation and License Transfer both eventually need
+            // InstallCoordinatorAsync to attempt a real Windows Service
+            // registration, which requires this process to already be
+            // elevated (Administrator) - see CreateServiceW's own
+            // requirements. Checking here, before even opening the
+            // credentials page, gives a clear, immediate reason rather than
+            // letting the user fill out the whole form only to hit a
+            // confusing failure at the very end.
+            if (!IsRunningAsAdministrator())
+            {
+                helperLabel.ForeColor = UiHelpers.Error;
+                helperLabel.Text = "Administrator privileges are required for this option. " +
+                    "Please close this installer and run it again using \"Run as administrator\", then try again.";
                 return;
             }
 
@@ -650,6 +672,31 @@ namespace NutriculaInstaller
                 : "Required for license transfer.";
             LayoutCredentialsFields(mode);
             ShowPage(pageCredentials);
+        }
+
+        /// <summary>
+        /// True if this process is already running elevated (Administrator).
+        /// Used to gate Premium/Transfer (which need to register a real
+        /// Windows Service) - never used to gate the Free tier, which must
+        /// always work from a completely ordinary, non-elevated run.
+        /// </summary>
+        private static bool IsRunningAsAdministrator()
+        {
+            try
+            {
+                using (var identity = WindowsIdentity.GetCurrent())
+                {
+                    var principal = new WindowsPrincipal(identity);
+                    return principal.IsInRole(WindowsBuiltInRole.Administrator);
+                }
+            }
+            catch
+            {
+                // If we can't even determine elevation status, treat as
+                // "not elevated" - the safer default, since proceeding
+                // would just fail later with a less clear error anyway.
+                return false;
+            }
         }
 
         private async Task OnInstallTappedAsync()
