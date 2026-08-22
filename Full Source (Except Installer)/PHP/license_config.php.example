@@ -1,0 +1,64 @@
+<?php
+return [
+    'db' => [
+        'host' => 'localhost',
+        'name' => 'YOUR_DATABASE',
+        'user' => 'YOUR_DATABASE_USER',
+        'pass' => 'YOUR_DATABASE_PASSWORD',
+        'charset' => 'utf8mb4',
+    ],
+
+    'edd' => [
+        'api_key' => 'YOUR_EDD_API_KEY',
+        'api_token' => 'YOUR_EDD_API_TOKEN',
+    ],
+
+    /* Must match TransportKeyPrivate.h's TRANSPORT_KEY byte-for-byte
+       (compiled into NutriculaLicenseService/Broker only - NOT into
+       MachineId32/64.dll, which no longer contains any transport key at
+       all as of this session's dead-code cleanup). Generate your own with
+       e.g. `openssl rand -hex 32`, never reuse an example/sample value. */
+    'transport_key_hex' => 'YOUR_32_BYTE_TRANSPORT_KEY_AS_64_HEX_CHARS',
+
+    /* Existing server-side RSA private key used to sign the final license lease. */
+    'server_signing_private_key_path' => '/home/nutricul/domains/nutriculaexpert.com/Private/Keys/ServerLicenseSigningKey_Private.pem',
+
+    /* The current released EA version, e.g. '3.1'. Compared (via PHP's
+       version_compare) against the version recorded in nutricula_build_
+       manifests for whatever build_id a client reports as Artifact
+       Evidence during license_check.php's verify stage. Any build older
+       than this gets TIER_UPDATE_REQUIRED (-50) instead of a normal
+       license outcome - see license_check.php's version-check comment for
+       the exact reasoning. To publish a new mandatory-update version:
+       raise this number, then sign and register the new build's manifest
+       (see NutriculaSignTool) with a version >= this value. */
+    'latest_version' => '3.1',
+
+    'challenge_ttl_seconds' => 60,
+
+    /* Informational only (not enforced by itself) - the nominal length of one
+       MQL request cycle. MQL's own TTL is 55:00 minutes; it sends its next
+       request at 54:00 + random(0..60s) after the timestamp recorded in its
+       license file. This constant is only used to compute a display-friendly
+       "current cycle ends around" value if ever needed - actual enforcement
+       is entirely via min_request_gap_seconds below. */
+    'license_cycle_seconds' => 3300, // 55 minutes
+
+    /* THE enforced anti-abuse gate. A new request (challenge, or an existing-
+       license signup) for the same license/device is rejected if fewer than
+       this many seconds have passed since the last request (successful or
+       rejected) for that license. There is deliberately NO upper bound. */
+    'min_request_gap_seconds' => 3180, // 53 minutes
+
+    /* Set true ONLY when the origin is locked to trusted Cloudflare proxy ranges. */
+    'trust_cloudflare_connecting_ip' => false,
+
+    /* Keep this list current with Cloudflare's published IP ranges if the option above is enabled. */
+    'trusted_proxy_cidrs' => [
+        // '173.245.48.0/20',
+        // '103.21.244.0/22',
+        // '103.22.200.0/22',
+        // '103.31.4.0/22',
+        // ...
+    ],
+];
