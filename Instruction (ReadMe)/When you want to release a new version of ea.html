@@ -123,7 +123,7 @@ hr{border:none;border-top:1px solid var(--border);margin:40px 0;}
     <div class="step-num"></div>
     <div class="step-body">
       <h3>در دیتابیس، ردیف جدید ثبت و شمارهٔ نسخه را در config.php بالا ببرید</h3>
-      <p><b>الف)</b> این کوئری را روی جدول <code class="inline">nutricula_build_manifests</code> اجرا کنید. (باید ردیف جدید با buildID جدید اضافه بشه (نه اینکه همون ردیف قبلی ویرایش بشه) و buildID قبلی هم بمونه که نسخه‌های قبلی بتون -50 رو دریافت کنن.) (مقادیر هش را از خروجی مرحلهٔ قبل جایگزین کنید):</p>
+      <p><b>الف)</b> این کوئری را روی جدول <code class="inline">nutricula_build_manifests</code> اجرا کنید. (باید ردیف جدید با buildID جدید اضافه شود (نه اینکه همان ردیف قبلی ویرایش شود) و buildID قبلی هم بماند که نسخه‌های قبلی بتوانند -50 را دریافت کنند.) (مقادیر هش را از خروجی مرحلهٔ قبل جایگزین کنید):</p>
       <pre>INSERT INTO nutricula_build_manifests
     (build_id, version, protocol_version,
      ex5_sha256, ex4_sha256, dll32_sha256, dll64_sha256,
