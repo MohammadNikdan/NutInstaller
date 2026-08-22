@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>چک‌لیست انتشار نسخهٔ جدید Nutricula</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Vazirmatn:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap');
+:root{
+  --bg:#0d1117; --bg-card:#161d27; --border:#26303c; --border-soft:#1c242e;
+  --text:#e6edf3; --text-dim:#8b98a5; --text-faint:#5c6773;
+  --accent:#5fb3a3; --accent-soft:#5fb3a333; --accent-bright:#7fd4c4;
+  --warn:#e0a458; --warn-soft:#e0a45822;
+  --danger:#e2685f; --danger-soft:#e2685f1c;
+  --mono:'JetBrains Mono',monospace; --sans:'Vazirmatn',sans-serif;
+}
+*{box-sizing:border-box;margin:0;padding:0;}
+body{font-family:var(--sans);background:var(--bg);color:var(--text);line-height:1.85;font-size:16px;}
+.main{max-width:840px;margin:0 auto;padding:56px 32px;}
+.hero-eyebrow{font-family:var(--mono);color:var(--accent);font-size:13px;letter-spacing:.1em;text-transform:uppercase;margin-bottom:14px;font-weight:600;}
+h1{font-size:30px;font-weight:800;margin-bottom:14px;letter-spacing:-.01em;}
+.hero p{color:var(--text-dim);font-size:16px;margin-bottom:40px;}
+.callout{border-radius:10px;padding:18px 22px;margin:20px 0;font-size:14.5px;border:1px solid;}
+.callout.info{background:var(--accent-soft);border-color:#5fb3a355;color:#a8d9cd;}
+.callout.warn{background:var(--warn-soft);border-color:#e0a45855;color:#f0c896;}
+.callout.danger{background:var(--danger-soft);border-color:#e2685f55;color:#f0a49c;}
+.callout b{color:inherit;}
+.step-list{counter-reset:step;margin:24px 0;}
+.step{display:flex;gap:18px;margin-bottom:22px;position:relative;}
+.step:not(:last-child)::after{content:"";position:absolute;right:19px;top:42px;bottom:-22px;width:2px;background:var(--border);}
+.step-num{counter-increment:step;flex-shrink:0;width:40px;height:40px;border-radius:50%;background:var(--accent-soft);color:var(--accent-bright);display:flex;align-items:center;justify-content:center;font-family:var(--mono);font-weight:700;font-size:16px;z-index:1;}
+.step-num::before{content:counter(step);}
+.step-body{flex:1;padding-top:6px;}
+.step-body h3{font-size:17px;font-weight:700;margin-bottom:6px;}
+.step-body p{color:var(--text-dim);font-size:14.5px;margin-top:4px;}
+.step-body p b{color:var(--text);}
+code.inline{font-family:var(--mono);background:var(--bg-card);padding:2px 7px;border-radius:5px;font-size:13.5px;color:var(--accent-bright);border:1px solid var(--border-soft);}
+pre{background:#0a0e14;border:1px solid var(--border);border-radius:10px;padding:16px 18px;overflow-x:auto;margin:12px 0;font-size:13px;font-family:var(--mono);color:#c9d1d9;line-height:1.7;direction:ltr;text-align:left;}
+table{width:100%;border-collapse:collapse;margin:16px 0;font-size:14px;}
+th{text-align:right;font-family:var(--mono);font-size:11px;letter-spacing:.05em;color:var(--text-faint);text-transform:uppercase;padding:8px 12px;border-bottom:1px solid var(--border);font-weight:600;}
+td{padding:10px 12px;border-bottom:1px solid var(--border-soft);color:var(--text-dim);vertical-align:top;}
+tr:last-child td{border-bottom:none;}
+td b{color:var(--text);}
+.file-tag{display:inline-block;font-family:var(--mono);font-size:12.5px;background:var(--bg-card);border:1px solid var(--border-soft);color:var(--accent-bright);padding:3px 9px;border-radius:6px;margin:2px 3px 2px 0;}
+hr{border:none;border-top:1px solid var(--border);margin:40px 0;}
+.checklist{list-style:none;margin:16px 0;}
+.checklist li{display:flex;gap:10px;padding:9px 0;border-bottom:1px solid var(--border-soft);font-size:14.5px;color:var(--text-dim);}
+.checklist li:last-child{border-bottom:none;}
+.checklist li::before{content:"☐";color:var(--accent);flex-shrink:0;}
+</style>
+</head>
+<body>
+<div class="main">
+
+<div class="hero-eyebrow">مرجع سریع — فقط برای انتشار نسخهٔ جدید</div>
+<h1>چک‌لیست انتشار نسخهٔ جدید Nutricula EA</h1>
+<p>این صفحه فقط برای همان سه چیزی است که شما واقعاً هر بار تغییر می‌دهید: <b>Nutricula.ex4/ex5</b>، <b>شمارهٔ نسخه</b>، و <b>توابع محاسباتی MQL</b> داخل DLL. هیچ‌چیز دیگری (Machine ID، Coordinator، PHP) دست‌نخورده می‌ماند.</p>
+
+<div class="callout info">
+<b>پاسخ به سؤال شما — بله، دقیقاً درست فکر می‌کنید:</b><br><br>
+✅ DLL حاوی توابع خودتان (<code class="inline">NutriculaLicenseCheck32.dll</code> و <code class="inline">64.dll</code>) — بله، هر دو معماری باید دوباره ساخته شوند.<br>
+✅ در دیتابیس، مقدار جدید (هش‌های امضاشدهٔ Manifest جدید) باید ثبت شود — بله.<br>
+✅ شمارهٔ نسخه باید جایی تغییر کند تا لایسنس‌ها -۵۰ نگیرند — بله، دقیقاً یک خط، جایش را دقیق در مرحلهٔ ۵ زیر می‌بینید.
+</div>
+
+<hr>
+
+<div class="step-list">
+
+  <div class="step">
+    <div class="step-num"></div>
+    <div class="step-body">
+      <h3>توابع محاسباتی را ویرایش کنید</h3>
+      <p>فقط و فقط این یک فایل: <span class="file-tag">NutriculaLicenseCheckThin.cpp</span></p>
+    </div>
+  </div>
+
+  <div class="step">
+    <div class="step-num"></div>
+    <div class="step-body">
+      <h3>DLL نازک را برای هر دو معماری دوباره بسازید</h3>
+      <p>دو فایل را دابل‌کلیک کنید:</p>
+      <p><span class="file-tag">build_LicenseCheck_x86.bat</span> <span class="file-tag">build_LicenseCheck_x64.bat</span></p>
+      <p>خروجی: <span class="file-tag">NutriculaLicenseCheck32.dll</span> <span class="file-tag">NutriculaLicenseCheck64.dll</span> — این دو فایل جدید را کنار بگذارید، در مرحلهٔ ۷ لازمشان دارید.</p>
+    </div>
+  </div>
+
+  <div class="step">
+    <div class="step-num"></div>
+    <div class="step-body">
+      <h3>Nutricula.ex4 و ex5 را از MetaEditor کامپایل کنید</h3>
+      <p>روال همیشگی خودتان — بیرون از این پروژهٔ C++.</p>
+    </div>
+  </div>
+
+  <div class="step">
+    <div class="step-num"></div>
+    <div class="step-body">
+      <h3>یک build_id جدید انتخاب کنید</h3>
+      <p>یک شناسهٔ متنی دلخواه و منحصربه‌فرد، مثلاً: <code class="inline">build-2026-09-01-001</code> (تاریخ امروز + یک شماره کافی است).</p>
+    </div>
+  </div>
+
+  <div class="step">
+    <div class="step-num"></div>
+    <div class="step-body">
+      <h3>با NutriculaSignTool، Manifest جدید بسازید — اینجا شمارهٔ نسخهٔ جدید را وارد می‌کنید</h3>
+      <p><code class="inline">NutriculaSignTool.exe</code> را (که فقط روی کامپیوتر build امن شماست) با ۱۲ آرگومان اجرا کنید:</p>
+      <pre>NutriculaSignTool.exe ^
+    "build-2026-09-01-001" ^
+    "3.2" ^
+    "1" ^
+    "مسیر\Nutricula.ex5" ^
+    "مسیر\Nutricula.ex4" ^
+    "مسیر\NutriculaLicenseCheck32.dll" ^
+    "مسیر\NutriculaLicenseCheck64.dll" ^
+    "مسیر\NutriculaLicenseService32.exe" ^
+    "مسیر\NutriculaLicenseService64.exe" ^
+    "مسیر\NutriculaLicenseBroker32.exe" ^
+    "مسیر\NutriculaLicenseBroker64.exe" ^
+    "مسیر\manifest.txt"</pre>
+      <p><b>نکتهٔ مهم:</b> آرگومان دوم (<code class="inline">"3.2"</code>) همان شمارهٔ نسخهٔ جدید است — دقیقاً همین‌جا وارد می‌شود، نه هیچ فایل دیگری.</p>
+      <p><b>نکتهٔ مهم دوم:</b> حتی اگر Service/Broker تغییر نکرده باشند، باز هم باید مسیر فایل‌های <b>فعلی/قدیمی‌شان</b> را به ابزار بدهید — چون Manifest همیشه هر ۸ هش را با هم، در یک رکورد امضاشده، نگه می‌دارد. خودشان دوباره ساخته نمی‌شوند، فقط هش فعلی‌شان (که تغییری نکرده) در این Manifest جدید دوباره ثبت می‌شود.</p>
+      <p>ابزار در پایان ۸ مقدار هش را روی صفحه چاپ می‌کند — این‌ها را برای مرحلهٔ بعد کپی کنید.</p>
+    </div>
+  </div>
+
+  <div class="step">
+    <div class="step-num"></div>
+    <div class="step-body">
+      <h3>در دیتابیس، ردیف جدید ثبت و شمارهٔ نسخه را در config.php بالا ببرید</h3>
+      <p><b>الف)</b> این کوئری را روی جدول <code class="inline">nutricula_build_manifests</code> اجرا کنید (مقادیر هش را از خروجی مرحلهٔ قبل جایگزین کنید):</p>
+      <pre>INSERT INTO nutricula_build_manifests
+    (build_id, version, protocol_version,
+     ex5_sha256, ex4_sha256, dll32_sha256, dll64_sha256,
+     service32_sha256, service64_sha256, broker32_sha256, broker64_sha256,
+     created_at)
+VALUES
+    ('build-2026-09-01-001', '3.2', '1',
+     '&lt;ex5_sha256&gt;', '&lt;ex4_sha256&gt;', '&lt;dll32_sha256&gt;', '&lt;dll64_sha256&gt;',
+     '&lt;service32_sha256&gt;', '&lt;service64_sha256&gt;', '&lt;broker32_sha256&gt;', '&lt;broker64_sha256&gt;',
+     NOW());</pre>
+      <p><b>ب)</b> در فایل <code class="inline">license_config.php</code> روی سرور، این خط را پیدا کنید و عدد را بالا ببرید:</p>
+      <pre>'latest_version' => '3.2',   // قبلاً 3.1 بود</pre>
+      <div class="callout warn"><b>این همان جایی است که تعیین می‌کند لایسنس‌ها -۵۰ (نیاز به آپدیت) بگیرند یا نه:</b> سرور نسخهٔ گزارش‌شدهٔ هر build را با همین عدد مقایسه می‌کند. تا وقتی این عدد را بالا نبرید، مشتری‌هایی که هنوز نسخهٔ ۳.۱ نصب دارند مشکلی نمی‌بینند؛ بعد از بالا بردن این عدد، هر کسی که هنوز آپدیت نکرده، در چک بعدی‌اش -۵۰ می‌گیرد و باید نسخهٔ جدید را نصب کند.</div>
+    </div>
+  </div>
+
+  <div class="step">
+    <div class="step-num"></div>
+    <div class="step-body">
+      <h3>فایل‌های Assets نصب‌کننده را جایگزین کنید</h3>
+      <p>فقط این ۵ فایل عوض می‌شوند:</p>
+      <p><span class="file-tag">Nutricula.ex4</span> <span class="file-tag">Nutricula.ex5</span> <span class="file-tag">NutriculaLicenseCheck32.dll</span> <span class="file-tag">NutriculaLicenseCheck64.dll</span> <span class="file-tag">manifest.txt</span></p>
+      <p>بقیهٔ فایل‌های Assets (<span class="file-tag">MachineId32/64.dll</span> <span class="file-tag">NutriculaLicenseService32/64.exe</span> <span class="file-tag">NutriculaLicenseBroker32/64.exe</span>) دست‌نخورده می‌مانند — همان نسخهٔ قبلی کافی است.</p>
+    </div>
+  </div>
+
+  <div class="step">
+    <div class="step-num"></div>
+    <div class="step-body">
+      <h3>نسخهٔ جدید Installer را بسازید و منتشر کنید</h3>
+    </div>
+  </div>
+
+</div>
+
+<hr>
+
+<h3 style="margin-bottom:12px;">چک‌لیست خلاصه — قبل از انتشار این‌ها را تیک بزنید</h3>
+<ul class="checklist">
+  <li>توابع محاسباتی در <code class="inline">NutriculaLicenseCheckThin.cpp</code> ویرایش شد</li>
+  <li><code class="inline">NutriculaLicenseCheck32.dll</code> و <code class="inline">64.dll</code> دوباره ساخته شدند</li>
+  <li><code class="inline">Nutricula.ex4</code> و <code class="inline">ex5</code> از MetaEditor کامپایل شدند</li>
+  <li>یک <code class="inline">build_id</code> جدید انتخاب شد</li>
+  <li><code class="inline">NutriculaSignTool</code> با نسخهٔ جدید اجرا و ۸ هش تولید شد</li>
+  <li>ردیف جدید در <code class="inline">nutricula_build_manifests</code> ثبت شد</li>
+  <li><code class="inline">latest_version</code> در <code class="inline">license_config.php</code> بالا برده شد</li>
+  <li>۵ فایل در Assets نصب‌کننده جایگزین شدند</li>
+  <li>Installer جدید ساخته و منتشر شد</li>
+</ul>
+
+<div class="callout danger"><b>یادآوری امنیتی:</b> کلید خصوصی Vendor (لازم برای اجرای NutriculaSignTool) هرگز نباید خارج از پوشهٔ امن شما کپی بماند — بعد از ساخت Manifest، مطمئن شوید هیچ کپی موقتی از این کلید جا نمانده است.</div>
+
+</div>
+</body>
+</html>
