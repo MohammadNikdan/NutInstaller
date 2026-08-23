@@ -16,17 +16,23 @@ Place these files in the project's Assets folder with the EXACT names:
 
 Nutricula.ex4
 Nutricula.ex5
-Nutricula.ex4.sig
-Nutricula.ex5.sig
-MathUtils.dll
+NutriculaLicenseCheck32.dll
+NutriculaLicenseCheck64.dll
+MachineId32.dll
+MachineId64.dll
+NutriculaLicenseService32.exe
+NutriculaLicenseService64.exe
+NutriculaLicenseBroker32.exe
+NutriculaLicenseBroker64.exe
+manifest.txt
 
 Place icon.ico in the project root (next to NutriculaInstaller.csproj).
 
-The five binary files are embedded as .NET resources, so the resulting installer does not need them beside the EXE.
+The eleven binary files are embedded as .NET resources, so the resulting installer does not need them beside the EXE. See README-GITHUB-BUILD.md for the full list and the GitHub Actions build path.
 
 Important .NET Framework note
 -----------------------------
-The generated EXE is a single application file with all five product binaries embedded in it. .NET Framework 4.8 itself is an operating-system framework/runtime prerequisite; it is not copied beside the EXE.
+The generated EXE is a single application file with all eleven product binaries embedded in it. .NET Framework 4.8 itself is an operating-system framework/runtime prerequisite; it is not copied beside the EXE.
 Windows 7 SP1 systems may require .NET Framework 4.8 to be installed first.
 
 Easy-to-change URLs
@@ -71,28 +77,25 @@ Data sources:
 
 The implementation explicitly filters common placeholder WMI strings such as "To be filled by O.E.M.", "Default string", and "None".
 
-AES request compatibility
--------------------------
-The request encoder uses:
-- key: lj1@91!23867871jbhlk*&GS^madf^&!
-- AES-256
-- ECB
-- Zero padding
-- UTF-8 input bytes
-- uppercase hexadecimal ciphertext
+Request/response protocol
+--------------------------
+NOTE: this section previously described an old AES-256-ECB protocol with a
+hardcoded shared key - that description was stale and did not match the
+actual client/server code even at the time it was written for this
+version of the installer. The real, current protocol is:
 
-The request is built exactly in this order:
-
-rnd_number=<Encoder(rnd_number)>&email=<email>&purchase_key=<purchase_key>&machine_id=<Encoder(machine_id)>
-
-Then the complete PostData is passed through Encoder() once more and sent as the data query parameter.
-
-Response handling
------------------
-The response is read as raw response bytes.
-The decoded response text is compared exactly to "no" using StringComparison.Ordinal.
-If it is "no", the old NutriculaLicense.txt is deleted and no replacement is written.
-For any other response, the ORIGINAL BYTES are written directly to NutriculaLicense.txt without trim, parse, decrypt, decode/re-encode or transformation.
+- The entire request body (all fields together, not per-field) is
+  encrypted with AES-256-GCM using the Transport Key from Keys/TransportKey.txt
+  (see the Keys/ folder architecture and Keys_Reference.html).
+- The envelope format is "N3:<base64(12-byte nonce || 16-byte GCM tag || ciphertext)>",
+  sent as the single POST form field named "data".
+- Every server response (Lease, Reject, and Challenge) is itself an
+  RSA-4096/SHA-256 signed canonical string before being GCM-encrypted -
+  signatures are verified client-side against the server's public key
+  (LicenseCheck/ServerPublicKeyEmbedded.h) before any response is trusted.
+  An unsigned or badly-signed response is always treated as Invalid.
+- See LicenseCheck/LicenseProtocol.cpp/.h and PHP/license_common.php's
+  nutricula_gcm_encrypt/nutricula_gcm_decrypt for the exact implementation.
 
 MetaTrader discovery
 --------------------
