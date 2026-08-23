@@ -22,13 +22,30 @@ jobs:
       - name: Verify required installer files
         shell: pwsh
         run: |
+          # CRITICAL FIX (found via full repo audit + build test): this list
+          # was completely stale - it checked for Nutricula.ex4.sig,
+          # Nutricula.ex5.sig, and MathUtils.dll, none of which
+          # InstallerService.cs has needed since the Coordinator
+          # architecture migration. It also never checked for any of the
+          # actual files InstallerService.cs DOES need now (the license
+          # DLLs, MachineId DLLs, Service/Broker exes, manifest.txt) - so
+          # this check could never catch a genuinely missing required file,
+          # while unnecessarily blocking a build over files nobody needs
+          # anymore. List below matches InstallerService.cs's ResourceItem
+          # declarations exactly - keep both in sync if that ever changes.
           $required = @(
             "icon.ico",
             "Assets\\Nutricula.ex4",
             "Assets\\Nutricula.ex5",
-            "Assets\\Nutricula.ex4.sig",
-            "Assets\\Nutricula.ex5.sig",
-            "Assets\\MathUtils.dll"
+            "Assets\\NutriculaLicenseCheck32.dll",
+            "Assets\\NutriculaLicenseCheck64.dll",
+            "Assets\\MachineId32.dll",
+            "Assets\\MachineId64.dll",
+            "Assets\\NutriculaLicenseService32.exe",
+            "Assets\\NutriculaLicenseService64.exe",
+            "Assets\\NutriculaLicenseBroker32.exe",
+            "Assets\\NutriculaLicenseBroker64.exe",
+            "Assets\\manifest.txt"
           )
 
           $missing = @()
