@@ -70,7 +70,9 @@ namespace NutriculaInstaller
             return FontFamily.GenericSansSerif;
         }
 
-        // ===== Embedded promo image (Assets/installerpic.jpg) =====
+        // ===== Embedded promo image (UIAssets/installerpic.jpg - deliberately
+        //       kept OUT of Assets/, which is reserved for the critical
+        //       license/security binaries; this is just decorative UI) =====
         private static readonly Image installerPromoImage = LoadEmbeddedInstallerPic();
 
         private static Image LoadEmbeddedInstallerPic()
@@ -78,7 +80,7 @@ namespace NutriculaInstaller
             try
             {
                 var assembly = typeof(UiHelpers).Assembly;
-                using (Stream stream = assembly.GetManifestResourceStream("NutriculaInstaller.Assets.installerpic.jpg"))
+                using (Stream stream = assembly.GetManifestResourceStream("NutriculaInstaller.UIAssets.installerpic.jpg"))
                 {
                     if (stream == null) return null;
                     // Image.FromStream needs the stream to stay open for the lifetime of the
