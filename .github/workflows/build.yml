@@ -35,6 +35,7 @@ jobs:
           # declarations exactly - keep both in sync if that ever changes.
           $required = @(
             "icon.ico",
+            "UIAssets\\installerpic.jpg",
             "Assets\\Nutricula.ex4",
             "Assets\\Nutricula.ex5",
             "Assets\\NutriculaLicenseCheck32.dll",
@@ -79,7 +80,7 @@ jobs:
           msbuild .\NutriculaInstaller.csproj
           /t:Rebuild
           /p:Configuration=Release
-          /p:Platform=AnyCPU
+          /p:Platform=x86
           /p:BaseOutputPath=bin\
           /p:OutputPath=bin\Release\
           /m
