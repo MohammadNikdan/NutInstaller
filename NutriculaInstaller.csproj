@@ -106,14 +106,15 @@
       <LogicalName>NutriculaInstaller.Assets.manifest.txt</LogicalName>
     </EmbeddedResource>
 
-    <EmbeddedResource Include="Assets\installerpic.jpg">
-      <LogicalName>NutriculaInstaller.Assets.installerpic.jpg</LogicalName>
+    <EmbeddedResource Include="UIAssets\installerpic.jpg">
+      <LogicalName>NutriculaInstaller.UIAssets.installerpic.jpg</LogicalName>
     </EmbeddedResource>
   </ItemGroup>
 
   <Target Name="ValidateRequiredInstallerFiles" BeforeTargets="PrepareForBuild">
     <Error Condition="!Exists('$(MSBuildProjectDirectory)\icon.ico')" Text="Required file missing: icon.ico (place it next to NutriculaInstaller.csproj)." />
     <Error Condition="!Exists('$(MSBuildProjectDirectory)\Fonts\Outfit-Regular.ttf')" Text="Required file missing: Fonts\Outfit-Regular.ttf" />
+    <Error Condition="!Exists('$(MSBuildProjectDirectory)\UIAssets\installerpic.jpg')" Text="Required file missing: UIAssets\installerpic.jpg" />
     <Error Condition="!Exists('$(MSBuildProjectDirectory)\Assets\Nutricula.ex4')" Text="Required file missing: Assets\Nutricula.ex4" />
     <Error Condition="!Exists('$(MSBuildProjectDirectory)\Assets\Nutricula.ex5')" Text="Required file missing: Assets\Nutricula.ex5" />
     <Error Condition="!Exists('$(MSBuildProjectDirectory)\Assets\NutriculaLicenseCheck32.dll')" Text="Required file missing: Assets\NutriculaLicenseCheck32.dll" />
@@ -125,7 +126,6 @@
     <Error Condition="!Exists('$(MSBuildProjectDirectory)\Assets\NutriculaLicenseBroker32.exe')" Text="Required file missing: Assets\NutriculaLicenseBroker32.exe" />
     <Error Condition="!Exists('$(MSBuildProjectDirectory)\Assets\NutriculaLicenseBroker64.exe')" Text="Required file missing: Assets\NutriculaLicenseBroker64.exe" />
     <Error Condition="!Exists('$(MSBuildProjectDirectory)\Assets\manifest.txt')" Text="Required file missing: Assets\manifest.txt" />
-    <Error Condition="!Exists('$(MSBuildProjectDirectory)\Assets\installerpic.jpg')" Text="Required file missing: Assets\installerpic.jpg" />
   </Target>
 
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
