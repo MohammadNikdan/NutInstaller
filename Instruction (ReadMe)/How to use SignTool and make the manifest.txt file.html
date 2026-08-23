@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>راهنمای کامل SignTool و ساخت Manifest</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Vazirmatn:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap');
+:root{
+  --bg:#0d1117; --bg-card:#161d27; --border:#26303c; --border-soft:#1c242e;
+  --text:#e6edf3; --text-dim:#8b98a5; --text-faint:#5c6773;
+  --accent:#5fb3a3; --accent-soft:#5fb3a333; --accent-bright:#7fd4c4;
+  --warn:#e0a458; --warn-soft:#e0a45822;
+  --danger:#e2685f; --danger-soft:#e2685f1c;
+  --mono:'JetBrains Mono',monospace; --sans:'Vazirmatn',sans-serif;
+}
+*{box-sizing:border-box;margin:0;padding:0;}
+body{font-family:var(--sans);background:var(--bg);color:var(--text);line-height:1.85;font-size:16px;}
+.main{max-width:960px;margin:0 auto;padding:56px 32px;}
+.hero-eyebrow{font-family:var(--mono);color:var(--accent);font-size:13px;letter-spacing:.1em;text-transform:uppercase;margin-bottom:14px;font-weight:600;}
+h1{font-size:30px;font-weight:800;margin-bottom:14px;letter-spacing:-.01em;}
+h2{font-size:22px;font-weight:700;margin:8px 0 6px;}
+h3{font-size:17px;font-weight:700;margin:20px 0 8px;}
+.hero p{color:var(--text-dim);font-size:16px;margin-bottom:24px;max-width:760px;}
+.section-desc{color:var(--text-dim);font-size:14.5px;margin-bottom:12px;}
+.callout{border-radius:10px;padding:16px 20px;margin:18px 0;font-size:14.5px;border:1px solid;}
+.callout.info{background:var(--accent-soft);border-color:#5fb3a355;color:#a8d9cd;}
+.callout.warn{background:var(--warn-soft);border-color:#e0a45855;color:#f0c896;}
+.callout.danger{background:var(--danger-soft);border-color:#e2685f55;color:#f0a49c;}
+.callout b{color:inherit;}
+hr{border:none;border-top:1px solid var(--border);margin:40px 0;}
+code.inline{font-family:var(--mono);background:var(--bg);padding:2px 7px;border-radius:5px;font-size:13px;color:var(--accent-bright);border:1px solid var(--border-soft);}
+pre{background:#0a0e14;border:1px solid var(--border);border-radius:10px;padding:16px 18px;overflow-x:auto;margin:12px 0;font-size:12.5px;font-family:var(--mono);color:#c9d1d9;line-height:1.7;direction:ltr;text-align:left;}
+pre .c1{color:var(--accent-bright);}
+pre .c2{color:var(--warn);}
+pre .c3{color:var(--text-faint);}
+
+.step-list{counter-reset:step;margin:20px 0;}
+.step{display:flex;gap:16px;margin-bottom:20px;position:relative;}
+.step:not(:last-child)::after{content:"";position:absolute;right:19px;top:42px;bottom:-20px;width:2px;background:var(--border);}
+.step-num{counter-increment:step;flex-shrink:0;width:40px;height:40px;border-radius:50%;background:var(--accent-soft);color:var(--accent-bright);display:flex;align-items:center;justify-content:center;font-family:var(--mono);font-weight:700;font-size:16px;z-index:1;}
+.step-num::before{content:counter(step);}
+.step-body{flex:1;padding-top:6px;}
+.step-body h3{margin-top:0;}
+.step-body p{color:var(--text-dim);font-size:14.5px;margin-top:4px;}
+
+table.args{width:100%;border-collapse:collapse;margin:14px 0;font-size:13px;}
+table.args th{text-align:right;font-family:var(--mono);font-size:11px;letter-spacing:.04em;color:var(--text-faint);text-transform:uppercase;padding:8px 10px;border-bottom:1px solid var(--border);}
+table.args td{padding:9px 10px;border-bottom:1px solid var(--border-soft);color:var(--text-dim);vertical-align:top;}
+table.args td.n{font-family:var(--mono);color:var(--accent-bright);}
+table.args td b{color:var(--text);}
+</style>
+</head>
+<body>
+<div class="main">
+
+<div class="hero-eyebrow">راهنمای کامل، قدم‌به‌قدم — برای کسی که هیچی از این موضوع نمی‌داند</div>
+<h1>ابزار SignTool، ساخت Manifest، و ثبت در دیتابیس</h1>
+<p>این صفحه دقیقاً توضیح می‌دهد <code class="inline">NutriculaSignTool.exe</code> چه کاری می‌کند، چطور اجرایش کنید، فایل خروجی‌اش را کجا بگذارید، و چطور نتیجه را در دیتابیس ثبت کنید — با یک مثال کامل و واقعی از ابتدا تا انتها.</p>
+
+<hr>
+
+<h2>اول: اصلاً SignTool چیست و چرا لازم است؟</h2>
+<p class="section-desc">هر بار که یکی از فایل‌های نهایی (EA، DLL‌ها، Service، Broker) عوض می‌شود، مشتری‌های شما باید مطمئن شوند که این فایل‌ها واقعاً از طرف <b>شما</b> آمده‌اند، نه یک نسخهٔ دستکاری‌شده. راه‌حل: شما با یک کلید مخصوص خودتان (Vendor Signing Key) یک «رسید امضاشده» می‌سازید که هش (اثر انگشت دیجیتال) هر ۸ فایل را در خودش دارد. این رسید همان <code class="inline">manifest.txt</code> است. برنامهٔ نصب‌شده روی کامپیوتر مشتری، همیشه قبل از هر کاری، این رسید را چک می‌کند و مطمئن می‌شود فایل‌های کنارش دقیقاً همان‌هایی هستند که شما امضا کرده‌اید.</p>
+
+<div class="callout info"><b>SignTool کجاست:</b> بعد از یک‌بار اجرای <code class="inline">build_SignTool.bat</code> (در پوشهٔ <code class="inline">Builders\</code>)، فایل اجرایی در <code class="inline">Builders\Builds\NutriculaSignTool.exe</code> ساخته می‌شود.</div>
+
+<hr>
+
+<h2>قدم‌به‌قدم — از صفر تا ثبت در دیتابیس</h2>
+
+<div class="step-list">
+
+<div class="step">
+  <div class="step-num"></div>
+  <div class="step-body">
+    <h3>مطمئن شوید هر ۸ فایل ورودی آماده‌اند</h3>
+    <p>یعنی: <code class="inline">Nutricula.ex5</code>، <code class="inline">Nutricula.ex4</code>، <code class="inline">NutriculaLicenseCheck32.dll</code>، <code class="inline">NutriculaLicenseCheck64.dll</code>، <code class="inline">NutriculaLicenseService32.exe</code>، <code class="inline">NutriculaLicenseService64.exe</code>، <code class="inline">NutriculaLicenseBroker32.exe</code>، <code class="inline">NutriculaLicenseBroker64.exe</code> — همان‌هایی که قرار است در <code class="inline">Assets\</code> نصب‌کننده هم بگذارید (طبق راهنمای «چه فایل‌هایی باید در Assets باشند»).</p>
+  </div>
+</div>
+
+<div class="step">
+  <div class="step-num"></div>
+  <div class="step-body">
+    <h3>یک <code class="inline">build_id</code> جدید و منحصربه‌فرد انتخاب کنید</h3>
+    <p>هر رشتهٔ متنی دلخواه، فقط باید هربار جدید و تکراری‌نشده باشد. ساده‌ترین روش: تاریخ امروز + یک شماره. مثال: <code class="inline">build-2026-08-24-001</code></p>
+  </div>
+</div>
+
+<div class="step">
+  <div class="step-num"></div>
+  <div class="step-body">
+    <h3>Command Prompt را در پوشهٔ <code class="inline">Builders\Builds\</code> باز کنید و دستور را اجرا کنید</h3>
+    <p>دستور دقیقاً ۱۲ آرگومان می‌خواهد، به همین ترتیب:</p>
+    <table class="args">
+      <tr><th>#</th><th>آرگومان</th><th>توضیح</th></tr>
+      <tr><td class="n">1</td><td><b>build_id</b></td><td>همان چیزی که در قدم قبل انتخاب کردید</td></tr>
+      <tr><td class="n">2</td><td><b>version</b></td><td>شمارهٔ نسخهٔ جدید EA، مثلاً <code class="inline">3.2</code></td></tr>
+      <tr><td class="n">3</td><td><b>protocol_version</b></td><td>معمولاً <code class="inline">1</code> — فقط اگر خود فرمت پروتکل ارتباطی را عوض کردید (نه EA را)، این را بالا ببرید</td></tr>
+      <tr><td class="n">4</td><td>مسیر <b>Nutricula.ex5</b></td><td rowspan="8">مسیر کامل فایل روی کامپیوتر شما (نسبی یا کامل، هرکدام)</td></tr>
+      <tr><td class="n">5</td><td>مسیر <b>Nutricula.ex4</b></td></tr>
+      <tr><td class="n">6</td><td>مسیر <b>NutriculaLicenseCheck32.dll</b></td></tr>
+      <tr><td class="n">7</td><td>مسیر <b>NutriculaLicenseCheck64.dll</b></td></tr>
+      <tr><td class="n">8</td><td>مسیر <b>NutriculaLicenseService32.exe</b></td></tr>
+      <tr><td class="n">9</td><td>مسیر <b>NutriculaLicenseService64.exe</b></td></tr>
+      <tr><td class="n">10</td><td>مسیر <b>NutriculaLicenseBroker32.exe</b></td></tr>
+      <tr><td class="n">11</td><td>مسیر <b>NutriculaLicenseBroker64.exe</b></td></tr>
+      <tr><td class="n">12</td><td>مسیر <b>خروجی</b></td><td>کجا فایل <code class="inline">manifest.txt</code> ساخته شود</td></tr>
+    </table>
+  </div>
+</div>
+
+</div>
+
+<h3>مثال کامل و واقعی</h3>
+<p class="section-desc">فرض کنید همهٔ ۸ فایل را در همان پوشهٔ <code class="inline">Builders\Builds\</code> دارید و می‌خواهید خروجی هم همان‌جا ساخته شود:</p>
+<pre>NutriculaSignTool.exe <span class="c1">"build-2026-08-24-001"</span> <span class="c1">"3.2"</span> <span class="c1">"1"</span> ^
+    "Nutricula.ex5" ^
+    "Nutricula.ex4" ^
+    "NutriculaLicenseCheck32.dll" ^
+    "NutriculaLicenseCheck64.dll" ^
+    "NutriculaLicenseService32.exe" ^
+    "NutriculaLicenseService64.exe" ^
+    "NutriculaLicenseBroker32.exe" ^
+    "NutriculaLicenseBroker64.exe" ^
+    "manifest.txt"</pre>
+
+<h3>خروجی موفق (دقیقاً چیزی که روی صفحه می‌بینید)</h3>
+<p class="section-desc">این خروجی <b>واقعی</b> است (تست‌شده) — البته هش‌های شما با فایل‌های واقعی خودتان متفاوت خواهند بود:</p>
+<pre>Manifest written successfully:
+build_id=build-2026-08-24-001
+version=3.2
+protocol_version=1
+ex5_sha256=0f9cbc3bfba3b84b8c9a5a91b410edf9100c4ee5f8a0b49be2f204eb9d4e49b5
+ex4_sha256=d2ba3606f043d8b77ccb31547c858ec9b51a381ba0235b32be57a83fd053c587
+dll32_sha256=4b65fcc6edf6dafe3c82362e6f69e3fabdb246eb5f808abc402b4fc76cb4e768
+dll64_sha256=ab54dd7834c56e28e427fa9a442b3291ca6a35712abaeccc4ad427d16f8c9db0
+service32_sha256=8c1d3d04298583589ecbae0083657022a4a43db5917a526fa8c5f9b895f615f8
+service64_sha256=41cfe073c28a00eb705f5d5cb39cce15510f7816c5ba051fe3cd5fe00b512180
+broker32_sha256=b1174ab9e2f22ce6e6bd3454d2d03809aa45d569ee3559fc8ae728423d711c09
+broker64_sha256=3ec923f4e06019ac5b0fc550f02b549e3ad10e045578cea7efae9680eb09b005
+signature=rTtZ77vLu27a6z5ZGOUXbOO/fvIULpnM6wDEMHxXKGnWVcUZiNrtcEhlqP4sCf5vLGuecX1mkZHUQzpUwkluY0D5dPSoTjDJnQWpZ+3JAb+KTCoPQmJyLZ641cmkG+uE</pre>
+
+<p class="section-desc">همین متن، عیناً در فایل <code class="inline">manifest.txt</code> هم ذخیره شده — پس دیگر لازم نیست چیزی را دستی تایپ کنید، فقط از همین خروجی کپی می‌کنید.</p>
+
+<div class="callout warn"><b>اگر به‌جای این خروجی، پیام <code class="inline">ERROR: signing failed.</code> دیدید:</b> یعنی کلید خصوصی Vendor (<code class="inline">Keys\VendorSigningKey_Private.pem</code>) خالی است — طبق <code class="inline">Keys\README.txt</code> موقتاً مقدار واقعی‌اش را از جای امن خودتان برگردانید و <code class="inline">build_SignTool.bat</code> را دوباره اجرا کنید (که این‌بار KeyBaker کلید تازه را می‌خواند).</div>
+
+<hr>
+
+<h2>قدم بعدی — جایگذاری در Assets</h2>
+<p class="section-desc">فایل <code class="inline">manifest.txt</code> ساخته‌شده را کپی کنید و در پوشهٔ <code class="inline">Assets\</code> نصب‌کننده جایگزین نسخهٔ قبلی کنید — دقیقاً با همین نام (<code class="inline">manifest.txt</code>).</p>
+
+<hr>
+
+<h2>قدم آخر — ثبت در دیتابیس سرور</h2>
+<p class="section-desc">این ۸ هش را که در خروجی بالا دیدید (و نسخه/build_id) باید در جدول <code class="inline">nutricula_build_manifests</code> هم ثبت کنید — تا سرور PHP هم همین مقادیر را برای مقایسه داشته باشد. مقادیر را مستقیم از همان خروجی کپی کنید:</p>
+
+<pre>INSERT INTO nutricula_build_manifests
+    (build_id, version, protocol_version,
+     ex5_sha256, ex4_sha256, dll32_sha256, dll64_sha256,
+     service32_sha256, service64_sha256, broker32_sha256, broker64_sha256,
+     created_at)
+VALUES
+    (<span class="c1">'build-2026-08-24-001'</span>, <span class="c1">'3.2'</span>, <span class="c1">'1'</span>,
+     <span class="c1">'0f9cbc3bfba3b84b8c9a5a91b410edf9100c4ee5f8a0b49be2f204eb9d4e49b5'</span>,
+     <span class="c1">'d2ba3606f043d8b77ccb31547c858ec9b51a381ba0235b32be57a83fd053c587'</span>,
+     <span class="c1">'4b65fcc6edf6dafe3c82362e6f69e3fabdb246eb5f808abc402b4fc76cb4e768'</span>,
+     <span class="c1">'ab54dd7834c56e28e427fa9a442b3291ca6a35712abaeccc4ad427d16f8c9db0'</span>,
+     <span class="c1">'8c1d3d04298583589ecbae0083657022a4a43db5917a526fa8c5f9b895f615f8'</span>,
+     <span class="c1">'41cfe073c28a00eb705f5d5cb39cce15510f7816c5ba051fe3cd5fe00b512180'</span>,
+     <span class="c1">'b1174ab9e2f22ce6e6bd3454d2d03809aa45d569ee3559fc8ae728423d711c09'</span>,
+     <span class="c1">'3ec923f4e06019ac5b0fc550f02b549e3ad10e045578cea7efae9680eb09b005'</span>,
+     NOW());</pre>
+
+<div class="callout danger"><b>خیلی مهم — همیشه INSERT، هرگز UPDATE:</b> این باید یک ردیف <b>جدید</b> باشد، نه ویرایش ردیف قبلی. اگر ردیف قبلی را ویرایش کنید، مشتری‌هایی که هنوز نسخهٔ قدیمی را نصب دارند (و هنوز آپدیت نکرده‌اند) ناگهان و بدون هشدار Reject می‌شوند، چون هش فایل‌های واقعی روی کامپیوترشان دیگر با چیزی که سرور برای همان <code class="inline">build_id</code> قدیمی انتظار دارد، مطابقت ندارد.</div>
+
+<p class="section-desc">همچنین اگر می‌خواهید این نسخه را <b>اجباری</b> کنید (یعنی مشتری‌های نسخهٔ قدیمی مجبور به آپدیت شوند)، باید در <code class="inline">license_config.php</code> مقدار <code class="inline">latest_version</code> را هم به همین نسخهٔ جدید (اینجا <code class="inline">'3.2'</code>) بالا ببرید.</p>
+
+<hr>
+
+<h2>خلاصهٔ کامل — چک‌لیست نهایی</h2>
+<table class="args">
+<tr><th>#</th><th>کار</th></tr>
+<tr><td class="n">۱</td><td>هر ۸ فایل جدید آماده و بدون تغییر بعدی</td></tr>
+<tr><td class="n">۲</td><td>یک <code class="inline">build_id</code> جدید انتخاب شد</td></tr>
+<tr><td class="n">۳</td><td><code class="inline">NutriculaSignTool.exe</code> با ۱۲ آرگومان اجرا شد</td></tr>
+<tr><td class="n">۴</td><td>خروجی موفق (نه <code class="inline">ERROR</code>) دیده شد</td></tr>
+<tr><td class="n">۵</td><td><code class="inline">manifest.txt</code> جدید در <code class="inline">Assets\</code> جایگزین شد</td></tr>
+<tr><td class="n">۶</td><td>ردیف جدید (INSERT، نه UPDATE) در <code class="inline">nutricula_build_manifests</code> ثبت شد</td></tr>
+<tr><td class="n">۷</td><td>در صورت نیاز به آپدیت اجباری، <code class="inline">latest_version</code> هم در <code class="inline">license_config.php</code> بالا رفت</td></tr>
+</table>
+
+</div>
+</body>
+</html>
