@@ -373,7 +373,8 @@ namespace NutriculaInstaller
             {
                 await InstallCoordinatorAsync(
                     resService32, resService64, resBroker32, resBroker64,
-                    resManifest, resEx5, resLicenseDll32, resLicenseDll64,
+                    resManifest, resEx5, resEx4, resLicenseDll32, resLicenseDll64,
+                    resMachineId32, resMachineId64,
                     token, log).ConfigureAwait(true);
                 completed++;
                 progress.Report(new ProgressUpdate(completed, totalOperations));
@@ -424,8 +425,9 @@ namespace NutriculaInstaller
         private async Task InstallCoordinatorAsync(
             ResourceItem resService32, ResourceItem resService64,
             ResourceItem resBroker32, ResourceItem resBroker64,
-            ResourceItem resManifest, ResourceItem resEx5,
+            ResourceItem resManifest, ResourceItem resEx5, ResourceItem resEx4,
             ResourceItem resLicenseDll32, ResourceItem resLicenseDll64,
+            ResourceItem resMachineId32, ResourceItem resMachineId64,
             CancellationToken token, Action<string> log)
         {
             string installDir = Path.Combine(
@@ -445,7 +447,21 @@ namespace NutriculaInstaller
             VerifyInstalledFile(Path.Combine(installDir, "NutriculaLicenseService.exe"));
             VerifyInstalledFile(Path.Combine(installDir, "NutriculaLicenseBroker.exe"));
 
-            ResourceItem[] sharedResources = new ResourceItem[] { resManifest, resEx5, resLicenseDll32, resLicenseDll64 };
+            // CRITICAL: MachineIdBridge::Load() (called by the Coordinator
+            // itself at startup, from its OWN directory) needs
+            // MachineId32.dll or MachineId64.dll matching the COORDINATOR's
+            // architecture (never the terminal's MT4/MT5 architecture)
+            // sitting right next to it - required for the Coordinator to
+            // generate a machine_id or sign a challenge at all. Installed
+            // under its own real name (not overridden, unlike
+            // Service/Broker) since MachineIdBridge.cpp looks for exactly
+            // "MachineId32.dll" / "MachineId64.dll" via #ifdef _WIN64.
+            ResourceItem selectedMachineId = osIs64Bit ? resMachineId64 : resMachineId32;
+            await CopyEmbeddedResourceAsync(selectedMachineId, installDir, token).ConfigureAwait(true);
+            VerifyInstalledFile(Path.Combine(installDir, selectedMachineId.FileName));
+            log("Copied " + selectedMachineId.FileName + " -> " + installDir + " (Coordinator's own machine ID dependency)");
+
+            ResourceItem[] sharedResources = new ResourceItem[] { resManifest, resEx5, resEx4, resLicenseDll32, resLicenseDll64 };
             foreach (ResourceItem item in sharedResources)
             {
                 await CopyEmbeddedResourceAsync(item, installDir, token).ConfigureAwait(true);
