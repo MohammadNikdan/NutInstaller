@@ -183,11 +183,32 @@ function nutricula_no(array $config, int $status = 200): never
 function nutricula_reject(array $config, string $reason, int $retryAfterSeconds = 0): never
 {
     $now = time();
-    $body =
-        'NL3-REJECT' .
-        '|reason=' . $reason .
+    $canonical =
+        'reason=' . $reason .
         '|requested_at=' . $now .
         '|retry_after_seconds=' . max(0, $retryAfterSeconds);
+
+    // CRITICAL FIX (found via full end-to-end testing): this function
+    // never actually signed its output, despite LicenseProtocol.cpp's own
+    // comment claiming it did ("matches the identical fix applied
+    // server-side in nutricula_reject()"). The C++ side has always
+    // required "|server_signature=" on every Reject (exact same
+    // requirement as Challenge, fixed in the previous session) - without
+    // it, every Reject response this function ever produced was silently
+    // treated as Invalid by every client, for every reason (license
+    // expired, too early, machine mismatch, artifact mismatch, update
+    // required - all of them).
+    try {
+        $signature = nutricula_server_sign($canonical, $config);
+        $body = 'NL3-REJECT|' . $canonical . '|server_signature=' . $signature;
+    } catch (Throwable $e) {
+        // Signing itself failed (e.g. key file unreadable) - fall back to
+        // the old unsigned format rather than crash. A client will still
+        // correctly treat this as Invalid (same as before this fix), which
+        // is the safe failure mode - never worse than the previous
+        // behavior, just not better either in this one edge case.
+        $body = 'NL3-REJECT|' . $canonical;
+    }
 
     http_response_code(200);
     header('Content-Type: text/plain; charset=UTF-8');
