@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>فایل‌های موردنیاز Assets/ قبل از Build نصب‌کننده</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Vazirmatn:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap');
+:root{
+  --bg:#0d1117; --bg-card:#161d27; --border:#26303c; --border-soft:#1c242e;
+  --text:#e6edf3; --text-dim:#8b98a5; --text-faint:#5c6773;
+  --accent:#5fb3a3; --accent-soft:#5fb3a333; --accent-bright:#7fd4c4;
+  --warn:#e0a458; --warn-soft:#e0a45822;
+  --danger:#e2685f; --danger-soft:#e2685f1c;
+  --mt4:#c98bd9; --mt4-soft:#c98bd91c;
+  --mt5:#5b9bd5; --mt5-soft:#5b9bd51c;
+  --mono:'JetBrains Mono',monospace; --sans:'Vazirmatn',sans-serif;
+}
+*{box-sizing:border-box;margin:0;padding:0;}
+body{font-family:var(--sans);background:var(--bg);color:var(--text);line-height:1.85;font-size:16px;}
+.main{max-width:1100px;margin:0 auto;padding:56px 32px;}
+.hero-eyebrow{font-family:var(--mono);color:var(--accent);font-size:13px;letter-spacing:.1em;text-transform:uppercase;margin-bottom:14px;font-weight:600;}
+h1{font-size:30px;font-weight:800;margin-bottom:14px;letter-spacing:-.01em;}
+h2{font-size:21px;font-weight:700;margin:8px 0 14px;}
+.hero p{color:var(--text-dim);font-size:16px;margin-bottom:24px;max-width:760px;}
+.callout{border-radius:10px;padding:16px 20px;margin:18px 0;font-size:14.5px;border:1px solid;}
+.callout.info{background:var(--accent-soft);border-color:#5fb3a355;color:#a8d9cd;}
+.callout.warn{background:var(--warn-soft);border-color:#e0a45855;color:#f0c896;}
+.callout b{color:inherit;}
+hr{border:none;border-top:1px solid var(--border);margin:40px 0;}
+
+code.inline{font-family:var(--mono);background:var(--bg);padding:2px 7px;border-radius:5px;font-size:13px;color:var(--accent-bright);border:1px solid var(--border-soft);}
+
+table.files{width:100%;border-collapse:collapse;margin:16px 0;font-size:13.5px;}
+table.files th{text-align:right;font-family:var(--mono);font-size:11px;letter-spacing:.04em;color:var(--text-faint);text-transform:uppercase;padding:9px 10px;border-bottom:1px solid var(--border);font-weight:600;}
+table.files td{padding:11px 10px;border-bottom:1px solid var(--border-soft);color:var(--text-dim);vertical-align:top;}
+table.files tr:last-child td{border-bottom:none;}
+table.files td b{color:var(--text);}
+table.files td.fname{font-family:var(--mono);font-size:12.5px;color:var(--accent-bright);white-space:nowrap;}
+
+.badge{display:inline-block;font-family:var(--mono);font-size:10px;padding:2px 8px;border-radius:20px;font-weight:700;letter-spacing:.03em;margin:1px 2px;}
+.badge.mt4{background:var(--mt4-soft);color:var(--mt4);}
+.badge.mt5{background:var(--mt5-soft);color:var(--mt5);}
+.badge.always{background:var(--accent-soft);color:var(--accent-bright);}
+.badge.x86{background:#e0a45822;color:var(--warn);}
+.badge.x64{background:#e0a45822;color:var(--warn);}
+
+.diagram-box{background:var(--bg-card);border:1px solid var(--border);border-radius:10px;padding:20px;font-family:var(--mono);font-size:12.5px;color:var(--text-dim);white-space:pre;overflow-x:auto;line-height:1.65;direction:ltr;text-align:left;margin:16px 0;}
+.diagram-box .n1{color:var(--accent-bright);}
+.diagram-box .n2{color:var(--mt4);}
+.diagram-box .n3{color:var(--mt5);}
+.diagram-box .n4{color:var(--warn);}
+
+.checklist{list-style:none;margin:14px 0;}
+.checklist li{display:flex;gap:10px;padding:8px 0;border-bottom:1px solid var(--border-soft);font-size:14.5px;color:var(--text-dim);font-family:var(--mono);}
+.checklist li:last-child{border-bottom:none;}
+.checklist li::before{content:"☐";color:var(--accent);flex-shrink:0;font-family:var(--sans);}
+
+.section-desc{color:var(--text-dim);font-size:14.5px;margin-bottom:14px;}
+</style>
+</head>
+<body>
+<div class="main">
+
+<div class="hero-eyebrow">مرجع کامل — پیش از Build نصب‌کننده</div>
+<h1>دقیقاً چه فایل‌هایی باید در Assets/ باشند؟</h1>
+<p>این صفحه فهرست کامل ۱۲ فایلی است که <code class="inline">NutriculaInstaller.csproj</code> پیش از build نیاز دارد، به‌همراه این‌که هرکدام دقیقاً کجا (تحت چه شرطی) روی کامپیوتر مشتری کپی می‌شوند.</p>
+
+<div class="callout warn"><b>هرگاه یکی از این فایل‌ها را عوض کردید</b> (نسخهٔ جدید EA، کلید جدید، Manifest جدید)، باید همان فایل را اینجا هم جایگزین کنید و دوباره Installer را build بگیرید — خود Installer فایل‌های قدیمی را به‌روزرسانی نمی‌کند، آن‌ها را در build خودش هاردکد (Embedded Resource) می‌کند.</div>
+
+<hr>
+
+<h2>پوشهٔ Assets/ — ۱۱ فایل حیاتی</h2>
+<table class="files">
+<tr><th>نام دقیق فایل</th><th>از کجا می‌آید</th><th>کجا کپی می‌شود</th></tr>
+<tr><td class="fname">Nutricula.ex4</td><td>خروجی کامپایل EA در MetaEditor (نسخهٔ MQL4)</td><td><span class="badge mt4">MT4</span> هر ترمینال MT4 → <code class="inline">MQL4\Experts\</code><br><span class="badge always">همیشه</span> یک نسخه به پوشهٔ Coordinator هم (پایین توضیح داده شده)</td></tr>
+<tr><td class="fname">Nutricula.ex5</td><td>خروجی کامپایل EA در MetaEditor (نسخهٔ MQL5)</td><td><span class="badge mt5">MT5</span> هر ترمینال MT5 → <code class="inline">MQL5\Experts\</code><br><span class="badge always">همیشه</span> یک نسخه به پوشهٔ Coordinator هم</td></tr>
+<tr><td class="fname">NutriculaLicenseCheck32.dll</td><td><code class="inline">build_LicenseCheck_x86.bat</code></td><td><span class="badge mt4">MT4</span> هر ترمینال MT4 → <code class="inline">MQL4\Libraries\</code><br><span class="badge always">همیشه</span> یک نسخه به پوشهٔ Coordinator هم</td></tr>
+<tr><td class="fname">NutriculaLicenseCheck64.dll</td><td><code class="inline">build_LicenseCheck_x64.bat</code></td><td><span class="badge mt5">MT5</span> هر ترمینال MT5 → <code class="inline">MQL5\Libraries\</code><br><span class="badge always">همیشه</span> یک نسخه به پوشهٔ Coordinator هم</td></tr>
+<tr><td class="fname">MachineId32.dll</td><td><code class="inline">build_MachineId_x86.bat</code></td><td><span class="badge mt4">MT4</span> هر ترمینال MT4 → <code class="inline">MQL4\Libraries\</code><br><span class="badge x86">فقط اگر Windows میزبان ۳۲‑بیتی باشد</span> یک نسخه هم به پوشهٔ Coordinator</td></tr>
+<tr><td class="fname">MachineId64.dll</td><td><code class="inline">build_MachineId_x64.bat</code></td><td><span class="badge mt5">MT5</span> هر ترمینال MT5 → <code class="inline">MQL5\Libraries\</code><br><span class="badge x64">فقط اگر Windows میزبان ۶۴‑بیتی باشد</span> یک نسخه هم به پوشهٔ Coordinator</td></tr>
+<tr><td class="fname">NutriculaLicenseService32.exe</td><td><code class="inline">build_Service_x86.bat</code></td><td><span class="badge x86">فقط اگر Windows میزبان ۳۲‑بیتی باشد</span> → پوشهٔ Coordinator، با نام ثابت <code class="inline">NutriculaLicenseService.exe</code></td></tr>
+<tr><td class="fname">NutriculaLicenseService64.exe</td><td><code class="inline">build_Service_x64.bat</code></td><td><span class="badge x64">فقط اگر Windows میزبان ۶۴‑بیتی باشد</span> → پوشهٔ Coordinator، با نام ثابت <code class="inline">NutriculaLicenseService.exe</code></td></tr>
+<tr><td class="fname">NutriculaLicenseBroker32.exe</td><td><code class="inline">build_Broker_x86.bat</code></td><td><span class="badge x86">فقط اگر Windows میزبان ۳۲‑بیتی باشد</span> → پوشهٔ Coordinator، با نام ثابت <code class="inline">NutriculaLicenseBroker.exe</code></td></tr>
+<tr><td class="fname">NutriculaLicenseBroker64.exe</td><td><code class="inline">build_Broker_x64.bat</code></td><td><span class="badge x64">فقط اگر Windows میزبان ۶۴‑بیتی باشد</span> → پوشهٔ Coordinator، با نام ثابت <code class="inline">NutriculaLicenseBroker.exe</code></td></tr>
+<tr><td class="fname">manifest.txt</td><td><code class="inline">build_SignTool.bat</code> (پس از امضا با کلید Vendor)</td><td><span class="badge always">همیشه</span> یک نسخه به پوشهٔ Coordinator</td></tr>
+</table>
+
+<div class="callout info"><b>«پوشهٔ Coordinator» دقیقاً کجاست:</b> <code class="inline">%ProgramFiles%\Nutricula\LicenseService\</code> — این یک‌بار و سراسری نصب می‌شود (نه به‌ازای هر ترمینال)، صرف‌نظر از این‌که چند ترمینال MT4/MT5 روی آن کامپیوتر پیدا شود.</div>
+
+
+<hr>
+
+<h2>نمودار کامل مسیرها</h2>
+<div class="diagram-box">پروژهٔ Installer\
+└── Assets\
+    ├── Nutricula.ex4
+    ├── Nutricula.ex5
+    ├── NutriculaLicenseCheck32.dll
+    ├── NutriculaLicenseCheck64.dll
+    ├── MachineId32.dll
+    ├── MachineId64.dll
+    ├── NutriculaLicenseService32.exe
+    ├── NutriculaLicenseService64.exe
+    ├── NutriculaLicenseBroker32.exe
+    ├── NutriculaLicenseBroker64.exe
+    └── manifest.txt
+
+روی کامپیوتر مشتری، بعد از نصب:
+
+<span class="n2">اگر ترمینال MT4 پیدا شود</span> (به ازای هر نصب MT4 جدا):
+  <ترمینال>\MQL4\Experts\Nutricula.ex4
+  <ترمینال>\MQL4\Libraries\NutriculaLicenseCheck32.dll
+  <ترمینال>\MQL4\Libraries\MachineId32.dll
+
+<span class="n3">اگر ترمینال MT5 پیدا شود</span> (به ازای هر نصب MT5 جدا):
+  <ترمینال>\MQL5\Experts\Nutricula.ex5
+  <ترمینال>\MQL5\Libraries\NutriculaLicenseCheck64.dll
+  <ترمینال>\MQL5\Libraries\MachineId64.dll
+
+<span class="n1">همیشه، یک‌بار، سراسری</span> (صرف‌نظر از تعداد/نوع ترمینال‌ها):
+  %ProgramFiles%\Nutricula\LicenseService\
+      NutriculaLicenseService.exe   <span class="n4">← از Service32 یا Service64، بر اساس بیت‌بودن Windows میزبان</span>
+      NutriculaLicenseBroker.exe    <span class="n4">← از Broker32 یا Broker64، بر اساس بیت‌بودن Windows میزبان</span>
+      MachineId32.dll یا MachineId64.dll  <span class="n4">← بر اساس همان بیت‌بودن Windows میزبان</span>
+      Nutricula.ex5
+      Nutricula.ex4
+      NutriculaLicenseCheck32.dll
+      NutriculaLicenseCheck64.dll
+      manifest.txt</div>
+
+<div class="callout warn"><b>نکتهٔ مهم دربارهٔ بیت‌بودن:</b> برای Service/Broker/MachineId که در پوشهٔ Coordinator نصب می‌شوند، معیار انتخاب ۳۲ یا ۶۴ بودن، <b>بیت‌بودن خود Windows میزبان</b> است (<code class="inline">Environment.Is64BitOperatingSystem</code>) — نه بیت‌بودن MT4/MT5 و نه بیت‌بودن خود Installer (که همیشه ۳۲‑بیتی اجرا می‌شود ولی این API واقعی بودن سیستم‌عامل را درست تشخیص می‌دهد حتی وقتی زیر WOW64 اجرا شود).</div>
+
+<h2 style="margin-top:32px;">چک‌لیست سریع قبل از build</h2>
+<ul class="checklist">
+<li>Assets\Nutricula.ex4</li>
+<li>Assets\Nutricula.ex5</li>
+<li>Assets\NutriculaLicenseCheck32.dll</li>
+<li>Assets\NutriculaLicenseCheck64.dll</li>
+<li>Assets\MachineId32.dll</li>
+<li>Assets\MachineId64.dll</li>
+<li>Assets\NutriculaLicenseService32.exe</li>
+<li>Assets\NutriculaLicenseService64.exe</li>
+<li>Assets\NutriculaLicenseBroker32.exe</li>
+<li>Assets\NutriculaLicenseBroker64.exe</li>
+<li>Assets\manifest.txt</li>
+</ul>
+<p class="section-desc">اگر یکی از این ۱۱ فایل غایب باشد، خود build (چه محلی با Visual Studio، چه GitHub Actions) با پیام خطای دقیق همان فایل متوقف می‌شود — پس هیچ build ناقصی به‌صورت خاموش تولید نمی‌شود.</p>
+
+</div>
+</body>
+</html>
