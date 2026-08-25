@@ -8,6 +8,8 @@
 #include <bcrypt.h>
 #include <wincrypt.h>
 #include <winhttp.h>
+#include <setupapi.h>
+#include <ntddndis.h>
 #include <string>
 #include <vector>
 #include <map>
@@ -32,6 +34,7 @@
 #pragma comment(lib, "bcrypt.lib")
 #pragma comment(lib, "crypt32.lib")
 #pragma comment(lib, "winhttp.lib")
+#pragma comment(lib, "setupapi.lib")
 
 namespace {
 
@@ -216,13 +219,6 @@ public:
         return QueryFirstInternal(query, propertyName, false);
     }
 
-    std::wstring QueryFirstPermanentMac() {
-        if (!services_) return L"";
-        return QueryFirstInternal(
-            L"SELECT PermanentAddress FROM Win32_NetworkAdapter "
-            L"WHERE NetEnabled=TRUE AND PhysicalAdapter=TRUE",
-            L"PermanentAddress", false);
-    }
 
     std::wstring QueryFirstEnabledIp() {
         if (!services_) return L"";
@@ -303,6 +299,126 @@ private:
         return result;
     }
 };
+
+static std::wstring QueryPermanentWindowsMac() {
+    HDEVINFO deviceInfoSet = SetupDiGetClassDevsW(
+        &GUID_NDIS_LAN_CLASS,
+        nullptr,
+        nullptr,
+        DIGCF_PRESENT | DIGCF_DEVICEINTERFACE);
+
+    if (deviceInfoSet == INVALID_HANDLE_VALUE) return L"";
+
+    std::vector<std::wstring> permanentMacs;
+
+    for (DWORD index = 0;; ++index) {
+        SP_DEVICE_INTERFACE_DATA interfaceData = {};
+        interfaceData.cbSize = sizeof(interfaceData);
+
+        if (!SetupDiEnumDeviceInterfaces(
+                deviceInfoSet,
+                nullptr,
+                &GUID_NDIS_LAN_CLASS,
+                index,
+                &interfaceData)) {
+            DWORD error = GetLastError();
+            if (error == ERROR_NO_MORE_ITEMS) break;
+            continue;
+        }
+
+        DWORD requiredSize = 0;
+        SetupDiGetDeviceInterfaceDetailW(
+            deviceInfoSet,
+            &interfaceData,
+            nullptr,
+            0,
+            &requiredSize,
+            nullptr);
+
+        if (requiredSize == 0) continue;
+
+        std::vector<BYTE> detailBuffer(requiredSize);
+        auto* detail =
+            reinterpret_cast<SP_DEVICE_INTERFACE_DETAIL_DATA_W*>(
+                detailBuffer.data());
+
+        detail->cbSize = sizeof(SP_DEVICE_INTERFACE_DETAIL_DATA_W);
+
+        SP_DEVINFO_DATA deviceInfo = {};
+        deviceInfo.cbSize = sizeof(deviceInfo);
+
+        if (!SetupDiGetDeviceInterfaceDetailW(
+                deviceInfoSet,
+                &interfaceData,
+                detail,
+                requiredSize,
+                nullptr,
+                &deviceInfo)) {
+            continue;
+        }
+
+        HANDLE adapter = CreateFileW(
+            detail->DevicePath,
+            0,
+            FILE_SHARE_READ | FILE_SHARE_WRITE,
+            nullptr,
+            OPEN_EXISTING,
+            0,
+            nullptr);
+
+        if (adapter == INVALID_HANDLE_VALUE) continue;
+
+        DWORD oid = OID_802_3_PERMANENT_ADDRESS;
+        BYTE permanentMac[6] = {};
+        DWORD returned = 0;
+
+        BOOL ok = DeviceIoControl(
+            adapter,
+            IOCTL_NDIS_QUERY_GLOBAL_STATS,
+            &oid,
+            sizeof(oid),
+            permanentMac,
+            sizeof(permanentMac),
+            &returned,
+            nullptr);
+
+        CloseHandle(adapter);
+
+        if (!ok || returned != sizeof(permanentMac)) continue;
+
+        bool allZero = true;
+        bool allFF = true;
+
+        for (BYTE b : permanentMac) {
+            if (b != 0x00) allZero = false;
+            if (b != 0xFF) allFF = false;
+        }
+
+        if (allZero || allFF) continue;
+
+        wchar_t mac[18] = {};
+        swprintf_s(
+            mac,
+            L"%02X:%02X:%02X:%02X:%02X:%02X",
+            permanentMac[0],
+            permanentMac[1],
+            permanentMac[2],
+            permanentMac[3],
+            permanentMac[4],
+            permanentMac[5]);
+
+        permanentMacs.emplace_back(mac);
+    }
+
+    SetupDiDestroyDeviceInfoList(deviceInfoSet);
+
+    if (permanentMacs.empty()) return L"";
+
+    // Deterministic selection when several adapters provide a permanent MAC.
+    std::sort(permanentMacs.begin(), permanentMacs.end());
+
+    return permanentMacs.front();
+}
 
 static std::wstring ReadMachineGuid() {
     HKEY key = nullptr;
@@ -1371,7 +1487,7 @@ static IdentityRecord CollectIdentity(bool* wmiOk) {
     r.cpuId = MakeSignal(L"CPU_ID", wmi.QueryFirst(L"Win32_Processor", L"ProcessorId"));
     r.diskSerial = MakeSignal(L"DISK_SERIAL", wmi.QueryFirst(L"Win32_DiskDrive", L"SerialNumber"));
     r.machineGuid = MakeSignal(L"MACHINE_GUID", ReadMachineGuid());
-    r.macAddress = MakeSignal(L"MAC_ADDRESS", wmi.QueryFirstPermanentMac());
+    r.macAddress = MakeSignal(L"MAC_ADDRESS", QueryPermanentWindowsMac());
     r.manufacturer = MakeSignal(L"MANUFACTURER", wmi.QueryFirst(L"Win32_ComputerSystemProduct", L"Vendor"));
     r.family = MakeSignal(L"FAMILY", wmi.QueryFirst(L"Win32_ComputerSystem", L"SystemFamily"));
     r.product = MakeSignal(L"PRODUCT", wmi.QueryFirst(L"Win32_ComputerSystemProduct", L"Name"));
