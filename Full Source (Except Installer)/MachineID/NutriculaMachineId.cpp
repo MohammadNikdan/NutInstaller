@@ -739,11 +739,31 @@ static std::map<std::string, std::string> ParseMarkedSections(const std::string&
 
 // Returns "Darwin", "Linux", or "" if undetermined.
 static std::string DetectWineHostOS() {
-    std::string output;
-    if (!RunHostShellCommand("echo ===OS===; uname -s", output, 3000)) return "";
-    auto parsed = ParseMarkedSections(output);
-    auto it = parsed.find("OS");
-    return (it != parsed.end()) ? it->second : "";
+    HMODULE ntdll = GetModuleHandleW(L"ntdll.dll");
+    if (!ntdll) {
+        return "";
+    }
+
+    using WineGetHostVersionFn =
+        void (__cdecl *)(const char** sysname, const char** release);
+
+    auto fn = reinterpret_cast<WineGetHostVersionFn>(
+        GetProcAddress(ntdll, "wine_get_host_version"));
+
+    if (!fn) {
+        return "";
+    }
+
+    const char* sysname = nullptr;
+    const char* release = nullptr;
+
+    fn(&sysname, &release);
+
+    if (!sysname || !*sysname) {
+        return "";
+    }
+
+    return std::string(sysname);
 }
 
 // ============================================================================
