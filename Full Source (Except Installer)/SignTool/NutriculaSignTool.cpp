@@ -113,8 +113,8 @@ int main(int argc, char** argv)
     ss << "broker64_sha256=" << broker64Hash << "\n";
     std::string signedPortion = ss.str();
 
-    unsigned char signature[96];
-    bool signOk = EcdsaHelpers::SignP384(
+    unsigned char signature[64];
+    bool signOk = EcdsaHelpers::SignP256(
         VendorIdentity::PrivateKeyD(), VendorIdentity::PrivateKeyPublicXY(),
         reinterpret_cast<const unsigned char*>(signedPortion.data()), signedPortion.size(),
         signature);
