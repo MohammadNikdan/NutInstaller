@@ -417,7 +417,7 @@ static std::wstring QuerySystemDiskSerial() {
     }
 
     // Open the Windows system volume (for example \\.\C:).
-    std::wstring volumePath = L"\\\\.\\" + systemRoot;
+    std::wstring volumePath = L"\\\\.\\" + systemRoot.substr(0, 2);
 
     HANDLE volumeHandle = CreateFileW(
         volumePath.c_str(),
