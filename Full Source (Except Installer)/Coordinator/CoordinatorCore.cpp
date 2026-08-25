@@ -15,8 +15,44 @@ namespace Coordinator {
 namespace {
 
 constexpr int MAX_ATTEMPTS = 10;
-constexpr long long MIN_REQUEST_INTERVAL_SEC = 53 * 60; // 53:00 - matches Constants.h
-constexpr long long RANDOM_DELAY_MAX_SEC = 60;
+// Rotating refresh-token model (replaces the old fixed 53:00/54:00
+// interval): after every successful lease, the NEXT request time is
+// requested_at + a random offset in [MIN_RANDOM_OFFSET_SEC,
+// MAX_RANDOM_OFFSET_SEC] - a genuinely different, unpredictable moment
+// every single cycle, anywhere across a wide ~40-minute window (not just
+// a +/-60s jitter on a fixed anchor). This offset is deliberately NOT
+// stored anywhere separately - it is derived deterministically from the
+// lease's own refresh_token (SHA-256(token) mod range), so it survives
+// Terminal/Service restarts without any new persisted state, and cannot
+// be "re-rolled" by restarting (the token itself only changes when a
+// genuine new lease is issued).
+constexpr long long MIN_RANDOM_OFFSET_SEC = 601;   // 10:01
+constexpr long long MAX_RANDOM_OFFSET_SEC = 3000;  // 50:00
+
+// Deterministically derives the next-request offset from a lease's
+// refresh token - same token always yields the same offset (so a
+// restart never changes it), but the value is unpredictable to anyone
+// without the token itself.
+long long DeriveRandomOffsetFromToken(const std::string& refreshToken)
+{
+    BCRYPT_ALG_HANDLE alg = nullptr;
+    unsigned char digest[32] = {};
+    if (BCryptOpenAlgorithmProvider(&alg, BCRYPT_SHA256_ALGORITHM, nullptr, 0) >= 0)
+    {
+        BCRYPT_HASH_HANDLE hash = nullptr;
+        if (BCryptCreateHash(alg, &hash, nullptr, 0, nullptr, 0, 0) >= 0)
+        {
+            BCryptHashData(hash, (PUCHAR)refreshToken.data(), (ULONG)refreshToken.size(), 0);
+            BCryptFinishHash(hash, digest, 32, 0);
+            BCryptDestroyHash(hash);
+        }
+        BCryptCloseAlgorithmProvider(alg, 0);
+    }
+    unsigned long long v = 0;
+    for (int i = 0; i < 8; i++) v = (v << 8) | digest[i];
+    long long span = MAX_RANDOM_OFFSET_SEC - MIN_RANDOM_OFFSET_SEC + 1;
+    return MIN_RANDOM_OFFSET_SEC + static_cast<long long>(v % static_cast<unsigned long long>(span));
+}
 
 long long NowUnix()
 {
@@ -187,9 +223,36 @@ void CoordinatorCore::WorkerLoop()
         LocalFileState local = EvaluateLocalFile();
         long long now = NowUnix();
 
-        bool withinCooldown = local.fileValid && local.hasLease &&
+        // Layer 1 (cheap, local-only clone/copy detection - see the
+        // accompanying design discussion): before trusting a locally
+        // cached lease AT ALL, confirm it was actually issued for THIS
+        // machine. A naively copied license file (machine_id spoofing not
+        // involved) fails this immediately and is treated exactly like
+        // "no valid local lease" - i.e. this machine behaves like a fresh
+        // install and must complete a real network verify before it can
+        // ever be trusted, which is also when Layer 2 (the rotating
+        // refresh token, server-side) gets its chance to catch a deeper
+        // clone where machine_id itself was also spoofed.
+        std::string localMachineIdForCheck;
+        bool machineMatches = false;
+        if (local.hasLease)
+        {
+            if (MachineIdBridge::GenerateMachineId(localMachineIdForCheck))
+                machineMatches = (local.lease.machineId == localMachineIdForCheck);
+        }
+
+        // Layer 2 scheduling: the next request time is requested_at + a
+        // random offset in [MIN_RANDOM_OFFSET_SEC, MAX_RANDOM_OFFSET_SEC],
+        // deterministically derived from this lease's own refresh token
+        // (see DeriveRandomOffsetFromToken) - not a fixed interval, and not
+        // separately persisted (so it can't be reset by restarting).
+        long long randomOffset = local.hasLease
+            ? DeriveRandomOffsetFromToken(local.lease.refreshToken)
+            : MIN_RANDOM_OFFSET_SEC;
+
+        bool withinCooldown = local.fileValid && local.hasLease && machineMatches &&
             !local.licenseCurrentlyExpired && local.requestedAt != 0 &&
-            (now - local.requestedAt) < MIN_REQUEST_INTERVAL_SEC;
+            (now - local.requestedAt) < randomOffset;
 
         if (withinCooldown)
         {
@@ -206,8 +269,15 @@ void CoordinatorCore::WorkerLoop()
             // the old multi-process DLL design. Just do the refresh.
             m_state.pending.store(PENDING_REFRESH_IN_PROGRESS);
 
-            long long anchor = local.hasLease ? local.requestedAt : now;
-            long long target = anchor + MIN_REQUEST_INTERVAL_SEC + static_cast<long long>(SecureRandomBelow(RANDOM_DELAY_MAX_SEC + 1));
+            // If we have a locally cached lease whose machine_id doesn't
+            // match (Layer 1 catch), anchor from "now" instead of the
+            // stale/foreign requested_at - this machine has no legitimate
+            // claim to that lease's schedule at all, so it should behave
+            // exactly like a fresh install (wait one fresh random window
+            // from right now, same as never having had a lease).
+            long long anchor = (local.hasLease && machineMatches) ? local.requestedAt : now;
+            long long offsetToUse = (local.hasLease && machineMatches) ? randomOffset : MIN_RANDOM_OFFSET_SEC;
+            long long target = anchor + offsetToUse;
             long long waitSeconds = target - NowUnix();
             if (waitSeconds > 0)
             {
@@ -320,7 +390,9 @@ void CoordinatorCore::WorkerLoop()
                     // to a distinct tier, not the ordinary TIER_FREE - still
                     // arrives via the exact same signed Reject path as any
                     // other rejection reason, so it's just as authenticated.
-                    finalStable = (challengeParsed.rejectReason == "update_required") ? TIER_UPDATE_REQUIRED : TIER_FREE;
+                    finalStable = (challengeParsed.rejectReason == "update_required") ? TIER_UPDATE_REQUIRED
+                        : (challengeParsed.rejectReason == "blocked") ? TIER_BLOCKED
+                        : TIER_FREE;
                     finalCanonical = challengeParsed.rawCanonical;
                     finalSignatureB64 = challengeParsed.rawSignatureB64;
                     break;
@@ -364,6 +436,12 @@ void CoordinatorCore::WorkerLoop()
                 verifyFields["service_hash"] = expectedServiceHash;
                 verifyFields["broker_hash"] = expectedBrokerHash;
                 verifyFields["signature"] = signatureB64;
+                // Send whatever refresh token we currently have locally
+                // (empty if we've never had one, e.g. very first ever
+                // request) - the server treats anything other than its
+                // own current stored token as stale, regardless of
+                // generation distance. See the clone-detection design.
+                verifyFields["refresh_token"] = local.hasLease ? local.lease.refreshToken : std::string();
                 std::string verifyEnvelope = LicenseProtocol::BuildRequestEnvelope(verifyFields);
 
                 TransportResponse verifyResp = Transport::PostEnvelope(host, urlPath, verifyEnvelope, 30000);
@@ -374,7 +452,9 @@ void CoordinatorCore::WorkerLoop()
                 { if (attempt < MAX_ATTEMPTS) Sleep(2000); continue; }
                 if (verifyParsed.kind == ResponseKind::Rejected)
                 {
-                    finalStable = (verifyParsed.rejectReason == "update_required") ? TIER_UPDATE_REQUIRED : TIER_FREE;
+                    finalStable = (verifyParsed.rejectReason == "update_required") ? TIER_UPDATE_REQUIRED
+                        : (verifyParsed.rejectReason == "blocked") ? TIER_BLOCKED
+                        : TIER_FREE;
                     finalCanonical = verifyParsed.rawCanonical;
                     finalSignatureB64 = verifyParsed.rawSignatureB64;
                     break;

@@ -1,7 +1,7 @@
 #pragma once
 //
 // VendorIdentityPrivate.h - the private counterpart of VendorIdentity.h's
-// public key. ECDSA P-384.
+// public key. ECDSA P-256.
 //
 // !!! MUST NEVER BE COMPILED INTO ANY DISTRIBUTED BINARY !!!
 // Used ONLY by NutriculaSignTool.exe, built and run exclusively on a
@@ -14,6 +14,12 @@
 // VendorSigningKey_Private_Generated.h, which this file #includes.
 //
 
+// MIGRATED FROM P-384 TO P-256 (2026) - see EcdsaHelpers.h for the full
+// reasoning (confirmed Wine BCryptImportKeyPair failure for P-384
+// private keys). This is exactly the failing side that motivated the
+// migration - SignP384 with this key's private scalar was the operation
+// that returned NTSTATUS=0xC00000BB under Wine.
+
 #include "EcdsaPemParser.h"
 
 namespace VendorIdentity {
@@ -25,7 +31,7 @@ inline const char* PRIVATE_KEY_PEM =
 namespace detail {
     // Single shared parsed-key cache - D and its matching public XY are
     // always parsed together, exactly once, from the same SEC1 structure.
-    struct ParsedKey { unsigned char d[48]; unsigned char xy[96]; bool ok; };
+    struct ParsedKey { unsigned char d[32]; unsigned char xy[64]; bool ok; };
     inline const ParsedKey& Get()
     {
         static ParsedKey key = [] {
@@ -37,7 +43,7 @@ namespace detail {
     }
 }
 
-// On parse failure, d/xy stay zeroed - SignP384 will simply fail closed,
+// On parse failure, d/xy stay zeroed - SignP256 will simply fail closed,
 // never silently sign with garbage key material.
 inline const unsigned char* PrivateKeyD() { return detail::Get().d; }
 inline const unsigned char* PrivateKeyPublicXY() { return detail::Get().xy; }

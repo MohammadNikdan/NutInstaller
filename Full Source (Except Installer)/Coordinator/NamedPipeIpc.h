@@ -153,7 +153,7 @@ inline PSID GetOwnUserSid(std::vector<BYTE>& sidStorage)
 // request/response exchange after this returns, and for calling
 // DisconnectNamedPipe + CloseHandle when done with this connection.
 inline HANDLE AcceptAndHandshake(
-    bool (*signFn)(const unsigned char nonce[32], unsigned char outSignature[96]))
+    bool (*signFn)(const unsigned char nonce[32], unsigned char outSignature[64]))
 {
     SECURITY_ATTRIBUTES sa;
     PSECURITY_DESCRIPTOR sd = nullptr;
@@ -232,7 +232,7 @@ inline HANDLE AcceptAndHandshake(
 // INVALID_HANDLE_VALUE if the Coordinator is unavailable OR failed to prove
 // its identity (these are treated identically by the caller - see
 // architecture point 100: no fallback, either way).
-inline HANDLE ConnectAndVerify(const unsigned char coordinatorPublicKeyXY[96], DWORD timeoutMs)
+inline HANDLE ConnectAndVerify(const unsigned char coordinatorPublicKeyXY[64], DWORD timeoutMs)
 {
     HANDLE pipe = INVALID_HANDLE_VALUE;
     DWORD waited = 0;
@@ -271,7 +271,7 @@ inline HANDLE ConnectAndVerify(const unsigned char coordinatorPublicKeyXY[96], D
     // Coordinator? A fake process could answer the two ReadFile calls above
     // with anything, but cannot produce a valid signature without the
     // private key that never leaves the real Coordinator build.
-    if (!EcdsaHelpers::VerifyP384(coordinatorPublicKeyXY, challenge.nonce, sizeof(challenge.nonce), response.signature))
+    if (!EcdsaHelpers::VerifyP256(coordinatorPublicKeyXY, challenge.nonce, sizeof(challenge.nonce), response.signature))
     {
         CloseHandle(pipe);
         return INVALID_HANDLE_VALUE;

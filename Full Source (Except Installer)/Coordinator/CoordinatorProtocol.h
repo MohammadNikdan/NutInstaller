@@ -69,11 +69,12 @@ struct HandshakeChallengeMsg {
 
 struct HandshakeResponseMsg {
     MessageType type = MessageType::HandshakeResponse;
-    // Raw P-384 ECDSA signature (r||s, 96 bytes) over the exact 32-byte
+    // Raw P-256 ECDSA signature (r||s, 64 bytes) over the exact 32-byte
     // nonce from HandshakeChallengeMsg, made with the Coordinator's private
     // identity key. Verified by the client against the public key compiled
     // into the DLL - see CoordinatorIdentity.h.
-    unsigned char signature[96];
+    // MIGRATED FROM P-384 TO P-256 (2026) - see EcdsaHelpers.h.
+    unsigned char signature[64];
 };
 
 // Client -> Server: ask for the current published Tier/Pending, and the
@@ -99,7 +100,7 @@ struct GetStatusMsg {
 // verified response available yet" (e.g. still Idle).
 struct StatusReplyMsg {
     MessageType type = MessageType::StatusReply;
-    int32_t tier = 0;           // INTERNAL_LICENSE_TIER - only ever 1, 2, -10, or -50 when meaningful
+    int32_t tier = 0;           // INTERNAL_LICENSE_TIER - only ever 1, 2, -10, -50, or -100 when meaningful
     int32_t pending = -1;       // INTERNAL_LICENSE_TIER_PENDING
     uint32_t canonicalLen = 0;
     char canonical[4096];       // e.g. "v=3|reason=...|requested_at=..." or the lease canonical - NUL-padded

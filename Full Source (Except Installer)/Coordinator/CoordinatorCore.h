@@ -42,6 +42,15 @@ constexpr int TIER_FAILED = -10;
 // Reject (architecture point 15/101) - this is not a special unauthenticated
 // path.
 constexpr int TIER_UPDATE_REQUIRED = -50;
+// Applied when the server detects two CONSECUTIVE stale rotating-refresh-
+// token presentations for this license (see the clone-detection design) -
+// means "this license's identity appears to be active on two machines at
+// once; both are blocked from obtaining a new lease for clone_block_hours
+// (24h by default), regardless of which one is actually legitimate,
+// because the server genuinely cannot tell them apart once machine_id and
+// device key are both cloned." Goes through the same server-signature
+// verification as every other Reject.
+constexpr int TIER_BLOCKED = -100;
 constexpr int PENDING_IDLE = -1;
 constexpr int PENDING_COMM_FAIL_RETRYING = -2;
 constexpr int PENDING_REFRESH_IN_PROGRESS = -3;

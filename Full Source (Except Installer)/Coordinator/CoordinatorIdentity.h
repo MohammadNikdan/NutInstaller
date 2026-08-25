@@ -1,7 +1,7 @@
 #pragma once
 //
 // CoordinatorIdentity.h - the Coordinator's public identity key, ECDSA
-// P-384. Compiled directly into every client DLL AND every Coordinator
+// P-256. Compiled directly into every client DLL AND every Coordinator
 // (Service/Broker) binary.
 //
 // The actual key comes from Keys/CoordinatorIdentityKey_Public.pem - a
@@ -13,6 +13,8 @@
 // Matching private key: CoordinatorIdentityPrivate.h.
 //
 
+// MIGRATED FROM P-384 TO P-256 (2026) - see EcdsaHelpers.h.
+
 #include "EcdsaPemParser.h"
 
 namespace CoordinatorIdentity {
@@ -23,7 +25,7 @@ inline const char* PUBLIC_KEY_PEM =
 
 inline const unsigned char* PublicKeyXY()
 {
-    static unsigned char xy[96];
+    static unsigned char xy[64];
     static bool parsed = EcdsaPemParser::ParseSpkiPublicKeyPem(PUBLIC_KEY_PEM, xy);
     (void)parsed;
     return xy;

@@ -1,7 +1,12 @@
 #pragma once
 //
-// VendorIdentity.h - the Vendor Build Signing PUBLIC key, ECDSA P-384.
+// VendorIdentity.h - the Vendor Build Signing PUBLIC key, ECDSA P-256.
 // Used only to verify the Manifest (architecture points 31-38).
+//
+// MIGRATED FROM P-384 TO P-256 (2026) - see EcdsaHelpers.h for the full
+// reasoning (confirmed Wine BCryptImportKeyPair failure for P-384 private
+// keys). This is the PUBLIC half only, so it was never the failing side,
+// but both halves of a keypair must obviously use the same curve.
 //
 // The actual key comes from Keys/VendorSigningKey_Public.pem - a GENUINE,
 // unmodified PEM file exactly as `openssl ec -pubout` produces it.
@@ -24,7 +29,7 @@ inline const char* PUBLIC_KEY_PEM =
 
 inline const unsigned char* PublicKeyXY()
 {
-    static unsigned char xy[96];
+    static unsigned char xy[64];
     static bool parsed = EcdsaPemParser::ParseSpkiPublicKeyPem(PUBLIC_KEY_PEM, xy);
     (void)parsed; // if this ever fails, xy stays zeroed and every signature check against it will simply fail closed - never silently "pass"
     return xy;

@@ -1,7 +1,7 @@
 #pragma once
 //
 // CoordinatorIdentityPrivate.h - the private counterpart of
-// CoordinatorIdentity.h's public key. ECDSA P-384.
+// CoordinatorIdentity.h's public key. ECDSA P-256.
 //
 // !!! MUST NEVER BE INCLUDED IN, OR SHIPPED AS PART OF, THE CLIENT DLL !!!
 // Compiled ONLY into NutriculaLicenseService.exe / NutriculaLicenseBroker.exe.
@@ -21,6 +21,10 @@
 // with this key alone.
 //
 
+// MIGRATED FROM P-384 TO P-256 (2026) - this is exactly the failing side
+// (SignP384 with this key's private scalar) that motivated the migration
+// - see EcdsaHelpers.h for the full reasoning and confirmed Wine test.
+
 #include "EcdsaPemParser.h"
 
 namespace CoordinatorIdentity {
@@ -30,7 +34,7 @@ inline const char* PRIVATE_KEY_PEM =
 ;
 
 namespace detail {
-    struct ParsedKey { unsigned char d[48]; unsigned char xy[96]; bool ok; };
+    struct ParsedKey { unsigned char d[32]; unsigned char xy[64]; bool ok; };
     inline const ParsedKey& Get()
     {
         static ParsedKey key = [] {

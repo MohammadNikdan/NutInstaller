@@ -26,9 +26,9 @@ namespace {
 
 Coordinator::CoordinatorCore g_core;
 
-bool SignWithCoordinatorKey(const unsigned char nonce[32], unsigned char outSignature[96])
+bool SignWithCoordinatorKey(const unsigned char nonce[32], unsigned char outSignature[64])
 {
-    return EcdsaHelpers::SignP384(
+    return EcdsaHelpers::SignP256(
         CoordinatorIdentity::PrivateKeyD(),
         CoordinatorIdentity::PrivateKeyPublicXY(),
         nonce, 32, outSignature);

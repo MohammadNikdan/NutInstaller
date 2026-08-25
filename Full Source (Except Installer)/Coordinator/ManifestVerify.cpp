@@ -122,9 +122,9 @@ ManifestData LoadAndVerifyManifest(const std::wstring& directory)
     while (!signatureB64.empty() && (signatureB64.back() == '\n' || signatureB64.back() == '\r')) signatureB64.pop_back();
 
     std::vector<unsigned char> signatureBytes;
-    if (!Base64Decode(signatureB64, signatureBytes) || signatureBytes.size() != 96) return result;
+    if (!Base64Decode(signatureB64, signatureBytes) || signatureBytes.size() != 64) return result;
 
-    if (!EcdsaHelpers::VerifyP384(VendorIdentity::PublicKeyXY(),
+    if (!EcdsaHelpers::VerifyP256(VendorIdentity::PublicKeyXY(),
         reinterpret_cast<const unsigned char*>(signedPortion.data()), signedPortion.size(),
         signatureBytes.data()))
     {

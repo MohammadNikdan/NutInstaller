@@ -34,9 +34,9 @@ SERVICE_STATUS g_status = {};
 SERVICE_STATUS_HANDLE g_statusHandle = nullptr;
 HANDLE g_stopEvent = nullptr;
 
-bool SignWithCoordinatorKey(const unsigned char nonce[32], unsigned char outSignature[96])
+bool SignWithCoordinatorKey(const unsigned char nonce[32], unsigned char outSignature[64])
 {
-    return EcdsaHelpers::SignP384(
+    return EcdsaHelpers::SignP256(
         CoordinatorIdentity::PrivateKeyD(),
         CoordinatorIdentity::PrivateKeyPublicXY(),
         nonce, 32, outSignature);
