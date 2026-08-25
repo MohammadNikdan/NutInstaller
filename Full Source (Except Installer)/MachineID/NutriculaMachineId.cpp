@@ -1120,7 +1120,7 @@ static CloudMetadataResult QueryCloudMetadataRound(DWORD timeoutMs) {
 }
 
 static CloudMetadataResult QueryCloudMetadata() {
-    const DWORD timeouts[] = { 300, 500, 1000, 2000, 3000 };
+    const DWORD timeouts[] = { 300, 500, 1000, 2000 };
 
     for (DWORD timeoutMs : timeouts) {
         CloudMetadataResult result = QueryCloudMetadataRound(timeoutMs);
