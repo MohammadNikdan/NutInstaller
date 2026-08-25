@@ -915,19 +915,54 @@ static std::string ExtractJsonStringField(const std::string& json, const std::st
 
 static CloudMetadataResult QueryCloudMetadataAWS(DWORD timeoutMs) {
     CloudMetadataResult result;
+    const ULONGLONG start = GetTickCount64();
+
     std::string token;
-    HttpGetMetadata(L"169.254.169.254", L"/latest/api/token", L"PUT",
-        L"X-aws-ec2-metadata-token-ttl-seconds: 21600\r\n", token, timeoutMs);
+
+    HttpGetMetadata(
+        L"169.254.169.254",
+        L"/latest/api/token",
+        L"PUT",
+        L"X-aws-ec2-metadata-token-ttl-seconds: 21600\r\n",
+        token,
+        timeoutMs);
+
+    const ULONGLONG elapsed = GetTickCount64() - start;
+
+    if (elapsed >= timeoutMs) {
+        return CloudMetadataResult{};
+    }
+
+    const DWORD remaining =
+        static_cast<DWORD>(timeoutMs - elapsed);
+
     std::wstring authHeader;
-    if (!token.empty()) authHeader = L"X-aws-ec2-metadata-token: " + Utf8ToWide(token) + L"\r\n";
+    if (!token.empty()) {
+        authHeader =
+            L"X-aws-ec2-metadata-token: " +
+            Utf8ToWide(token) +
+            L"\r\n";
+    }
+
     std::string instanceId;
-    bool ok = HttpGetMetadata(L"169.254.169.254", L"/latest/meta-data/instance-id", L"GET",
-        token.empty() ? nullptr : authHeader.c_str(), instanceId, timeoutMs);
-    if (ok && !instanceId.empty() && instanceId.compare(0, 2, "i-") == 0) {
+
+    bool ok = HttpGetMetadata(
+        L"169.254.169.254",
+        L"/latest/meta-data/instance-id",
+        L"GET",
+        token.empty() ? nullptr : authHeader.c_str(),
+        instanceId,
+        remaining);
+
+    if (ok &&
+        !instanceId.empty() &&
+        instanceId.compare(0, 2, "i-") == 0) {
+
         result.available = true;
         result.provider = "AWS";
         result.instanceId = instanceId;
     }
+
     return result;
 }
 
