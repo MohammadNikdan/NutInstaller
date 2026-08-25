@@ -787,13 +787,19 @@ static CloudMetadataResult QueryCloudMetadataGCP(DWORD timeoutMs) {
 
 
 
-static CloudMetadataResult QueryCloudMetadataOpenStack(DWORD timeoutMs) {
+static CloudMetadataResult QueryCloudMetadataOpenStackVersion(
+    const wchar_t* version,
+    DWORD timeoutMs) {
+
     CloudMetadataResult result;
     std::string body;
 
+    std::wstring path =
+        L"/openstack/" + std::wstring(version) + L"/meta_data.json";
+
     bool ok = HttpGetMetadata(
         L"169.254.169.254",
-        L"/openstack/2018-08-27/meta_data.json",
+        path.c_str(),
         L"GET",
         nullptr,
         body,
@@ -812,6 +818,20 @@ static CloudMetadataResult QueryCloudMetadataOpenStack(DWORD timeoutMs) {
     return result;
 }
 
+static CloudMetadataResult QueryCloudMetadataOpenStack(DWORD timeoutMs) {
+    // OpenStack recommends trying the newest supported API version first,
+    // then falling back to an older version if necessary.
+    CloudMetadataResult result =
+        QueryCloudMetadataOpenStackVersion(L"latest", timeoutMs);
+
+    if (result.available) {
+        return result;
+    }
+
+    return QueryCloudMetadataOpenStackVersion(
+        L"2018-08-27",
+        timeoutMs);
+}
 
 
 
@@ -863,32 +883,11 @@ static CloudMetadataResult QueryCloudMetadataDigitalOcean(DWORD timeoutMs) {
 
 
 
-static CloudMetadataResult QueryCloudMetadataVultr(DWORD timeoutMs) {
-    CloudMetadataResult result;
-    std::string instanceId;
-
-    bool ok = HttpGetMetadata(
-        L"169.254.169.254",
-        L"/v1/instance-id",
-        L"GET",
-        nullptr,
-        instanceId,
-        timeoutMs);
-
-    if (ok && !instanceId.empty()) {
-        result.available = true;
-        result.provider = "VULTR";
-        result.instanceId = instanceId;
-    }
-
-    return result;
-}
-
 
 
 
 static CloudMetadataResult QueryCloudMetadataRound(DWORD timeoutMs) {
-    CloudMetadataResult results[7];
+    CloudMetadataResult results[6];
 
     std::thread t0([&]() {
         results[0] = QueryCloudMetadataAWS(timeoutMs);
@@ -914,17 +913,12 @@ static CloudMetadataResult QueryCloudMetadataRound(DWORD timeoutMs) {
         results[5] = QueryCloudMetadataDigitalOcean(timeoutMs);
     });
 
-    std::thread t6([&]() {
-        results[6] = QueryCloudMetadataVultr(timeoutMs);
-    });
-
     t0.join();
     t1.join();
     t2.join();
     t3.join();
     t4.join();
     t5.join();
-    t6.join();
 
     for (const auto& result : results) {
         if (result.available) {
