@@ -114,14 +114,26 @@ try {
            capitalization at signup vs. now. */
         if (strcasecmp((string)$existing['user_email'], $email) !== 0 ||
             (int)$existing['product_id'] !== $productId ||
-            !hash_equals((string)$existing['machine_id'], $machineId) ||
-            !hash_equals((string)$existing['device_public_key_hash'], $deviceKeyHash)) {
+            !hash_equals((string)$existing['machine_id'], $machineId)) {
+            // Note: device_public_key_hash is deliberately NOT compared
+            // against the stored value here - every signup/re-signup call
+            // now forces a brand-new device key (see ResetDeviceKey() in
+            // the Installer), so the freshly-generated key sent with THIS
+            // request is expected to differ from whatever was stored
+            // before. machine_id is still required to match, since
+            // re-signup must be on the SAME computer - moving to a
+            // genuinely different computer is what Transfer is for.
             $conn->rollback();
             nutricula_reject($config, 'signup_identity_mismatch');
         }
 
         $licenseId = (int)$existing['id'];
 
+        if ((int)($existing['blocked_until'] ?? 0) > $now) {
+            $conn->rollback();
+            nutricula_log_activity($conn, $licenseId, $machineId, $deviceKeyHash, $localIp, $observedIp, 'signup', 'blocked', $riskScore);
+            nutricula_reject($config, 'blocked', (int)$config['clone_block_hours'] * 3600);
+        }
         if ($existing['status'] !== 'active') {
             $conn->rollback();
             nutricula_log_activity($conn, $licenseId, $machineId, $deviceKeyHash, $localIp, $observedIp, 'signup', 'license_inactive', $riskScore);
@@ -158,12 +170,13 @@ try {
 
         $update = $conn->prepare(
             'UPDATE nutricula_licenses
-             SET claimed_local_ip=?, last_observed_ip=?, last_seen_at=NOW(),
+             SET machine_id=?, device_public_key_b64=?, device_public_key_hash=?,
+                 claimed_local_ip=?, last_observed_ip=?, last_seen_at=NOW(),
                  current_refresh_token_hash=?, token_suspicious=0, blocked_until=NULL
              WHERE id=?'
         );
         if (!$update) throw new RuntimeException('DB prepare failed.');
-        $update->bind_param('sssi', $localIp, $observedIp, $newRefreshTokenHash, $licenseId);
+        $update->bind_param('ssssssi', $machineId, $devicePublicKey, $deviceKeyHash, $localIp, $observedIp, $newRefreshTokenHash, $licenseId);
         if (!$update->execute()) throw new RuntimeException('DB update failed.');
         $update->close();
 
