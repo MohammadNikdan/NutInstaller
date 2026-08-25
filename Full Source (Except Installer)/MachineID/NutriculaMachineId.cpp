@@ -18,6 +18,7 @@
 #include <iomanip>
 #include <memory>
 #include <mutex>
+#include <thread>
 #include <cstring>
 #include <cstdlib>
 #include <cstdio>
@@ -783,23 +784,170 @@ static CloudMetadataResult QueryCloudMetadataGCP(DWORD timeoutMs) {
     return result;
 }
 
+
+
+
+static CloudMetadataResult QueryCloudMetadataOpenStack(DWORD timeoutMs) {
+    CloudMetadataResult result;
+    std::string body;
+
+    bool ok = HttpGetMetadata(
+        L"169.254.169.254",
+        L"/openstack/2018-08-27/meta_data.json",
+        L"GET",
+        nullptr,
+        body,
+        timeoutMs);
+
+    if (ok) {
+        std::string uuid = ExtractJsonStringField(body, "uuid");
+
+        if (!uuid.empty()) {
+            result.available = true;
+            result.provider = "OPENSTACK";
+            result.instanceId = uuid;
+        }
+    }
+
+    return result;
+}
+
+
+
+
+static CloudMetadataResult QueryCloudMetadataOracle(DWORD timeoutMs) {
+    CloudMetadataResult result;
+    std::string instanceId;
+
+    bool ok = HttpGetMetadata(
+        L"169.254.169.254",
+        L"/opc/v2/instance/id",
+        L"GET",
+        L"Authorization: Bearer Oracle\r\n",
+        instanceId,
+        timeoutMs);
+
+    if (ok && !instanceId.empty()) {
+        result.available = true;
+        result.provider = "ORACLE";
+        result.instanceId = instanceId;
+    }
+
+    return result;
+}
+
+
+
+
+static CloudMetadataResult QueryCloudMetadataDigitalOcean(DWORD timeoutMs) {
+    CloudMetadataResult result;
+    std::string instanceId;
+
+    bool ok = HttpGetMetadata(
+        L"169.254.169.254",
+        L"/metadata/v1/id",
+        L"GET",
+        nullptr,
+        instanceId,
+        timeoutMs);
+
+    if (ok && !instanceId.empty()) {
+        result.available = true;
+        result.provider = "DIGITALOCEAN";
+        result.instanceId = instanceId;
+    }
+
+    return result;
+}
+
+
+
+
+static CloudMetadataResult QueryCloudMetadataVultr(DWORD timeoutMs) {
+    CloudMetadataResult result;
+    std::string instanceId;
+
+    bool ok = HttpGetMetadata(
+        L"169.254.169.254",
+        L"/v1/instance-id",
+        L"GET",
+        nullptr,
+        instanceId,
+        timeoutMs);
+
+    if (ok && !instanceId.empty()) {
+        result.available = true;
+        result.provider = "VULTR";
+        result.instanceId = instanceId;
+    }
+
+    return result;
+}
+
+
+
+
+static CloudMetadataResult QueryCloudMetadataRound(DWORD timeoutMs) {
+    CloudMetadataResult results[7];
+
+    std::thread t0([&]() {
+        results[0] = QueryCloudMetadataAWS(timeoutMs);
+    });
+
+    std::thread t1([&]() {
+        results[1] = QueryCloudMetadataAzure(timeoutMs);
+    });
+
+    std::thread t2([&]() {
+        results[2] = QueryCloudMetadataGCP(timeoutMs);
+    });
+
+    std::thread t3([&]() {
+        results[3] = QueryCloudMetadataOpenStack(timeoutMs);
+    });
+
+    std::thread t4([&]() {
+        results[4] = QueryCloudMetadataOracle(timeoutMs);
+    });
+
+    std::thread t5([&]() {
+        results[5] = QueryCloudMetadataDigitalOcean(timeoutMs);
+    });
+
+    std::thread t6([&]() {
+        results[6] = QueryCloudMetadataVultr(timeoutMs);
+    });
+
+    t0.join();
+    t1.join();
+    t2.join();
+    t3.join();
+    t4.join();
+    t5.join();
+    t6.join();
+
+    for (const auto& result : results) {
+        if (result.available) {
+            return result;
+        }
+    }
+
+    return CloudMetadataResult{};
+}
+
 static CloudMetadataResult QueryCloudMetadata() {
     const DWORD timeouts[] = { 300, 500, 1000, 2000, 3000 };
 
     for (DWORD timeoutMs : timeouts) {
-        CloudMetadataResult r = QueryCloudMetadataAWS(timeoutMs);
-        if (r.available) return r;
+        CloudMetadataResult result = QueryCloudMetadataRound(timeoutMs);
 
-        r = QueryCloudMetadataAzure(timeoutMs);
-        if (r.available) return r;
-
-        r = QueryCloudMetadataGCP(timeoutMs);
-        if (r.available) return r;
+        if (result.available) {
+            return result;
+        }
     }
 
-    // Metadata could not be obtained within the bounded retry budget.
-    // The caller must continue normally; CLOUD_INSTANCE_ID will simply
-    // remain missing, exactly as before.
+    // No supported metadata provider responded within the bounded retry
+    // budget. Continue normally; CLOUD_INSTANCE_ID remains missing.
     return CloudMetadataResult{};
 }
 
