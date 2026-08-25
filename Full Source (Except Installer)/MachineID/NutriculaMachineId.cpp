@@ -707,25 +707,118 @@ static bool RunHostShellCommand(const std::string& shellCommand, std::string& ou
         &sa, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
     if (outFile == INVALID_HANDLE_VALUE) return false;
 
+    
     char markerUnixPath[MAX_PATH + 64];
-    sprintf(markerUnixPath, "/tmp/nutid_done_%lu_%ld.tmp", (unsigned long)pid, (long)id);
+    sprintf(
+        markerUnixPath,
+        "/tmp/nutid_done_%lu_%ld.tmp",
+        (unsigned long)pid,
+        (long)id
+    );
 
-    std::string fullCmd = "sh -c \"" + shellCommand + "; touch " + markerUnixPath + "\" ";
-    std::wstring wCmd = Utf8ToWide(fullCmd);
+    // IMPORTANT:
+    // Do not wrap shellCommand inside:
+    //     sh -c "...."
+    // because shellCommand itself may contain quotes.
+    //
+    // Write the command to a temporary shell script instead. This preserves
+    // the shellCommand exactly as written and avoids all nested-quote issues.
+    char scriptUnixPath[MAX_PATH + 64];
+    sprintf(
+        scriptUnixPath,
+        "/tmp/nutid_script_%lu_%ld.sh",
+        (unsigned long)pid,
+        (long)id
+    );
+
+    wchar_t scriptPathW[MAX_PATH + 64];
+    wsprintfW(
+        scriptPathW,
+        L"%snutid_script_%lu_%ld.sh",
+        tempDir,
+        (unsigned long)pid,
+        (long)id
+    );
+
+    DeleteFileW(scriptPathW);
+
+    HANDLE scriptFile = CreateFileW(
+        scriptPathW,
+        GENERIC_WRITE,
+        FILE_SHARE_READ,
+        &sa,
+        CREATE_ALWAYS,
+        FILE_ATTRIBUTE_NORMAL,
+        nullptr
+    );
+
+    if (scriptFile == INVALID_HANDLE_VALUE) {
+        DeleteFileW(outPathW);
+        return false;
+    }
+
+    std::string scriptContent;
+    scriptContent.reserve(
+        shellCommand.size() + strlen(markerUnixPath) + 32
+    );
+
+    scriptContent += shellCommand;
+    scriptContent += "\n";
+    scriptContent += "touch ";
+    scriptContent += markerUnixPath;
+    scriptContent += "\n";
+
+    DWORD scriptWritten = 0;
+
+    BOOL scriptOk = WriteFile(
+        scriptFile,
+        scriptContent.data(),
+        static_cast<DWORD>(scriptContent.size()),
+        &scriptWritten,
+        nullptr
+    );
+
+    CloseHandle(scriptFile);
+
+    if (!scriptOk || scriptWritten != scriptContent.size()) {
+        DeleteFileW(scriptPathW);
+        DeleteFileW(outPathW);
+        return false;
+    }
+
+    std::string shellCmdLine =
+        std::string("sh ") + scriptUnixPath;
+
+    std::wstring wCmd = Utf8ToWide(shellCmdLine);
     std::vector<wchar_t> mutableCmd(wCmd.begin(), wCmd.end());
-    mutableCmd.push_back(0);
+    mutableCmd.push_back(L'\0');
 
     STARTUPINFOW si = { sizeof(si) };
     si.dwFlags = STARTF_USESTDHANDLES;
     si.hStdOutput = outFile;
     si.hStdError = outFile;
+
     PROCESS_INFORMATION pi = {};
 
-    BOOL ok = CreateProcessW(L"Z:\\bin\\sh", mutableCmd.data(), nullptr, nullptr, TRUE,
-        0, nullptr, nullptr, &si, &pi);
+    BOOL ok = CreateProcessW(
+        L"Z:\\bin\\sh",
+        mutableCmd.data(),
+        nullptr,
+        nullptr,
+        TRUE,
+        0,
+        nullptr,
+        nullptr,
+        &si,
+        &pi
+    );
+
+
+    
     CloseHandle(outFile);
     if (!ok) {
         DeleteFileW(outPathW);
+        DeleteFileW(scriptPathW);
         return false;
     }
 
@@ -751,6 +844,8 @@ static bool RunHostShellCommand(const std::string& shellCommand, std::string& ou
 
     DeleteFileW(outPathW);
     DeleteFileW(markerPathW);
+    DeleteFileW(scriptPathW);
+
     if (pi.hProcess) CloseHandle(pi.hProcess);
     if (pi.hThread) CloseHandle(pi.hThread);
 
@@ -781,11 +876,31 @@ static std::map<std::string, std::string> ParseMarkedSections(const std::string&
 
 // Returns "Darwin", "Linux", or "" if undetermined.
 static std::string DetectWineHostOS() {
-    std::string output;
-    if (!RunHostShellCommand("echo ===OS===; uname -s", output, 3000)) return "";
-    auto parsed = ParseMarkedSections(output);
-    auto it = parsed.find("OS");
-    return (it != parsed.end()) ? it->second : "";
+    HMODULE ntdll = GetModuleHandleW(L"ntdll.dll");
+    if (!ntdll) {
+        return "";
+    }
+
+    using WineGetHostVersionFn =
+        void (__cdecl *)(const char** sysname, const char** release);
+
+    auto fn = reinterpret_cast<WineGetHostVersionFn>(
+        GetProcAddress(ntdll, "wine_get_host_version"));
+
+    if (!fn) {
+        return "";
+    }
+
+    const char* sysname = nullptr;
+    const char* release = nullptr;
+
+    fn(&sysname, &release);
+
+    if (!sysname || !*sysname) {
+        return "";
+    }
+
+    return std::string(sysname);
 }
 
 // ============================================================================
