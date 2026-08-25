@@ -91,14 +91,13 @@ struct IdentityRecord {
     // ---- macOS-under-Wine signals (see CollectMacIdentity) ----
     Signal macPlatformUuid;      // IOPlatformUUID - closest Mac equivalent of System UUID
     Signal macPlatformSerial;    // IOPlatformSerialNumber
-    Signal macPrimaryMac;        // built-in Ethernet MAC (en0)
     Signal macModel;             // hw.model - corroboration only
     Signal macCpuBrand;          // machdep.cpu.brand_string - corroboration only
 
     // ---- Linux-under-Wine signals (see CollectLinuxIdentity) ----
     Signal linuxMachineId;       // /etc/machine-id - world-readable, but CAN be cloned in VM templates
     Signal linuxProductUuid;     // /sys/class/dmi/id/product_uuid - strong, usually root-only
-    Signal linuxPrimaryMac;      // first non-loopback interface's MAC via /sys/class/net
+    Signal linuxPrimaryMac;      // permanent hardware MAC from the Linux driver via ethtool -P
     Signal linuxBoardVendor;     // VM/cloud-provider detection hint only
 
     // ---- Cloud metadata (WindowsVM, WineMacOS, WineLinux) - the strongest
@@ -921,9 +920,6 @@ static bool HasAtLeastCoreIdentity(const IdentityRecord& r) {
             if (r.cloudInstanceId.valid) return true;
             const bool uuid = r.macPlatformUuid.valid;
             const bool serial = r.macPlatformSerial.valid;
-            const bool mac = r.macPrimaryMac.valid;
-            if (uuid && (serial || mac)) return true;
-            if (serial && mac) return true;
             // NOTE: macModel/macCpuBrand are deliberately NOT used here,
             // on reflection - same reasoning as WineLinux's
             // linuxBoardVendor below. hw.model (e.g. "MacBookPro18,3") and
