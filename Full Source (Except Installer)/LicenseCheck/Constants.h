@@ -29,10 +29,13 @@ const long PENDING_REFRESH_IN_PROGRESS = -3; // Another instance owns a real ref
 // 1->1, 2->2, -10->-10).
 
 // ---------------------------------------------------------------------
-// Timing (spec sections 21-23, 76). PHP's own enforced minimum is 53:00;
-// this client-side schedule (54:00 base + up to 60s random) is what keeps
-// every legitimate request comfortably clear of that server-side floor,
-// and this ordering must never be changed independently of the PHP side.
+// STALE (2026 rotating-token migration): this file is only included by
+// LicenseCheck/NutriculaLicenseCheck.cpp and SharedState.cpp - both
+// confirmed-unused legacy files, not part of any current build_*.bat.
+// The REAL, current timing model lives in Coordinator/CoordinatorCore.cpp
+// (MIN_RANDOM_OFFSET_SEC/MAX_RANDOM_OFFSET_SEC, 10:01-50:00, derived from
+// the rotating refresh token) - these constants below are historical only
+// and do not reflect production behavior.
 // ---------------------------------------------------------------------
 const long long MIN_REQUEST_INTERVAL_SEC = 54LL * 60LL; // 54:00
 const long long RANDOM_DELAY_MAX_SEC     = 60LL;         // up to +60s -> ceiling 55:00

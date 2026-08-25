@@ -20,6 +20,14 @@ struct VerifiedLease
     std::string deviceKeyHash;
     uint64_t licenseExpiresAt;
     uint64_t requestedAt;
+    // The rotating single-use refresh token this lease was issued with -
+    // MUST be sent back verbatim on the NEXT verify request, and is
+    // replaced entirely by whatever new token that next response contains
+    // (never reused). See the clone-detection design: a request presenting
+    // anything other than the server's currently-stored token for this
+    // license - regardless of how many generations old it is - is treated
+    // as a stale/cloned-identity signal.
+    std::string refreshToken;
 };
 
 // A verified challenge issuance from license_check.php's stage=challenge.

@@ -367,7 +367,8 @@ ParsedResponse LicenseProtocol::ParseLeaseOrChallenge(const std::string& plainte
         auto fields = ParsePipeDelimitedFields(signedCanonical);
         if (!fields.count("license_id") || !fields.count("product_id") ||
             !fields.count("machine_id") || !fields.count("device_key_hash") ||
-            !fields.count("license_expires_at") || !fields.count("requested_at"))
+            !fields.count("license_expires_at") || !fields.count("requested_at") ||
+            !fields.count("refresh_token"))
         {
             return result; // Invalid - incomplete lease, even though signed
         }
@@ -382,6 +383,7 @@ ParsedResponse LicenseProtocol::ParseLeaseOrChallenge(const std::string& plainte
         result.lease.deviceKeyHash = fields["device_key_hash"];
         result.lease.licenseExpiresAt = ParseU64(fields["license_expires_at"]);
         result.lease.requestedAt = ParseU64(fields["requested_at"]);
+        result.lease.refreshToken = fields["refresh_token"];
         return result;
     }
 

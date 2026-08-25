@@ -63,8 +63,9 @@ std::atomic<int> g_pending{PENDING_IDLE};
 // Each function should read g_tier.load() directly (it's already a plain
 // std::atomic<int>, immediately above) - never introduce a second copy of
 // the tier value, never re-derive it from IPC/file/anything else inside
-// these functions. g_tier is always exactly 1, 2, or -10 (architecture
-// point 3/68) - the existing convention throughout this codebase (e.g. the
+// these functions. g_tier is always exactly 1, 2, -10, -50, or -100
+// (architecture point 3/68, extended by the update-required and
+// clone-detection-block additions) - the existing convention throughout this codebase (e.g. the
 // examples given earlier: `if (INTERNAL_LICENSE_TIER >= 1)` /
 // `if (INTERNAL_LICENSE_TIER == 2)`) maps directly to `g_tier.load()`.
 //
@@ -91,12 +92,16 @@ std::atomic<bool> g_publicKeyLoaded{false};
 // minutes, e.g. during a normal Service startup after boot) must NOT lose
 // the license state, but an extended one must eventually fall back to
 // TIER_FREE rather than trusting a Tier 2 that can no longer be
-// re-confirmed at all. Chosen window: comfortably longer than the normal
-// ~55-minute refresh cycle (MIN_REQUEST_INTERVAL_SEC in CoordinatorCore)
-// so a single missed cycle never falsely degrades the license, but short
-// enough that a genuinely broken/disabled Coordinator is noticed well
-// within one billing period.
-constexpr long long STALE_COORDINATOR_DEGRADE_SECONDS = 75 * 60; // 75 minutes
+// re-confirmed at all. Chosen window: comfortably longer than the new
+// WORST-CASE refresh cycle (MAX_RANDOM_OFFSET_SEC = 50:00 in
+// CoordinatorCore, replacing the old fixed 54:00+random(0-60s) - see the
+// 2026 rotating-refresh-token migration) so a single missed cycle never
+// falsely degrades the license, but short enough that a genuinely
+// broken/disabled Coordinator is noticed well within one billing period.
+// Recomputed with the same ~1.4x safety margin the original 75-minute
+// value used against its own 54-minute base (54*1.39=75) - here applied
+// to the new 50-minute worst case (50*1.4=70).
+constexpr long long STALE_COORDINATOR_DEGRADE_SECONDS = 70 * 60; // 70 minutes
 std::atomic<long long> g_lastVerifiedTierTime{0};
 
 long long NowUnixSeconds()
