@@ -191,6 +191,53 @@ static bool IsPlausibleUuid(const std::wstring& s) {
     return n.size() == 36 || n.size() == 32;
 }
 
+
+static std::wstring NormalizeMacAddress(const std::wstring& raw) {
+    std::wstring s = UpperInvariant(Trim(raw));
+
+    std::wstring hex;
+    hex.reserve(s.size());
+
+    for (wchar_t ch : s) {
+        if ((ch >= L'0' && ch <= L'9') ||
+            (ch >= L'A' && ch <= L'F')) {
+            hex.push_back(ch);
+        } else if (ch == L':' ||
+                   ch == L'-' ||
+                   ch == L'.' ||
+                   std::iswspace(ch)) {
+            continue;
+        } else {
+            return L"";
+        }
+    }
+
+    if (hex.size() != 12) {
+        return L"";
+    }
+
+    std::wstring out;
+    out.reserve(17);
+
+    for (size_t i = 0; i < 12; i += 2) {
+        if (!out.empty()) {
+            out.push_back(L':');
+        }
+
+        out.push_back(hex[i]);
+        out.push_back(hex[i + 1]);
+    }
+
+    if (out == L"00:00:00:00:00:00" ||
+        out == L"FF:FF:FF:FF:FF:FF") {
+        return L"";
+    }
+
+    return out;
+}
+
+
+
 class WmiReader {
 public:
     bool Initialize() {
@@ -219,6 +266,74 @@ public:
         return QueryFirstInternal(query, propertyName, false);
     }
 
+
+std::wstring QueryPermanentMacAddress() {
+    if (!services_) return L"";
+
+    const std::wstring query =
+        L"SELECT PermanentAddress "
+        L"FROM Win32_NetworkAdapter "
+        L"WHERE PhysicalAdapter = TRUE";
+
+    IEnumWbemClassObject* enumerator = nullptr;
+
+    if (!ExecQuery(query, &enumerator)) {
+        return L"";
+    }
+
+    std::vector<std::wstring> macs;
+
+    for (;;) {
+        IWbemClassObject* obj = nullptr;
+        ULONG returned = 0;
+
+        HRESULT hr = enumerator->Next(
+            WBEM_INFINITE,
+            1,
+            &obj,
+            &returned);
+
+        if (FAILED(hr) || returned == 0 || !obj) {
+            break;
+        }
+
+        VARIANT vt;
+        VariantInit(&vt);
+
+        std::wstring mac;
+
+        if (SUCCEEDED(obj->Get(
+                L"PermanentAddress",
+                0,
+                &vt,
+                nullptr,
+                nullptr))) {
+
+            if (vt.vt == VT_BSTR && vt.bstrVal) {
+                mac = vt.bstrVal;
+            }
+        }
+
+        VariantClear(&vt);
+        obj->Release();
+
+        mac = NormalizeMacAddress(mac);
+
+        if (!mac.empty()) {
+            macs.push_back(mac);
+        }
+    }
+
+    enumerator->Release();
+
+    if (macs.empty()) {
+        return L"";
+    }
+
+    std::sort(macs.begin(), macs.end());
+
+    return macs.front();
+}
 
     std::wstring QueryFirstEnabledIp() {
         if (!services_) return L"";
@@ -305,79 +420,6 @@ private:
 
 
 
-
-
-static std::wstring QueryPermanentWindowsMac() {
-    PMIB_IF_TABLE2 table = nullptr;
-
-    if (GetIfTable2Ex(MibIfTableNormal, &table) != NO_ERROR || !table) {
-        return L"";
-    }
-
-    std::vector<std::wstring> permanentMacs;
-
-    for (ULONG i = 0; i < table->NumEntries; ++i) {
-        const MIB_IF_ROW2& row = table->Table[i];
-
-        // Only real hardware interfaces.
-        if (!row.HardwareInterface) {
-            continue;
-        }
-
-        // We only want a normal 6-byte MAC address.
-        if (row.PhysicalAddressLength != 6) {
-            continue;
-        }
-
-        BYTE permanentMac[6] = {};
-        std::memcpy(
-            permanentMac,
-            row.PermanentPhysicalAddress,
-            sizeof(permanentMac));
-
-        bool allZero = true;
-        bool allFF = true;
-
-        for (BYTE b : permanentMac) {
-            if (b != 0x00) {
-                allZero = false;
-            }
-            if (b != 0xFF) {
-                allFF = false;
-            }
-        }
-
-        // Missing / invalid permanent address.
-        if (allZero || allFF) {
-            continue;
-        }
-
-        wchar_t mac[18] = {};
-
-        swprintf_s(
-            mac,
-            L"%02X:%02X:%02X:%02X:%02X:%02X",
-            permanentMac[0],
-            permanentMac[1],
-            permanentMac[2],
-            permanentMac[3],
-            permanentMac[4],
-            permanentMac[5]);
-
-        permanentMacs.emplace_back(mac);
-    }
-
-    FreeMibTable(table);
-
-    if (permanentMacs.empty()) {
-        return L"";
-    }
-
-    // Deterministic selection when multiple physical adapters exist.
-    std::sort(permanentMacs.begin(), permanentMacs.end());
-
-    return permanentMacs.front();
-}
 
 
 
@@ -1821,7 +1863,7 @@ static IdentityRecord CollectIdentity(bool* wmiOk) {
     r.cpuId = MakeSignal(L"CPU_ID", wmi.QueryFirst(L"Win32_Processor", L"ProcessorId"));
     r.diskSerial = MakeSignal(L"DISK_SERIAL", QuerySystemDiskSerial());
     r.machineGuid = MakeSignal(L"MACHINE_GUID", ReadMachineGuid());
-    r.macAddress = MakeSignal(L"MAC_ADDRESS", QueryPermanentWindowsMac());
+    r.macAddress = MakeSignal(L"MAC_ADDRESS", wmi.QueryPermanentMacAddress());
     r.manufacturer = MakeSignal(L"MANUFACTURER", wmi.QueryFirst(L"Win32_ComputerSystemProduct", L"Vendor"));
     r.family = MakeSignal(L"FAMILY", wmi.QueryFirst(L"Win32_ComputerSystem", L"SystemFamily"));
     r.product = MakeSignal(L"PRODUCT", wmi.QueryFirst(L"Win32_ComputerSystemProduct", L"Name"));
