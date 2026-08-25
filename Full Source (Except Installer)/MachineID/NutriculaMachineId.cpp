@@ -819,8 +819,11 @@ static CloudMetadataResult QueryCloudMetadataOpenStackVersion(
 }
 
 static CloudMetadataResult QueryCloudMetadataOpenStack(DWORD timeoutMs) {
-    // OpenStack recommends trying the newest supported API version first,
-    // then falling back to an older version if necessary.
+    // Keep the TOTAL OpenStack work within this round's timeout budget.
+    // The fallback receives only the time remaining after the "latest"
+    // version probe, rather than another full timeoutMs.
+    const ULONGLONG start = GetTickCount64();
+
     CloudMetadataResult result =
         QueryCloudMetadataOpenStackVersion(L"latest", timeoutMs);
 
@@ -828,9 +831,18 @@ static CloudMetadataResult QueryCloudMetadataOpenStack(DWORD timeoutMs) {
         return result;
     }
 
+    const ULONGLONG elapsed = GetTickCount64() - start;
+
+    if (elapsed >= timeoutMs) {
+        return CloudMetadataResult{};
+    }
+
+    const DWORD remaining =
+        static_cast<DWORD>(timeoutMs - elapsed);
+
     return QueryCloudMetadataOpenStackVersion(
         L"2018-08-27",
-        timeoutMs);
+        remaining);
 }
 
 
