@@ -216,11 +216,12 @@ public:
         return QueryFirstInternal(query, propertyName, false);
     }
 
-    std::wstring QueryFirstEnabledMac() {
+    std::wstring QueryFirstPermanentMac() {
         if (!services_) return L"";
         return QueryFirstInternal(
-            L"SELECT MACAddress FROM Win32_NetworkAdapterConfiguration WHERE IPEnabled=TRUE",
-            L"MACAddress", false);
+            L"SELECT PermanentAddress FROM Win32_NetworkAdapter "
+            L"WHERE NetEnabled=TRUE AND PhysicalAdapter=TRUE",
+            L"PermanentAddress", false);
     }
 
     std::wstring QueryFirstEnabledIp() {
@@ -536,22 +537,54 @@ static std::string ReadUnixFileDirect(const std::wstring& zPath) {
 // Enumerates /sys/class/net/* (world-readable, no process spawn needed) to
 // find the first real (non-loopback, non-zero) interface's MAC address.
 static std::string ReadPrimaryLinuxMac() {
-    WIN32_FIND_DATAW findData;
-    HANDLE h = FindFirstFileW(L"Z:\\sys\\class\\net\\*", &findData);
-    if (h == INVALID_HANDLE_VALUE) return "";
-    std::string result;
-    do {
-        std::wstring name = findData.cFileName;
-        if (name == L"." || name == L".." || name == L"lo") continue;
-        std::wstring addrPath = L"Z:\\sys\\class\\net\\" + name + L"\\address";
-        std::string mac = ReadUnixFileDirect(addrPath);
-        if (!mac.empty() && mac != "00:00:00:00:00:00") {
-            result = mac;
-            break;
-        }
-    } while (FindNextFileW(h, &findData));
-    FindClose(h);
-    return result;
+    // Do NOT read /sys/class/net/<iface>/address here.
+    // That is the CURRENT interface MAC and may be randomized/cloned.
+    //
+    // Instead ask the Linux driver for the PERMANENT hardware address
+    // through ethtool -P.  Only interfaces that have a real /device entry
+    // are considered, which excludes the usual purely virtual interfaces.
+    //
+    // If no driver/device can provide a permanent address, return empty.
+    //
+    // When multiple physical interfaces exist, choose the lexicographically
+    // smallest valid permanent MAC so the selection is deterministic and
+    // does not depend on interface enumeration order.
+
+    const char* cmd =
+        "best=''; "
+        "for p in /sys/class/net/*; do "
+            "i=${p##*/}; "
+            "[ \"$i\" = \"lo\" ] && continue; "
+            "[ -e \"$p/device\" ] || continue; "
+            "out=$(ethtool -P \"$i\" 2>/dev/null) || continue; "
+            "mac=$(printf '%s\\n' \"$out\" | awk '/Permanent address:/{print $3; exit}'); "
+            "case \"$mac\" in "
+                "[0-9A-Fa-f][0-9A-Fa-f]:"
+                "[0-9A-Fa-f][0-9A-Fa-f]:"
+                "[0-9A-Fa-f][0-9A-Fa-f]:"
+                "[0-9A-Fa-f][0-9A-Fa-f]:"
+                "[0-9A-Fa-f][0-9A-Fa-f]:"
+                "[0-9A-Fa-f][0-9A-Fa-f]) "
+                    "[ \"$mac\" = \"00:00:00:00:00:00\" ] && continue; "
+                    "mac=$(printf '%s' \"$mac\" | tr '[:lower:]' '[:upper:]'); "
+                    "if [ -z \"$best\" ] || [ \"$mac\" '<' \"$best\" ]; then best=\"$mac\"; fi; "
+                ";; "
+            "esac; "
+        "done; "
+        "printf '%s\\n' \"$best\"";
+
+    std::string raw;
+    if (!RunHostShellCommand(cmd, raw, 3000)) return "";
+
+    // RunHostShellCommand removes the trailing newline, but keep this
+    // normalization local in case of any remaining whitespace.
+    while (!raw.empty() &&
+           (raw.back() == '\n' || raw.back() == '\r' ||
+            raw.back() == ' ' || raw.back() == '\t')) {
+        raw.pop_back();
+    }
+
+    return raw;
 }
 
 // ============================================================================
@@ -1342,7 +1375,7 @@ static IdentityRecord CollectIdentity(bool* wmiOk) {
     r.cpuId = MakeSignal(L"CPU_ID", wmi.QueryFirst(L"Win32_Processor", L"ProcessorId"));
     r.diskSerial = MakeSignal(L"DISK_SERIAL", wmi.QueryFirst(L"Win32_DiskDrive", L"SerialNumber"));
     r.machineGuid = MakeSignal(L"MACHINE_GUID", ReadMachineGuid());
-    r.macAddress = MakeSignal(L"MAC_ADDRESS", wmi.QueryFirstEnabledMac());
+    r.macAddress = MakeSignal(L"MAC_ADDRESS", wmi.QueryFirstPermanentMac());
     r.manufacturer = MakeSignal(L"MANUFACTURER", wmi.QueryFirst(L"Win32_ComputerSystemProduct", L"Vendor"));
     r.family = MakeSignal(L"FAMILY", wmi.QueryFirst(L"Win32_ComputerSystem", L"SystemFamily"));
     r.product = MakeSignal(L"PRODUCT", wmi.QueryFirst(L"Win32_ComputerSystemProduct", L"Name"));
