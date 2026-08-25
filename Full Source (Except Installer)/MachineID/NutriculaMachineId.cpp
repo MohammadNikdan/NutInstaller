@@ -8,8 +8,7 @@
 #include <bcrypt.h>
 #include <wincrypt.h>
 #include <winhttp.h>
-#include <setupapi.h>
-#include <ntddndis.h>
+#include <iphlpapi.h>
 #include <string>
 #include <vector>
 #include <map>
@@ -34,7 +33,7 @@
 #pragma comment(lib, "bcrypt.lib")
 #pragma comment(lib, "crypt32.lib")
 #pragma comment(lib, "winhttp.lib")
-#pragma comment(lib, "setupapi.lib")
+#pragma comment(lib, "iphlpapi.lib")
 
 namespace {
 
@@ -300,103 +299,60 @@ private:
     }
 };
 
-static std::wstring QueryPermanentWindowsMac() {
-    HDEVINFO deviceInfoSet = SetupDiGetClassDevsW(
-        &GUID_NDIS_LAN_CLASS,
-        nullptr,
-        nullptr,
-        DIGCF_PRESENT | DIGCF_DEVICEINTERFACE);
 
-    if (deviceInfoSet == INVALID_HANDLE_VALUE) return L"";
+
+
+
+
+
+
+static std::wstring QueryPermanentWindowsMac() {
+    PMIB_IF_TABLE2 table = nullptr;
+
+    if (GetIfTable2Ex(MibIfTableNormal, &table) != NO_ERROR || !table) {
+        return L"";
+    }
 
     std::vector<std::wstring> permanentMacs;
 
-    for (DWORD index = 0;; ++index) {
-        SP_DEVICE_INTERFACE_DATA interfaceData = {};
-        interfaceData.cbSize = sizeof(interfaceData);
+    for (ULONG i = 0; i < table->NumEntries; ++i) {
+        const MIB_IF_ROW2& row = table->Table[i];
 
-        if (!SetupDiEnumDeviceInterfaces(
-                deviceInfoSet,
-                nullptr,
-                &GUID_NDIS_LAN_CLASS,
-                index,
-                &interfaceData)) {
-            DWORD error = GetLastError();
-            if (error == ERROR_NO_MORE_ITEMS) break;
+        // Only real hardware interfaces.
+        if (!row.HardwareInterface) {
             continue;
         }
 
-        DWORD requiredSize = 0;
-        SetupDiGetDeviceInterfaceDetailW(
-            deviceInfoSet,
-            &interfaceData,
-            nullptr,
-            0,
-            &requiredSize,
-            nullptr);
-
-        if (requiredSize == 0) continue;
-
-        std::vector<BYTE> detailBuffer(requiredSize);
-        auto* detail =
-            reinterpret_cast<SP_DEVICE_INTERFACE_DETAIL_DATA_W*>(
-                detailBuffer.data());
-
-        detail->cbSize = sizeof(SP_DEVICE_INTERFACE_DETAIL_DATA_W);
-
-        SP_DEVINFO_DATA deviceInfo = {};
-        deviceInfo.cbSize = sizeof(deviceInfo);
-
-        if (!SetupDiGetDeviceInterfaceDetailW(
-                deviceInfoSet,
-                &interfaceData,
-                detail,
-                requiredSize,
-                nullptr,
-                &deviceInfo)) {
+        // We only want a normal 6-byte MAC address.
+        if (row.PhysicalAddressLength != 6) {
             continue;
         }
 
-        HANDLE adapter = CreateFileW(
-            detail->DevicePath,
-            0,
-            FILE_SHARE_READ | FILE_SHARE_WRITE,
-            nullptr,
-            OPEN_EXISTING,
-            0,
-            nullptr);
-
-        if (adapter == INVALID_HANDLE_VALUE) continue;
-
-        DWORD oid = OID_802_3_PERMANENT_ADDRESS;
         BYTE permanentMac[6] = {};
-        DWORD returned = 0;
-
-        BOOL ok = DeviceIoControl(
-            adapter,
-            IOCTL_NDIS_QUERY_GLOBAL_STATS,
-            &oid,
-            sizeof(oid),
+        std::memcpy(
             permanentMac,
-            sizeof(permanentMac),
-            &returned,
-            nullptr);
-
-        CloseHandle(adapter);
-
-        if (!ok || returned != sizeof(permanentMac)) continue;
+            row.PermanentPhysicalAddress,
+            sizeof(permanentMac));
 
         bool allZero = true;
         bool allFF = true;
 
         for (BYTE b : permanentMac) {
-            if (b != 0x00) allZero = false;
-            if (b != 0xFF) allFF = false;
+            if (b != 0x00) {
+                allZero = false;
+            }
+            if (b != 0xFF) {
+                allFF = false;
+            }
         }
 
-        if (allZero || allFF) continue;
+        // Missing / invalid permanent address.
+        if (allZero || allFF) {
+            continue;
+        }
 
         wchar_t mac[18] = {};
+
         swprintf_s(
             mac,
             L"%02X:%02X:%02X:%02X:%02X:%02X",
@@ -410,15 +366,20 @@ static std::wstring QueryPermanentWindowsMac() {
         permanentMacs.emplace_back(mac);
     }
 
-    SetupDiDestroyDeviceInfoList(deviceInfoSet);
+    FreeMibTable(table);
 
-    if (permanentMacs.empty()) return L"";
+    if (permanentMacs.empty()) {
+        return L"";
+    }
 
-    // Deterministic selection when several adapters provide a permanent MAC.
+    // Deterministic selection when multiple physical adapters exist.
     std::sort(permanentMacs.begin(), permanentMacs.end());
 
     return permanentMacs.front();
 }
+
+
+
 
 static std::wstring ReadMachineGuid() {
     HKEY key = nullptr;
