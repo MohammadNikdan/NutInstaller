@@ -9,6 +9,7 @@
 #include <wincrypt.h>
 #include <winhttp.h>
 #include <iphlpapi.h>
+#include <winioctl.h>
 #include <string>
 #include <vector>
 #include <map>
@@ -381,6 +382,8 @@ static std::wstring QueryPermanentWindowsMac() {
 
 
 
+
+
 static std::wstring ReadMachineGuid() {
     HKEY key = nullptr;
     if (RegOpenKeyExW(HKEY_LOCAL_MACHINE, L"SOFTWARE\\Microsoft\\Cryptography",
@@ -404,6 +407,161 @@ static std::wstring GetSystemDrive() {
     wchar_t root[4] = { windowsDir[0], L':', L'\\', L'\0' };
     return root;
 }
+
+
+
+static std::wstring QuerySystemDiskSerial() {
+    std::wstring systemRoot = GetSystemDrive();
+    if (systemRoot.empty()) {
+        return L"";
+    }
+
+    // Open the Windows system volume (for example \\.\C:).
+    std::wstring volumePath = L"\\\\.\\" + systemRoot;
+
+    HANDLE volumeHandle = CreateFileW(
+        volumePath.c_str(),
+        0,
+        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+        nullptr,
+        OPEN_EXISTING,
+        0,
+        nullptr);
+
+    if (volumeHandle == INVALID_HANDLE_VALUE) {
+        return L"";
+    }
+
+    STORAGE_DEVICE_NUMBER deviceNumber = {};
+    DWORD returned = 0;
+
+    BOOL ok = DeviceIoControl(
+        volumeHandle,
+        IOCTL_STORAGE_GET_DEVICE_NUMBER,
+        nullptr,
+        0,
+        &deviceNumber,
+        sizeof(deviceNumber),
+        &returned,
+        nullptr);
+
+    CloseHandle(volumeHandle);
+
+    if (!ok || returned != sizeof(deviceNumber)) {
+        return L"";
+    }
+
+    if (deviceNumber.DeviceType != FILE_DEVICE_DISK &&
+        deviceNumber.DeviceType != FILE_DEVICE_MASS_STORAGE) {
+        return L"";
+    }
+
+    wchar_t physicalPath[64] = {};
+    swprintf_s(
+        physicalPath,
+        L"\\\\.\\PhysicalDrive%lu",
+        static_cast<unsigned long>(deviceNumber.DeviceNumber));
+
+    HANDLE diskHandle = CreateFileW(
+        physicalPath,
+        0,
+        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+        nullptr,
+        OPEN_EXISTING,
+        0,
+        nullptr);
+
+    if (diskHandle == INVALID_HANDLE_VALUE) {
+        return L"";
+    }
+
+    STORAGE_PROPERTY_QUERY query = {};
+    query.PropertyId = StorageDeviceProperty;
+    query.QueryType = PropertyStandardQuery;
+
+    STORAGE_DESCRIPTOR_HEADER header = {};
+    returned = 0;
+
+    ok = DeviceIoControl(
+        diskHandle,
+        IOCTL_STORAGE_QUERY_PROPERTY,
+        &query,
+        sizeof(query),
+        &header,
+        sizeof(header),
+        &returned,
+        nullptr);
+
+    if (!ok || header.Size < sizeof(STORAGE_DEVICE_DESCRIPTOR)) {
+        CloseHandle(diskHandle);
+        return L"";
+    }
+
+    std::vector<BYTE> buffer(header.Size);
+
+    ok = DeviceIoControl(
+        diskHandle,
+        IOCTL_STORAGE_QUERY_PROPERTY,
+        &query,
+        sizeof(query),
+        buffer.data(),
+        static_cast<DWORD>(buffer.size()),
+        &returned,
+        nullptr);
+
+    CloseHandle(diskHandle);
+
+    if (!ok || returned < sizeof(STORAGE_DEVICE_DESCRIPTOR)) {
+        return L"";
+    }
+
+    const auto* descriptor =
+        reinterpret_cast<const STORAGE_DEVICE_DESCRIPTOR*>(buffer.data());
+
+    if (descriptor->SerialNumberOffset == 0 ||
+        descriptor->SerialNumberOffset >= returned) {
+        return L"";
+    }
+
+    const char* serial =
+        reinterpret_cast<const char*>(
+            buffer.data() + descriptor->SerialNumberOffset);
+
+    if (!serial || *serial == '\0') {
+        return L"";
+    }
+
+    std::string serialA(serial);
+
+    // Convert the storage descriptor's ANSI serial text to UTF-16.
+    int wideLength = MultiByteToWideChar(
+        CP_ACP,
+        0,
+        serialA.c_str(),
+        static_cast<int>(serialA.size()),
+        nullptr,
+        0);
+
+    if (wideLength <= 0) {
+        return L"";
+    }
+
+    std::wstring result(wideLength, L'\0');
+
+    if (MultiByteToWideChar(
+            CP_ACP,
+            0,
+            serialA.c_str(),
+            static_cast<int>(serialA.size()),
+            &result[0],
+            wideLength) != wideLength) {
+        return L"";
+    }
+
+    return Trim(result);
+}
+
+
 
 static std::wstring ReadVolumeSerial() {
     std::wstring root = GetSystemDrive();
@@ -1606,7 +1764,7 @@ static IdentityRecord CollectIdentity(bool* wmiOk) {
     r.baseboardSerial = MakeSignal(L"BASEBOARD_SERIAL", wmi.QueryFirst(L"Win32_BaseBoard", L"SerialNumber"));
     r.biosSerial = MakeSignal(L"BIOS_SERIAL", wmi.QueryFirst(L"Win32_BIOS", L"SerialNumber"));
     r.cpuId = MakeSignal(L"CPU_ID", wmi.QueryFirst(L"Win32_Processor", L"ProcessorId"));
-    r.diskSerial = MakeSignal(L"DISK_SERIAL", wmi.QueryFirst(L"Win32_DiskDrive", L"SerialNumber"));
+    r.diskSerial = MakeSignal(L"DISK_SERIAL", QuerySystemDiskSerial());
     r.machineGuid = MakeSignal(L"MACHINE_GUID", ReadMachineGuid());
     r.macAddress = MakeSignal(L"MAC_ADDRESS", QueryPermanentWindowsMac());
     r.manufacturer = MakeSignal(L"MANUFACTURER", wmi.QueryFirst(L"Win32_ComputerSystemProduct", L"Vendor"));
