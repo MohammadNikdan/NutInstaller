@@ -149,13 +149,21 @@ try {
 
         nutricula_touch_success($conn, $licenseId, $now);
 
+        /* A successful (re-)signup always fully resets the refresh-token
+           chain and clears any prior suspicious/blocked state for this
+           license - this is a fresh, authenticated activation event, not
+           a routine verify cycle. */
+        $newRefreshToken = nutricula_generate_refresh_token();
+        $newRefreshTokenHash = hash('sha256', $newRefreshToken);
+
         $update = $conn->prepare(
             'UPDATE nutricula_licenses
-             SET claimed_local_ip=?, last_observed_ip=?, last_seen_at=NOW()
+             SET claimed_local_ip=?, last_observed_ip=?, last_seen_at=NOW(),
+                 current_refresh_token_hash=?, token_suspicious=0, blocked_until=NULL
              WHERE id=?'
         );
         if (!$update) throw new RuntimeException('DB prepare failed.');
-        $update->bind_param('ssi', $localIp, $observedIp, $licenseId);
+        $update->bind_param('sssi', $localIp, $observedIp, $newRefreshTokenHash, $licenseId);
         if (!$update->execute()) throw new RuntimeException('DB update failed.');
         $update->close();
 
@@ -163,19 +171,21 @@ try {
     } else {
         $licenseUuid = nutricula_uuid();
         $licenseExpires = nutricula_total_expiration($duration);
+        $newRefreshToken = nutricula_generate_refresh_token();
+        $newRefreshTokenHash = hash('sha256', $newRefreshToken);
 
         $insert = $conn->prepare(
             'INSERT INTO nutricula_licenses
              (license_uuid,user_email,purchase_key,product_id,product_name,machine_id,
               device_public_key_b64,device_public_key_hash,device_type,claimed_local_ip,
               first_observed_ip,last_observed_ip,license_issued_at,license_expires_at,
-              last_request_time,last_success_time,status,activated_at,last_seen_at)
-             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,"active",NOW(),NOW())'
+              last_request_time,last_success_time,current_refresh_token_hash,status,activated_at,last_seen_at)
+             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,"active",NOW(),NOW())'
         );
         if (!$insert) throw new RuntimeException('DB prepare failed.');
 
         $insert->bind_param(
-            'sssissssssssiiii',
+            'sssissssssssiiiis',
             $licenseUuid,
             $email,
             $purchaseKey,
@@ -191,7 +201,8 @@ try {
             $now,
             $licenseExpires,
             $now,
-            $now
+            $now,
+            $newRefreshTokenHash
         );
 
         try {
@@ -232,6 +243,7 @@ try {
         '|device_key_hash=' . $deviceKeyHash .
         '|license_expires_at=' . $licenseExpires .
         '|requested_at=' . $now .
+        '|refresh_token=' . $newRefreshToken .
         /* Binds this specific signed response to this specific request -
            without this, a previously-issued, still-validly-signed response
            for an earlier request to this same license could not be

@@ -35,6 +35,28 @@ CREATE TABLE nutricula_licenses (
        last_request_time so "when did this device last try" and "when did it
        last actually succeed" can be told apart. */
     last_success_time BIGINT UNSIGNED NULL,
+
+    /* --- Rotating single-use refresh token (Clone/Copy detection) ---
+       current_refresh_token_hash: SHA-256 of the ONLY token this license
+       currently accepts. Every successful verify rotates this to a fresh
+       random value and returns the new plaintext token to the client
+       inside the signed lease. A client presenting anything other than
+       the CURRENT token (regardless of how many generations old it is -
+       generation distance is irrelevant) is presenting a stale token.
+       token_suspicious: set true the first time a stale token is seen
+       for this license since the last successful (current-token) request;
+       cleared on the next successful request. A SECOND stale-token event
+       while this is already true triggers the 24h block below - this is
+       what "two consecutive stale-token presentations" actually means. */
+    current_refresh_token_hash CHAR(64) NULL,
+    token_suspicious TINYINT(1) NOT NULL DEFAULT 0,
+    /* blocked_until: when set and in the future, ALL verify/challenge
+       requests for this license are rejected outright (mapped to tier
+       -100 client-side) regardless of token validity - this is the 24h
+       punishment applied to BOTH machines sharing a cloned identity,
+       since the server cannot tell which one is the legitimate owner. */
+    blocked_until BIGINT UNSIGNED NULL,
+
     status ENUM('active','expired','revoked') NOT NULL DEFAULT 'active',
     activated_at DATETIME NOT NULL,
     last_seen_at DATETIME NULL,

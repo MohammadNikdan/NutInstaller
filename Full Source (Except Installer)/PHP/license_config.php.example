@@ -18,7 +18,12 @@ return [
        MachineId32/64.dll, which no longer contains any transport key at
        all as of this session's dead-code cleanup). Generate your own with
        e.g. `openssl rand -hex 32`, never reuse an example/sample value. */
-    'transport_key_hex' => 'YOUR_32_BYTE_TRANSPORT_KEY_AS_64_HEX_CHARS',
+    /* Path to a plain text file containing ONLY the 64-hex-character
+       transport key - no extra whitespace, no quotes, nothing else in the
+       file. Matches the same file-path pattern as
+       server_signing_private_key_path above - the actual secret value
+       never lives directly in this config file. */
+    'transport_key_path' => '/home/nutricul/domains/nutriculaexpert.com/Private/Keys/TransportKey.txt',
 
     /* Existing server-side RSA private key used to sign the final license lease. */
     'server_signing_private_key_path' => '/home/nutricul/domains/nutriculaexpert.com/Private/Keys/ServerLicenseSigningKey_Private.pem',
@@ -37,18 +42,29 @@ return [
     'challenge_ttl_seconds' => 60,
 
     /* Informational only (not enforced by itself) - the nominal length of one
-       MQL request cycle. MQL's own TTL is 55:00 minutes; it sends its next
-       request at 54:00 + random(0..60s) after the timestamp recorded in its
-       license file. This constant is only used to compute a display-friendly
-       "current cycle ends around" value if ever needed - actual enforcement
-       is entirely via min_request_gap_seconds below. */
+       MQL request cycle. MQL's own TTL is 55:00 minutes. Under the rotating
+       refresh-token model, the client no longer requests at a fixed offset:
+       after every successful lease, it picks a new random moment between
+       10:01 and 50:00 after that lease's request_at (persistently derived
+       from the new refresh token itself, so it survives Terminal/EA
+       restarts and cannot be re-rolled) and requests again exactly then.
+       This constant is only used for display-friendly estimates. */
     'license_cycle_seconds' => 3300, // 55 minutes
 
     /* THE enforced anti-abuse gate. A new request (challenge, or an existing-
-       license signup) for the same license/device is rejected if fewer than
-       this many seconds have passed since the last request (successful or
-       rejected) for that license. There is deliberately NO upper bound. */
-    'min_request_gap_seconds' => 3180, // 53 minutes
+       license signup) for the same license/device is rejected as too_early
+       if fewer than this many seconds have passed since the last request
+       (successful or rejected) for that license. Set well below the
+       client's own minimum random offset (10:01) so a legitimate client
+       following its own schedule never trips this - 9 minutes leaves a
+       comfortable margin. There is deliberately NO upper bound. */
+    'min_request_gap_seconds' => 540, // 9 minutes
+
+    /* How many hours a license is fully blocked (all requests rejected,
+       tier -100) after two CONSECUTIVE stale-refresh-token presentations
+       are detected for it - see nutricula_check_and_rotate_token() in
+       license_common.php for the full state machine. */
+    'clone_block_hours' => 24,
 
     /* Set true ONLY when the origin is locked to trusted Cloudflare proxy ranges. */
     'trust_cloudflare_connecting_ip' => false,

@@ -12,6 +12,7 @@ require_once __DIR__ . '/license_common.php';
 const CHECK_ALLOWED_FIELDS = [
     'v', 'stage', 'license_id', 'machine_id', 'device_key_hash', 'local_ip',
     'challenge_id', 'signature', 'build_id', 'ex5_hash', 'ex4_hash', 'dll32_hash', 'dll64_hash', 'service_hash', 'broker_hash',
+    'refresh_token',
 ];
 const CHALLENGE_STAGE_FIELDS = ['v', 'stage', 'license_id', 'machine_id', 'device_key_hash', 'local_ip'];
 /* build_id/ex5_hash/dll32_hash/dll64_hash/service_hash: Artifact Evidence
@@ -24,6 +25,7 @@ const CHALLENGE_STAGE_FIELDS = ['v', 'stage', 'license_id', 'machine_id', 'devic
 const VERIFY_STAGE_FIELDS = [
     'v', 'stage', 'license_id', 'machine_id', 'device_key_hash', 'local_ip', 'challenge_id', 'signature',
     'build_id', 'ex5_hash', 'ex4_hash', 'dll32_hash', 'dll64_hash', 'service_hash', 'broker_hash',
+    'refresh_token',
 ];
 
 /* Cheap, opportunistic housekeeping - runs as a side effect of normal
@@ -369,7 +371,7 @@ try {
            challenge branch above for why it belongs here and not there. */
         $conn->begin_transaction();
 
-        $lockStmt = $conn->prepare('SELECT status, license_expires_at FROM nutricula_licenses WHERE id=? FOR UPDATE');
+        $lockStmt = $conn->prepare('SELECT id, status, license_expires_at, current_refresh_token_hash, token_suspicious, blocked_until FROM nutricula_licenses WHERE id=? FOR UPDATE');
         if (!$lockStmt) throw new RuntimeException('DB prepare failed.');
         $lockStmt->bind_param('i', $licenseDbId);
         $lockStmt->execute();
@@ -408,7 +410,11 @@ try {
         /* THE time lock - see the design note above. A signature has already
            been proven valid at this point, so a rejection here genuinely
            means "correct device credentials, but too soon" - exactly the
-           "identity/device key was copied" signal this is meant to catch. */
+           "identity/device key was copied" signal this is meant to catch.
+           Set to a low 9-minute floor (min_request_gap_seconds) since the
+           actual anti-clone protection now lives in the rotating refresh
+           token below, not in this timer - this floor only exists to stop
+           pure request flooding, not to detect cloning by itself. */
         $lock = nutricula_check_and_touch_time_lock($conn, $licenseDbId, $minGapSeconds, $finalNow);
         if (!$lock['allowed']) {
             $conn->commit(); // the challenge-used and time-lock touches must still persist
@@ -416,6 +422,20 @@ try {
             $conn->close();
             nutricula_reject($config, 'too_early', $lock['retry_after_seconds']);
         }
+
+        /* THE rotating refresh-token check - this is what actually detects
+           a cloned machine_id + device key (see the design discussion).
+           Must run on the freshly FOR-UPDATE-locked row ($lockedLicense),
+           not the earlier $license snapshot. */
+        $clientRefreshToken = (string)($fields['refresh_token'] ?? '');
+        $tokenResult = nutricula_check_and_rotate_token($conn, $config, $lockedLicense, $clientRefreshToken);
+        if ($tokenResult['action'] === 'blocked') {
+            $conn->commit(); // persist the blocked_until write
+            nutricula_log_activity($conn, $licenseDbId, $machineId, $deviceKeyHash, $localIp, $observedIp, 'verify', 'blocked', $riskScore);
+            $conn->close();
+            nutricula_reject($config, 'blocked', (int)$config['clone_block_hours'] * 3600);
+        }
+        $newRefreshToken = (string)$tokenResult['new_token'];
 
         /* Basic clone-monitoring signal: how many distinct IPs used this key recently? */
         $windowMinutes = 10;
@@ -457,7 +477,8 @@ try {
             '|machine_id=' . $machineId .
             '|device_key_hash=' . $deviceKeyHash .
             '|license_expires_at=' . $licenseExpires .
-            '|requested_at=' . $finalNow;
+            '|requested_at=' . $finalNow .
+            '|refresh_token=' . $newRefreshToken;
 
         $serverSignature = nutricula_server_sign($canonical, $config);
         $lease = 'NL3|' . $canonical . '|server_signature=' . $serverSignature;

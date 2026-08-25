@@ -60,10 +60,12 @@ function nutricula_validate_config(array $config): void
     $requireString($config, ['edd', 'api_key']);
     $requireString($config, ['edd', 'api_token']);
     $requireString($config, ['server_signing_private_key_path']);
+    $requireString($config, ['transport_key_path']);
 
-    if (!array_key_exists('transport_key_hex', $config) ||
-        !preg_match('/\A[0-9a-fA-F]{64}\z/', (string)$config['transport_key_hex'])) {
-        $errors[] = 'transport_key_hex is missing or not exactly 64 hex characters.';
+    $transportKeyPath = (string)($config['transport_key_path'] ?? '');
+    $transportKeyContent = trim((string)(@file_get_contents($transportKeyPath) ?: ''));
+    if (!preg_match('/\A[0-9a-fA-F]{64}\z/', $transportKeyContent)) {
+        $errors[] = 'transport_key_path does not point to a readable file containing exactly 64 hex characters.';
     }
 
     $requirePositiveInt($config, 'challenge_ttl_seconds');
@@ -101,7 +103,8 @@ function nutricula_db(array $config): mysqli
 
 function nutricula_transport_key(array $config): string
 {
-    $hex = (string)($config['transport_key_hex'] ?? '');
+    $path = (string)($config['transport_key_path'] ?? '');
+    $hex = trim((string)(@file_get_contents($path) ?: ''));
     if (!preg_match('/\A[0-9a-fA-F]{64}\z/', $hex)) {
         throw new RuntimeException('Invalid transport key.');
     }
@@ -218,6 +221,103 @@ function nutricula_reject(array $config, string $reason, int $retryAfterSeconds 
         echo 'no';
     }
     exit;
+}
+
+/** Generates a fresh, cryptographically random refresh token (32 raw bytes,
+    hex-encoded to 64 chars) - this is the plaintext value returned to the
+    client inside the signed lease. Only its SHA-256 hash is ever stored
+    server-side (nutricula_licenses.current_refresh_token_hash). */
+function nutricula_generate_refresh_token(): string
+{
+    return bin2hex(random_bytes(32));
+}
+
+/** THE clone/copy detection state machine - see the two worked examples
+    that motivated this exact design (in the accompanying design
+    discussion): a stale token is forgiven exactly once (token still
+    rotates forward, license flagged "suspicious"), but a SECOND stale
+    token presented before any successful current-token request in
+    between triggers a 24h block for the license, applied identically
+    regardless of which of the two colliding machines is "legitimate" -
+    the server cannot tell them apart once machine_id and device key are
+    both cloned, so both are treated as guilty per the accepted design.
+
+    Must be called with the license row already locked (SELECT ... FOR
+    UPDATE) in the same transaction as the caller's other license reads,
+    to avoid a race between two near-simultaneous requests for the same
+    license.
+
+    Returns an array: ['action' => 'proceed'|'blocked', 'new_token' => ?string]
+    - 'proceed': caller should continue issuing a normal lease; if
+      new_token is non-null, it MUST be embedded in the lease canonical
+      and current_refresh_token_hash updated to hash(new_token) as part of
+      the same UPDATE the caller already does for this license row.
+    - 'blocked': caller MUST call nutricula_reject($config, 'blocked') and
+      stop - blocked_until has already been set by this function. */
+function nutricula_check_and_rotate_token(mysqli $conn, array $config, array $license, string $clientToken): array
+{
+    $now = time();
+    $blockedUntil = (int)($license['blocked_until'] ?? 0);
+    if ($blockedUntil > $now) {
+        return ['action' => 'blocked', 'new_token' => null];
+    }
+
+    $storedHash = (string)($license['current_refresh_token_hash'] ?? '');
+    $clientHash = hash('sha256', $clientToken);
+    $isCurrentToken = ($storedHash !== '' && hash_equals($storedHash, $clientHash));
+
+    $wasSuspicious = ((int)($license['token_suspicious'] ?? 0)) === 1;
+
+    if ($isCurrentToken) {
+        // Valid, current token - always resets suspicion, always rotates forward.
+        $newToken = nutricula_generate_refresh_token();
+        $stmt = $conn->prepare(
+            'UPDATE nutricula_licenses
+             SET current_refresh_token_hash = ?, token_suspicious = 0
+             WHERE id = ?'
+        );
+        $newHash = hash('sha256', $newToken);
+        $stmt->bind_param('si', $newHash, $license['id']);
+        $stmt->execute();
+        $stmt->close();
+        return ['action' => 'proceed', 'new_token' => $newToken];
+    }
+
+    // Stale token (any generation distance - we deliberately never compare
+    // "how old", only "is it the current one").
+    if ($wasSuspicious) {
+        // Second consecutive stale-token event -> block both machines for
+        // clone_block_hours, clear the suspicious flag (so the license is
+        // clean again once the block naturally expires).
+        $blockHours = (int)($config['clone_block_hours'] ?? 24);
+        $newBlockedUntil = $now + ($blockHours * 3600);
+        $stmt = $conn->prepare(
+            'UPDATE nutricula_licenses
+             SET blocked_until = ?, token_suspicious = 0
+             WHERE id = ?'
+        );
+        $stmt->bind_param('ii', $newBlockedUntil, $license['id']);
+        $stmt->execute();
+        $stmt->close();
+        return ['action' => 'blocked', 'new_token' => null];
+    }
+
+    // First stale-token event for this license since the last successful
+    // current-token request - forgive once: still rotate the token
+    // forward (so the request completes normally), but flag as suspicious
+    // so a SECOND stale event (from either machine) before a clean
+    // current-token success triggers the block above.
+    $newToken = nutricula_generate_refresh_token();
+    $stmt = $conn->prepare(
+        'UPDATE nutricula_licenses
+         SET current_refresh_token_hash = ?, token_suspicious = 1
+         WHERE id = ?'
+    );
+    $newHash = hash('sha256', $newToken);
+    $stmt->bind_param('si', $newHash, $license['id']);
+    $stmt->execute();
+    $stmt->close();
+    return ['action' => 'proceed', 'new_token' => $newToken];
 }
 
 /**

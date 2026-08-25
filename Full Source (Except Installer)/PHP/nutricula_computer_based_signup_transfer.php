@@ -225,17 +225,20 @@ try {
        what makes that happen through the existing, unmodified
        license_check.php lookup. */
     $newLicenseUuid = nutricula_uuid();
+    $newRefreshToken = nutricula_generate_refresh_token();
+    $newRefreshTokenHash = hash('sha256', $newRefreshToken);
 
     $update = $conn->prepare(
         'UPDATE nutricula_licenses
          SET license_uuid=?, machine_id=?, device_public_key_b64=?, device_public_key_hash=?,
              device_type=?, claimed_local_ip=?, last_observed_ip=?,
-             last_request_time=?, last_success_time=?, last_seen_at=NOW()
+             last_request_time=?, last_success_time=?, last_seen_at=NOW(),
+             current_refresh_token_hash=?, token_suspicious=0, blocked_until=NULL
          WHERE id=?'
     );
     if (!$update) throw new RuntimeException('DB prepare failed.');
     $update->bind_param(
-        'sssssssiii',
+        'sssssssiisi',
         $newLicenseUuid,
         $newMachineId,
         $newDevicePublicKey,
@@ -245,6 +248,7 @@ try {
         $observedIp,
         $finalNow,
         $finalNow,
+        $newRefreshTokenHash,
         $licenseDbId
     );
     if (!$update->execute()) throw new RuntimeException('DB update failed.');
@@ -322,6 +326,7 @@ try {
         '|device_key_hash=' . $newDeviceKeyHash .
         '|license_expires_at=' . $licenseExpires .
         '|requested_at=' . $finalNow .
+        '|refresh_token=' . $newRefreshToken .
         '|rnd_number=' . $rndNumber;
 
     $serverSignature = nutricula_server_sign($canonical, $config);
