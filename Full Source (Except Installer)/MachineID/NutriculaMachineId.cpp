@@ -784,13 +784,23 @@ static CloudMetadataResult QueryCloudMetadataGCP(DWORD timeoutMs) {
 }
 
 static CloudMetadataResult QueryCloudMetadata() {
-    const DWORD timeoutMs = 700;
-    CloudMetadataResult r = QueryCloudMetadataAWS(timeoutMs);
-    if (r.available) return r;
-    r = QueryCloudMetadataAzure(timeoutMs);
-    if (r.available) return r;
-    r = QueryCloudMetadataGCP(timeoutMs);
-    return r;
+    const DWORD timeouts[] = { 300, 500, 1000, 2000, 3000 };
+
+    for (DWORD timeoutMs : timeouts) {
+        CloudMetadataResult r = QueryCloudMetadataAWS(timeoutMs);
+        if (r.available) return r;
+
+        r = QueryCloudMetadataAzure(timeoutMs);
+        if (r.available) return r;
+
+        r = QueryCloudMetadataGCP(timeoutMs);
+        if (r.available) return r;
+    }
+
+    // Metadata could not be obtained within the bounded retry budget.
+    // The caller must continue normally; CLOUD_INSTANCE_ID will simply
+    // remain missing, exactly as before.
+    return CloudMetadataResult{};
 }
 
 // ============================================================================
