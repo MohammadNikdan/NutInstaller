@@ -748,6 +748,15 @@ namespace NutriculaInstaller
                 return ServerResult.Failed(ServerFailureKind.MachineIdUnavailable, ex);
             }
 
+            // Device key: only created if none exists yet on this computer;
+            // if one already exists (from an earlier signup, transfer, or
+            // even a prior Free install), that SAME key is reused as-is,
+            // in every install mode - this method never forces a new one.
+            // Re-signup with the same purchase key on the same computer,
+            // and Transfer identity changes, are both handled entirely
+            // server-side via the rotating refresh-token state machine
+            // (see nutricula_check_and_rotate_token in license_common.php)
+            // - not by rotating the local device key.
             string devicePublicKey;
             try
             {
@@ -1232,6 +1241,13 @@ namespace NutriculaInstaller
                     // already-verified owner. Safe to state plainly.
                     case "too_early":
                         return "This license was checked very recently. Please wait a while and try again.";
+
+                    // Clone-detection block (see the rotating refresh-token
+                    // design) - reaching this already required the correct
+                    // email + purchase key, so it's safe to state plainly.
+                    case "blocked":
+                        return "Your license has been temporarily restricted. Please try again after 24 hours. " +
+                               "For more information, please contact Nutricula support.";
 
                     // Transfer only - already implies genuine ownership of a
                     // valid, matching transfer key and license, so no
