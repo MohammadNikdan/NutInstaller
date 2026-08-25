@@ -731,8 +731,6 @@ static IdentityRecord CollectMacIdentity(bool* gotAny) {
         "/usr/sbin/ioreg -d2 -c IOPlatformExpertDevice 2>/dev/null | awk -F'\\\"' '/IOPlatformUUID/{print $(NF-1)}'; "
         "echo ===SERIAL===; "
         "/usr/sbin/ioreg -d2 -c IOPlatformExpertDevice 2>/dev/null | awk -F'\\\"' '/IOPlatformSerialNumber/{print $(NF-1)}'; "
-        "echo ===MAC===; "
-        "/sbin/ifconfig en0 2>/dev/null | awk '/ether/{print $2}'; "
         "echo ===MODEL===; "
         "/usr/sbin/sysctl -n hw.model 2>/dev/null; "
         "echo ===CPU===; "
@@ -744,7 +742,6 @@ static IdentityRecord CollectMacIdentity(bool* gotAny) {
 
     r.macPlatformUuid = MakeSignalUtf8(L"MAC_PLATFORM_UUID", parsed.count("UUID") ? parsed["UUID"] : "");
     r.macPlatformSerial = MakeSignalUtf8(L"MAC_PLATFORM_SERIAL", parsed.count("SERIAL") ? parsed["SERIAL"] : "");
-    r.macPrimaryMac = MakeSignalUtf8(L"MAC_PRIMARY_MAC", parsed.count("MAC") ? parsed["MAC"] : "");
     r.macModel = MakeSignalUtf8(L"MAC_MODEL", parsed.count("MODEL") ? parsed["MODEL"] : "");
     r.macCpuBrand = MakeSignalUtf8(L"MAC_CPU_BRAND", parsed.count("CPU") ? parsed["CPU"] : "");
 
@@ -945,7 +942,6 @@ static std::wstring Canonicalize(const IdentityRecord& r) {
             ss << L"PROFILE=MACOS_WINE\nVERSION=1\n";
             AppendSignal(ss, r.macPlatformUuid);
             AppendSignal(ss, r.macPlatformSerial);
-            AppendSignal(ss, r.macPrimaryMac);
             AppendSignal(ss, r.macModel);
             AppendSignal(ss, r.macCpuBrand);
             AppendSignal(ss, r.cloudInstanceId);
