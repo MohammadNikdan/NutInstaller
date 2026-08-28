@@ -8,8 +8,6 @@
 #include <bcrypt.h>
 #include <wincrypt.h>
 #include <winhttp.h>
-#include <iphlpapi.h>
-#include <winioctl.h>
 #include <string>
 #include <vector>
 #include <map>
@@ -19,7 +17,6 @@
 #include <iomanip>
 #include <memory>
 #include <mutex>
-#include <thread>
 #include <cstring>
 #include <cstdlib>
 #include <cstdio>
@@ -35,7 +32,6 @@
 #pragma comment(lib, "bcrypt.lib")
 #pragma comment(lib, "crypt32.lib")
 #pragma comment(lib, "winhttp.lib")
-#pragma comment(lib, "iphlpapi.lib")
 
 namespace {
 
@@ -93,13 +89,14 @@ struct IdentityRecord {
     // ---- macOS-under-Wine signals (see CollectMacIdentity) ----
     Signal macPlatformUuid;      // IOPlatformUUID - closest Mac equivalent of System UUID
     Signal macPlatformSerial;    // IOPlatformSerialNumber
+    Signal macPrimaryMac;        // built-in Ethernet MAC (en0)
     Signal macModel;             // hw.model - corroboration only
     Signal macCpuBrand;          // machdep.cpu.brand_string - corroboration only
 
     // ---- Linux-under-Wine signals (see CollectLinuxIdentity) ----
     Signal linuxMachineId;       // /etc/machine-id - world-readable, but CAN be cloned in VM templates
     Signal linuxProductUuid;     // /sys/class/dmi/id/product_uuid - strong, usually root-only
-    Signal linuxPrimaryMac;      // permanent hardware MAC from the Linux driver via ethtool -P
+    Signal linuxPrimaryMac;      // first non-loopback interface's MAC via /sys/class/net
     Signal linuxBoardVendor;     // VM/cloud-provider detection hint only
 
     // ---- Cloud metadata (WindowsVM, WineMacOS, WineLinux) - the strongest
@@ -191,53 +188,6 @@ static bool IsPlausibleUuid(const std::wstring& s) {
     return n.size() == 36 || n.size() == 32;
 }
 
-
-static std::wstring NormalizeMacAddress(const std::wstring& raw) {
-    std::wstring s = UpperInvariant(Trim(raw));
-
-    std::wstring hex;
-    hex.reserve(s.size());
-
-    for (wchar_t ch : s) {
-        if ((ch >= L'0' && ch <= L'9') ||
-            (ch >= L'A' && ch <= L'F')) {
-            hex.push_back(ch);
-        } else if (ch == L':' ||
-                   ch == L'-' ||
-                   ch == L'.' ||
-                   std::iswspace(ch)) {
-            continue;
-        } else {
-            return L"";
-        }
-    }
-
-    if (hex.size() != 12) {
-        return L"";
-    }
-
-    std::wstring out;
-    out.reserve(17);
-
-    for (size_t i = 0; i < 12; i += 2) {
-        if (!out.empty()) {
-            out.push_back(L':');
-        }
-
-        out.push_back(hex[i]);
-        out.push_back(hex[i + 1]);
-    }
-
-    if (out == L"00:00:00:00:00:00" ||
-        out == L"FF:FF:FF:FF:FF:FF") {
-        return L"";
-    }
-
-    return out;
-}
-
-
-
 class WmiReader {
 public:
     bool Initialize() {
@@ -266,74 +216,12 @@ public:
         return QueryFirstInternal(query, propertyName, false);
     }
 
-
-std::wstring QueryPermanentMacAddress() {
-    if (!services_) return L"";
-
-    const std::wstring query =
-        L"SELECT PermanentAddress "
-        L"FROM Win32_NetworkAdapter "
-        L"WHERE PhysicalAdapter = TRUE";
-
-    IEnumWbemClassObject* enumerator = nullptr;
-
-    if (!ExecQuery(query, &enumerator)) {
-        return L"";
+    std::wstring QueryFirstEnabledMac() {
+        if (!services_) return L"";
+        return QueryFirstInternal(
+            L"SELECT MACAddress FROM Win32_NetworkAdapterConfiguration WHERE IPEnabled=TRUE",
+            L"MACAddress", false);
     }
-
-    std::vector<std::wstring> macs;
-
-    for (;;) {
-        IWbemClassObject* obj = nullptr;
-        ULONG returned = 0;
-
-        HRESULT hr = enumerator->Next(
-            WBEM_INFINITE,
-            1,
-            &obj,
-            &returned);
-
-        if (FAILED(hr) || returned == 0 || !obj) {
-            break;
-        }
-
-        VARIANT vt;
-        VariantInit(&vt);
-
-        std::wstring mac;
-
-        if (SUCCEEDED(obj->Get(
-                L"PermanentAddress",
-                0,
-                &vt,
-                nullptr,
-                nullptr))) {
-
-            if (vt.vt == VT_BSTR && vt.bstrVal) {
-                mac = vt.bstrVal;
-            }
-        }
-
-        VariantClear(&vt);
-        obj->Release();
-
-        mac = NormalizeMacAddress(mac);
-
-        if (!mac.empty()) {
-            macs.push_back(mac);
-        }
-    }
-
-    enumerator->Release();
-
-    if (macs.empty()) {
-        return L"";
-    }
-
-    std::sort(macs.begin(), macs.end());
-
-    return macs.front();
-}
 
     std::wstring QueryFirstEnabledIp() {
         if (!services_) return L"";
@@ -415,17 +303,6 @@ private:
     }
 };
 
-
-
-
-
-
-
-
-
-
-
-
 static std::wstring ReadMachineGuid() {
     HKEY key = nullptr;
     if (RegOpenKeyExW(HKEY_LOCAL_MACHINE, L"SOFTWARE\\Microsoft\\Cryptography",
@@ -449,161 +326,6 @@ static std::wstring GetSystemDrive() {
     wchar_t root[4] = { windowsDir[0], L':', L'\\', L'\0' };
     return root;
 }
-
-
-
-static std::wstring QuerySystemDiskSerial() {
-    std::wstring systemRoot = GetSystemDrive();
-    if (systemRoot.empty()) {
-        return L"";
-    }
-
-    // Open the Windows system volume (for example \\.\C:).
-    std::wstring volumePath = L"\\\\.\\" + systemRoot.substr(0, 2);
-
-    HANDLE volumeHandle = CreateFileW(
-        volumePath.c_str(),
-        0,
-        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
-        nullptr,
-        OPEN_EXISTING,
-        0,
-        nullptr);
-
-    if (volumeHandle == INVALID_HANDLE_VALUE) {
-        return L"";
-    }
-
-    STORAGE_DEVICE_NUMBER deviceNumber = {};
-    DWORD returned = 0;
-
-    BOOL ok = DeviceIoControl(
-        volumeHandle,
-        IOCTL_STORAGE_GET_DEVICE_NUMBER,
-        nullptr,
-        0,
-        &deviceNumber,
-        sizeof(deviceNumber),
-        &returned,
-        nullptr);
-
-    CloseHandle(volumeHandle);
-
-    if (!ok || returned != sizeof(deviceNumber)) {
-        return L"";
-    }
-
-    if (deviceNumber.DeviceType != FILE_DEVICE_DISK &&
-        deviceNumber.DeviceType != FILE_DEVICE_MASS_STORAGE) {
-        return L"";
-    }
-
-    wchar_t physicalPath[64] = {};
-    swprintf_s(
-        physicalPath,
-        L"\\\\.\\PhysicalDrive%lu",
-        static_cast<unsigned long>(deviceNumber.DeviceNumber));
-
-    HANDLE diskHandle = CreateFileW(
-        physicalPath,
-        0,
-        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
-        nullptr,
-        OPEN_EXISTING,
-        0,
-        nullptr);
-
-    if (diskHandle == INVALID_HANDLE_VALUE) {
-        return L"";
-    }
-
-    STORAGE_PROPERTY_QUERY query = {};
-    query.PropertyId = StorageDeviceProperty;
-    query.QueryType = PropertyStandardQuery;
-
-    STORAGE_DESCRIPTOR_HEADER header = {};
-    returned = 0;
-
-    ok = DeviceIoControl(
-        diskHandle,
-        IOCTL_STORAGE_QUERY_PROPERTY,
-        &query,
-        sizeof(query),
-        &header,
-        sizeof(header),
-        &returned,
-        nullptr);
-
-    if (!ok || header.Size < sizeof(STORAGE_DEVICE_DESCRIPTOR)) {
-        CloseHandle(diskHandle);
-        return L"";
-    }
-
-    std::vector<BYTE> buffer(header.Size);
-
-    ok = DeviceIoControl(
-        diskHandle,
-        IOCTL_STORAGE_QUERY_PROPERTY,
-        &query,
-        sizeof(query),
-        buffer.data(),
-        static_cast<DWORD>(buffer.size()),
-        &returned,
-        nullptr);
-
-    CloseHandle(diskHandle);
-
-    if (!ok || returned < sizeof(STORAGE_DEVICE_DESCRIPTOR)) {
-        return L"";
-    }
-
-    const auto* descriptor =
-        reinterpret_cast<const STORAGE_DEVICE_DESCRIPTOR*>(buffer.data());
-
-    if (descriptor->SerialNumberOffset == 0 ||
-        descriptor->SerialNumberOffset >= returned) {
-        return L"";
-    }
-
-    const char* serial =
-        reinterpret_cast<const char*>(
-            buffer.data() + descriptor->SerialNumberOffset);
-
-    if (!serial || *serial == '\0') {
-        return L"";
-    }
-
-    std::string serialA(serial);
-
-    // Convert the storage descriptor's ANSI serial text to UTF-16.
-    int wideLength = MultiByteToWideChar(
-        CP_ACP,
-        0,
-        serialA.c_str(),
-        static_cast<int>(serialA.size()),
-        nullptr,
-        0);
-
-    if (wideLength <= 0) {
-        return L"";
-    }
-
-    std::wstring result(wideLength, L'\0');
-
-    if (MultiByteToWideChar(
-            CP_ACP,
-            0,
-            serialA.c_str(),
-            static_cast<int>(serialA.size()),
-            &result[0],
-            wideLength) != wideLength) {
-        return L"";
-    }
-
-    return Trim(result);
-}
-
-
 
 static std::wstring ReadVolumeSerial() {
     std::wstring root = GetSystemDrive();
@@ -707,118 +429,25 @@ static bool RunHostShellCommand(const std::string& shellCommand, std::string& ou
         &sa, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
     if (outFile == INVALID_HANDLE_VALUE) return false;
 
-    
     char markerUnixPath[MAX_PATH + 64];
-    sprintf(
-        markerUnixPath,
-        "/tmp/nutid_done_%lu_%ld.tmp",
-        (unsigned long)pid,
-        (long)id
-    );
+    sprintf(markerUnixPath, "/tmp/nutid_done_%lu_%ld.tmp", (unsigned long)pid, (long)id);
 
-    // IMPORTANT:
-    // Do not wrap shellCommand inside:
-    //     sh -c "...."
-    // because shellCommand itself may contain quotes.
-    //
-    // Write the command to a temporary shell script instead. This preserves
-    // the shellCommand exactly as written and avoids all nested-quote issues.
-    char scriptUnixPath[MAX_PATH + 64];
-    sprintf(
-        scriptUnixPath,
-        "/tmp/nutid_script_%lu_%ld.sh",
-        (unsigned long)pid,
-        (long)id
-    );
-
-    wchar_t scriptPathW[MAX_PATH + 64];
-    wsprintfW(
-        scriptPathW,
-        L"%snutid_script_%lu_%ld.sh",
-        tempDir,
-        (unsigned long)pid,
-        (long)id
-    );
-
-    DeleteFileW(scriptPathW);
-
-    HANDLE scriptFile = CreateFileW(
-        scriptPathW,
-        GENERIC_WRITE,
-        FILE_SHARE_READ,
-        &sa,
-        CREATE_ALWAYS,
-        FILE_ATTRIBUTE_NORMAL,
-        nullptr
-    );
-
-    if (scriptFile == INVALID_HANDLE_VALUE) {
-        DeleteFileW(outPathW);
-        return false;
-    }
-
-    std::string scriptContent;
-    scriptContent.reserve(
-        shellCommand.size() + strlen(markerUnixPath) + 32
-    );
-
-    scriptContent += shellCommand;
-    scriptContent += "\n";
-    scriptContent += "touch ";
-    scriptContent += markerUnixPath;
-    scriptContent += "\n";
-
-    DWORD scriptWritten = 0;
-
-    BOOL scriptOk = WriteFile(
-        scriptFile,
-        scriptContent.data(),
-        static_cast<DWORD>(scriptContent.size()),
-        &scriptWritten,
-        nullptr
-    );
-
-    CloseHandle(scriptFile);
-
-    if (!scriptOk || scriptWritten != scriptContent.size()) {
-        DeleteFileW(scriptPathW);
-        DeleteFileW(outPathW);
-        return false;
-    }
-
-    std::string shellCmdLine =
-        std::string("sh ") + scriptUnixPath;
-
-    std::wstring wCmd = Utf8ToWide(shellCmdLine);
+    std::string fullCmd = "sh -c \"" + shellCommand + "; touch " + markerUnixPath + "\" ";
+    std::wstring wCmd = Utf8ToWide(fullCmd);
     std::vector<wchar_t> mutableCmd(wCmd.begin(), wCmd.end());
-    mutableCmd.push_back(L'\0');
+    mutableCmd.push_back(0);
 
     STARTUPINFOW si = { sizeof(si) };
     si.dwFlags = STARTF_USESTDHANDLES;
     si.hStdOutput = outFile;
     si.hStdError = outFile;
-
     PROCESS_INFORMATION pi = {};
 
-    BOOL ok = CreateProcessW(
-        L"Z:\\bin\\sh",
-        mutableCmd.data(),
-        nullptr,
-        nullptr,
-        TRUE,
-        0,
-        nullptr,
-        nullptr,
-        &si,
-        &pi
-    );
-
-
-    
+    BOOL ok = CreateProcessW(L"Z:\\bin\\sh", mutableCmd.data(), nullptr, nullptr, TRUE,
+        0, nullptr, nullptr, &si, &pi);
     CloseHandle(outFile);
     if (!ok) {
         DeleteFileW(outPathW);
-        DeleteFileW(scriptPathW);
         return false;
     }
 
@@ -844,8 +473,6 @@ static bool RunHostShellCommand(const std::string& shellCommand, std::string& ou
 
     DeleteFileW(outPathW);
     DeleteFileW(markerPathW);
-    DeleteFileW(scriptPathW);
-
     if (pi.hProcess) CloseHandle(pi.hProcess);
     if (pi.hThread) CloseHandle(pi.hThread);
 
@@ -876,31 +503,11 @@ static std::map<std::string, std::string> ParseMarkedSections(const std::string&
 
 // Returns "Darwin", "Linux", or "" if undetermined.
 static std::string DetectWineHostOS() {
-    HMODULE ntdll = GetModuleHandleW(L"ntdll.dll");
-    if (!ntdll) {
-        return "";
-    }
-
-    using WineGetHostVersionFn =
-        void (__cdecl *)(const char** sysname, const char** release);
-
-    auto fn = reinterpret_cast<WineGetHostVersionFn>(
-        GetProcAddress(ntdll, "wine_get_host_version"));
-
-    if (!fn) {
-        return "";
-    }
-
-    const char* sysname = nullptr;
-    const char* release = nullptr;
-
-    fn(&sysname, &release);
-
-    if (!sysname || !*sysname) {
-        return "";
-    }
-
-    return std::string(sysname);
+    std::string output;
+    if (!RunHostShellCommand("echo ===OS===; uname -s", output, 3000)) return "";
+    auto parsed = ParseMarkedSections(output);
+    auto it = parsed.find("OS");
+    return (it != parsed.end()) ? it->second : "";
 }
 
 // ============================================================================
@@ -929,54 +536,22 @@ static std::string ReadUnixFileDirect(const std::wstring& zPath) {
 // Enumerates /sys/class/net/* (world-readable, no process spawn needed) to
 // find the first real (non-loopback, non-zero) interface's MAC address.
 static std::string ReadPrimaryLinuxMac() {
-    // Do NOT read /sys/class/net/<iface>/address here.
-    // That is the CURRENT interface MAC and may be randomized/cloned.
-    //
-    // Instead ask the Linux driver for the PERMANENT hardware address
-    // through ethtool -P.  Only interfaces that have a real /device entry
-    // are considered, which excludes the usual purely virtual interfaces.
-    //
-    // If no driver/device can provide a permanent address, return empty.
-    //
-    // When multiple physical interfaces exist, choose the lexicographically
-    // smallest valid permanent MAC so the selection is deterministic and
-    // does not depend on interface enumeration order.
-
-    const char* cmd =
-        "best=''; "
-        "for p in /sys/class/net/*; do "
-            "i=${p##*/}; "
-            "[ \"$i\" = \"lo\" ] && continue; "
-            "[ -e \"$p/device\" ] || continue; "
-            "out=$(ethtool -P \"$i\" 2>/dev/null) || continue; "
-            "mac=$(printf '%s\\n' \"$out\" | awk '/Permanent address:/{print $3; exit}'); "
-            "case \"$mac\" in "
-                "[0-9A-Fa-f][0-9A-Fa-f]:"
-                "[0-9A-Fa-f][0-9A-Fa-f]:"
-                "[0-9A-Fa-f][0-9A-Fa-f]:"
-                "[0-9A-Fa-f][0-9A-Fa-f]:"
-                "[0-9A-Fa-f][0-9A-Fa-f]:"
-                "[0-9A-Fa-f][0-9A-Fa-f]) "
-                    "[ \"$mac\" = \"00:00:00:00:00:00\" ] && continue; "
-                    "mac=$(printf '%s' \"$mac\" | tr '[:lower:]' '[:upper:]'); "
-                    "if [ -z \"$best\" ] || [ \"$mac\" '<' \"$best\" ]; then best=\"$mac\"; fi; "
-                ";; "
-            "esac; "
-        "done; "
-        "printf '%s\\n' \"$best\"";
-
-    std::string raw;
-    if (!RunHostShellCommand(cmd, raw, 3000)) return "";
-
-    // RunHostShellCommand removes the trailing newline, but keep this
-    // normalization local in case of any remaining whitespace.
-    while (!raw.empty() &&
-           (raw.back() == '\n' || raw.back() == '\r' ||
-            raw.back() == ' ' || raw.back() == '\t')) {
-        raw.pop_back();
-    }
-
-    return raw;
+    WIN32_FIND_DATAW findData;
+    HANDLE h = FindFirstFileW(L"Z:\\sys\\class\\net\\*", &findData);
+    if (h == INVALID_HANDLE_VALUE) return "";
+    std::string result;
+    do {
+        std::wstring name = findData.cFileName;
+        if (name == L"." || name == L".." || name == L"lo") continue;
+        std::wstring addrPath = L"Z:\\sys\\class\\net\\" + name + L"\\address";
+        std::string mac = ReadUnixFileDirect(addrPath);
+        if (!mac.empty() && mac != "00:00:00:00:00:00") {
+            result = mac;
+            break;
+        }
+    } while (FindNextFileW(h, &findData));
+    FindClose(h);
+    return result;
 }
 
 // ============================================================================
@@ -1052,54 +627,19 @@ static std::string ExtractJsonStringField(const std::string& json, const std::st
 
 static CloudMetadataResult QueryCloudMetadataAWS(DWORD timeoutMs) {
     CloudMetadataResult result;
-    const ULONGLONG start = GetTickCount64();
-
     std::string token;
-
-    HttpGetMetadata(
-        L"169.254.169.254",
-        L"/latest/api/token",
-        L"PUT",
-        L"X-aws-ec2-metadata-token-ttl-seconds: 21600\r\n",
-        token,
-        timeoutMs);
-
-    const ULONGLONG elapsed = GetTickCount64() - start;
-
-    if (elapsed >= timeoutMs) {
-        return CloudMetadataResult{};
-    }
-
-    const DWORD remaining =
-        static_cast<DWORD>(timeoutMs - elapsed);
-
+    HttpGetMetadata(L"169.254.169.254", L"/latest/api/token", L"PUT",
+        L"X-aws-ec2-metadata-token-ttl-seconds: 21600\r\n", token, timeoutMs);
     std::wstring authHeader;
-    if (!token.empty()) {
-        authHeader =
-            L"X-aws-ec2-metadata-token: " +
-            Utf8ToWide(token) +
-            L"\r\n";
-    }
-
+    if (!token.empty()) authHeader = L"X-aws-ec2-metadata-token: " + Utf8ToWide(token) + L"\r\n";
     std::string instanceId;
-
-    bool ok = HttpGetMetadata(
-        L"169.254.169.254",
-        L"/latest/meta-data/instance-id",
-        L"GET",
-        token.empty() ? nullptr : authHeader.c_str(),
-        instanceId,
-        remaining);
-
-    if (ok &&
-        !instanceId.empty() &&
-        instanceId.compare(0, 2, "i-") == 0) {
-
+    bool ok = HttpGetMetadata(L"169.254.169.254", L"/latest/meta-data/instance-id", L"GET",
+        token.empty() ? nullptr : authHeader.c_str(), instanceId, timeoutMs);
+    if (ok && !instanceId.empty() && instanceId.compare(0, 2, "i-") == 0) {
         result.available = true;
         result.provider = "AWS";
         result.instanceId = instanceId;
     }
-
     return result;
 }
 
@@ -1134,177 +674,14 @@ static CloudMetadataResult QueryCloudMetadataGCP(DWORD timeoutMs) {
     return result;
 }
 
-
-
-
-static CloudMetadataResult QueryCloudMetadataOpenStackVersion(
-    const wchar_t* version,
-    DWORD timeoutMs) {
-
-    CloudMetadataResult result;
-    std::string body;
-
-    std::wstring path =
-        L"/openstack/" + std::wstring(version) + L"/meta_data.json";
-
-    bool ok = HttpGetMetadata(
-        L"169.254.169.254",
-        path.c_str(),
-        L"GET",
-        nullptr,
-        body,
-        timeoutMs);
-
-    if (ok) {
-        std::string uuid = ExtractJsonStringField(body, "uuid");
-
-        if (!uuid.empty()) {
-            result.available = true;
-            result.provider = "OPENSTACK";
-            result.instanceId = uuid;
-        }
-    }
-
-    return result;
-}
-
-static CloudMetadataResult QueryCloudMetadataOpenStack(DWORD timeoutMs) {
-    // Keep the TOTAL OpenStack work within this round's timeout budget.
-    // The fallback receives only the time remaining after the "latest"
-    // version probe, rather than another full timeoutMs.
-    const ULONGLONG start = GetTickCount64();
-
-    CloudMetadataResult result =
-        QueryCloudMetadataOpenStackVersion(L"latest", timeoutMs);
-
-    if (result.available) {
-        return result;
-    }
-
-    const ULONGLONG elapsed = GetTickCount64() - start;
-
-    if (elapsed >= timeoutMs) {
-        return CloudMetadataResult{};
-    }
-
-    const DWORD remaining =
-        static_cast<DWORD>(timeoutMs - elapsed);
-
-    return QueryCloudMetadataOpenStackVersion(
-        L"2018-08-27",
-        remaining);
-}
-
-
-
-static CloudMetadataResult QueryCloudMetadataOracle(DWORD timeoutMs) {
-    CloudMetadataResult result;
-    std::string instanceId;
-
-    bool ok = HttpGetMetadata(
-        L"169.254.169.254",
-        L"/opc/v2/instance/id",
-        L"GET",
-        L"Authorization: Bearer Oracle\r\n",
-        instanceId,
-        timeoutMs);
-
-    if (ok && !instanceId.empty()) {
-        result.available = true;
-        result.provider = "ORACLE";
-        result.instanceId = instanceId;
-    }
-
-    return result;
-}
-
-
-
-
-static CloudMetadataResult QueryCloudMetadataDigitalOcean(DWORD timeoutMs) {
-    CloudMetadataResult result;
-    std::string instanceId;
-
-    bool ok = HttpGetMetadata(
-        L"169.254.169.254",
-        L"/metadata/v1/id",
-        L"GET",
-        nullptr,
-        instanceId,
-        timeoutMs);
-
-    if (ok && !instanceId.empty()) {
-        result.available = true;
-        result.provider = "DIGITALOCEAN";
-        result.instanceId = instanceId;
-    }
-
-    return result;
-}
-
-
-
-
-
-
-
-static CloudMetadataResult QueryCloudMetadataRound(DWORD timeoutMs) {
-    CloudMetadataResult results[6];
-
-    std::thread t0([&]() {
-        results[0] = QueryCloudMetadataAWS(timeoutMs);
-    });
-
-    std::thread t1([&]() {
-        results[1] = QueryCloudMetadataAzure(timeoutMs);
-    });
-
-    std::thread t2([&]() {
-        results[2] = QueryCloudMetadataGCP(timeoutMs);
-    });
-
-    std::thread t3([&]() {
-        results[3] = QueryCloudMetadataOpenStack(timeoutMs);
-    });
-
-    std::thread t4([&]() {
-        results[4] = QueryCloudMetadataOracle(timeoutMs);
-    });
-
-    std::thread t5([&]() {
-        results[5] = QueryCloudMetadataDigitalOcean(timeoutMs);
-    });
-
-    t0.join();
-    t1.join();
-    t2.join();
-    t3.join();
-    t4.join();
-    t5.join();
-
-    for (const auto& result : results) {
-        if (result.available) {
-            return result;
-        }
-    }
-
-    return CloudMetadataResult{};
-}
-
 static CloudMetadataResult QueryCloudMetadata() {
-    const DWORD timeouts[] = { 300, 500, 1000, 2000 };
-
-    for (DWORD timeoutMs : timeouts) {
-        CloudMetadataResult result = QueryCloudMetadataRound(timeoutMs);
-
-        if (result.available) {
-            return result;
-        }
-    }
-
-    // No supported metadata provider responded within the bounded retry
-    // budget. Continue normally; CLOUD_INSTANCE_ID remains missing.
-    return CloudMetadataResult{};
+    const DWORD timeoutMs = 700;
+    CloudMetadataResult r = QueryCloudMetadataAWS(timeoutMs);
+    if (r.available) return r;
+    r = QueryCloudMetadataAzure(timeoutMs);
+    if (r.available) return r;
+    r = QueryCloudMetadataGCP(timeoutMs);
+    return r;
 }
 
 // ============================================================================
@@ -1321,6 +698,8 @@ static IdentityRecord CollectMacIdentity(bool* gotAny) {
         "/usr/sbin/ioreg -d2 -c IOPlatformExpertDevice 2>/dev/null | awk -F'\\\"' '/IOPlatformUUID/{print $(NF-1)}'; "
         "echo ===SERIAL===; "
         "/usr/sbin/ioreg -d2 -c IOPlatformExpertDevice 2>/dev/null | awk -F'\\\"' '/IOPlatformSerialNumber/{print $(NF-1)}'; "
+        "echo ===MAC===; "
+        "/sbin/ifconfig en0 2>/dev/null | awk '/ether/{print $2}'; "
         "echo ===MODEL===; "
         "/usr/sbin/sysctl -n hw.model 2>/dev/null; "
         "echo ===CPU===; "
@@ -1332,6 +711,7 @@ static IdentityRecord CollectMacIdentity(bool* gotAny) {
 
     r.macPlatformUuid = MakeSignalUtf8(L"MAC_PLATFORM_UUID", parsed.count("UUID") ? parsed["UUID"] : "");
     r.macPlatformSerial = MakeSignalUtf8(L"MAC_PLATFORM_SERIAL", parsed.count("SERIAL") ? parsed["SERIAL"] : "");
+    r.macPrimaryMac = MakeSignalUtf8(L"MAC_PRIMARY_MAC", parsed.count("MAC") ? parsed["MAC"] : "");
     r.macModel = MakeSignalUtf8(L"MAC_MODEL", parsed.count("MODEL") ? parsed["MODEL"] : "");
     r.macCpuBrand = MakeSignalUtf8(L"MAC_CPU_BRAND", parsed.count("CPU") ? parsed["CPU"] : "");
 
@@ -1434,6 +814,9 @@ static bool HasAtLeastCoreIdentity(const IdentityRecord& r) {
             if (r.cloudInstanceId.valid) return true;
             const bool uuid = r.macPlatformUuid.valid;
             const bool serial = r.macPlatformSerial.valid;
+            const bool mac = r.macPrimaryMac.valid;
+            if (uuid && (serial || mac)) return true;
+            if (serial && mac) return true;
             // NOTE: macModel/macCpuBrand are deliberately NOT used here,
             // on reflection - same reasoning as WineLinux's
             // linuxBoardVendor below. hw.model (e.g. "MacBookPro18,3") and
@@ -1529,6 +912,7 @@ static std::wstring Canonicalize(const IdentityRecord& r) {
             ss << L"PROFILE=MACOS_WINE\nVERSION=1\n";
             AppendSignal(ss, r.macPlatformUuid);
             AppendSignal(ss, r.macPlatformSerial);
+            AppendSignal(ss, r.macPrimaryMac);
             AppendSignal(ss, r.macModel);
             AppendSignal(ss, r.macCpuBrand);
             AppendSignal(ss, r.cloudInstanceId);
@@ -1956,9 +1340,9 @@ static IdentityRecord CollectIdentity(bool* wmiOk) {
     r.baseboardSerial = MakeSignal(L"BASEBOARD_SERIAL", wmi.QueryFirst(L"Win32_BaseBoard", L"SerialNumber"));
     r.biosSerial = MakeSignal(L"BIOS_SERIAL", wmi.QueryFirst(L"Win32_BIOS", L"SerialNumber"));
     r.cpuId = MakeSignal(L"CPU_ID", wmi.QueryFirst(L"Win32_Processor", L"ProcessorId"));
-    r.diskSerial = MakeSignal(L"DISK_SERIAL", QuerySystemDiskSerial());
+    r.diskSerial = MakeSignal(L"DISK_SERIAL", wmi.QueryFirst(L"Win32_DiskDrive", L"SerialNumber"));
     r.machineGuid = MakeSignal(L"MACHINE_GUID", ReadMachineGuid());
-    r.macAddress = MakeSignal(L"MAC_ADDRESS", wmi.QueryPermanentMacAddress());
+    r.macAddress = MakeSignal(L"MAC_ADDRESS", wmi.QueryFirstEnabledMac());
     r.manufacturer = MakeSignal(L"MANUFACTURER", wmi.QueryFirst(L"Win32_ComputerSystemProduct", L"Vendor"));
     r.family = MakeSignal(L"FAMILY", wmi.QueryFirst(L"Win32_ComputerSystem", L"SystemFamily"));
     r.product = MakeSignal(L"PRODUCT", wmi.QueryFirst(L"Win32_ComputerSystemProduct", L"Name"));
