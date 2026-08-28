@@ -79,7 +79,16 @@ struct IdentityRecord {
     Signal cpuId;
     Signal diskSerial;
     Signal machineGuid;
-    Signal macAddress;
+    // macAddress REMOVED (2026): QueryFirstEnabledMac() returned whichever
+    // IPEnabled=TRUE network adapter WMI's own internal enumeration
+    // happened to list first - not guaranteed stable across reboots if
+    // more than one adapter is active simultaneously (very common:
+    // Ethernet + Wi-Fi, or a VPN virtual adapter, both enabled at once).
+    // Independently, Windows 10/11's own "Random hardware addresses"
+    // Wi-Fi privacy feature can rotate the MAC address itself regardless
+    // of enumeration order. Neither problem can be fixed with certainty,
+    // so removed entirely rather than papered over - same reasoning as
+    // the macOS/Linux MAC removals above.
     Signal manufacturer;
     Signal family;
     Signal product;
@@ -89,14 +98,31 @@ struct IdentityRecord {
     // ---- macOS-under-Wine signals (see CollectMacIdentity) ----
     Signal macPlatformUuid;      // IOPlatformUUID - closest Mac equivalent of System UUID
     Signal macPlatformSerial;    // IOPlatformSerialNumber
-    Signal macPrimaryMac;        // built-in Ethernet MAC (en0)
+    // macPrimaryMac REMOVED (2026): MAC address is not a stable identity
+    // signal - beyond the interface-enumeration-order bug that motivated
+    // this whole review, macOS's own "Private Wi-Fi Address" feature
+    // (default-on since Monterey) actively rotates the MAC address that
+    // en0 reports for Wi-Fi, independent of any ordering fix. No amount
+    // of code here can make a randomized value stable, so it is removed
+    // rather than papered over.
     Signal macModel;             // hw.model - corroboration only
     Signal macCpuBrand;          // machdep.cpu.brand_string - corroboration only
 
     // ---- Linux-under-Wine signals (see CollectLinuxIdentity) ----
     Signal linuxMachineId;       // /etc/machine-id - world-readable, but CAN be cloned in VM templates
     Signal linuxProductUuid;     // /sys/class/dmi/id/product_uuid - strong, usually root-only
-    Signal linuxPrimaryMac;      // first non-loopback interface's MAC via /sys/class/net
+    // linuxPrimaryMac REMOVED (2026): was selected via directory-listing
+    // enumeration order of /sys/class/net/* (FindFirstFileW/FindNextFileW),
+    // which is NOT guaranteed stable across reboots - network interface
+    // discovery/registration order can change with kernel/udev/driver
+    // timing, causing the "first" interface found to differ from one boot
+    // to the next and silently changing the whole machine_id. Even a
+    // fixed, order-independent interface selection would not fully solve
+    // this either, since many modern Linux distros randomize MAC
+    // addresses for Wi-Fi by default (NetworkManager's MAC randomization,
+    // widely enabled) - a second, independent source of instability that
+    // has nothing to do with enumeration order. Removed entirely rather
+    // than replaced with a still-imperfect fix.
     Signal linuxBoardVendor;     // VM/cloud-provider detection hint only
 
     // ---- Cloud metadata (WindowsVM, WineMacOS, WineLinux) - the strongest
@@ -216,12 +242,6 @@ public:
         return QueryFirstInternal(query, propertyName, false);
     }
 
-    std::wstring QueryFirstEnabledMac() {
-        if (!services_) return L"";
-        return QueryFirstInternal(
-            L"SELECT MACAddress FROM Win32_NetworkAdapterConfiguration WHERE IPEnabled=TRUE",
-            L"MACAddress", false);
-    }
 
     std::wstring QueryFirstEnabledIp() {
         if (!services_) return L"";
@@ -301,6 +321,48 @@ private:
         enumerator->Release();
         return result;
     }
+
+    // Finds the SerialNumber of the PHYSICAL disk that actually contains
+    // the Windows system volume (%SystemDrive%, e.g. "C:"), via the
+    // standard WMI associator chain: Win32_LogicalDisk (the drive letter)
+    // -> Win32_DiskPartition (via Win32_LogicalDiskToPartition) ->
+    // Win32_DiskDrive (via Win32_DiskDriveToDiskPartition). This is
+    // deliberately NOT "just take the first Win32_DiskDrive result" - on
+    // a multi-disk machine, WMI's own enumeration order for
+    // Win32_DiskDrive is not guaranteed stable across reboots, so
+    // "whichever disk happened to be listed first" could silently point
+    // at a different physical disk (and therefore a different serial
+    // number, and therefore a different machine_id) after a reboot. The
+    // serial number itself (Win32_DiskDrive.SerialNumber) is a genuinely
+    // good per-device identity value - the manufacturer's own physical
+    // media identifier - the only real problem was ever WHICH disk got
+    // selected, never the value once correctly selected.
+public:
+    std::wstring QuerySystemDiskSerial() {
+        if (!services_) return L"";
+
+        wchar_t sysDrive[16] = {};
+        DWORD len = GetEnvironmentVariableW(L"SystemDrive", sysDrive, 16);
+        std::wstring driveLetter = (len > 0 && len < 16) ? sysDrive : L"C:";
+        // Normalize to exactly "C:" form (no trailing backslash) to match
+        // Win32_LogicalDisk.DeviceID's format exactly.
+        if (!driveLetter.empty() && driveLetter.back() == L'\\') driveLetter.pop_back();
+
+        std::wstring partitionQuery =
+            L"ASSOCIATORS OF {Win32_LogicalDisk.DeviceID='" + driveLetter + L"'} "
+            L"WHERE AssocClass=Win32_LogicalDiskToPartition ResultClass=Win32_DiskPartition";
+        std::wstring partitionDeviceId = QueryFirstInternal(partitionQuery, L"DeviceID", false);
+        if (partitionDeviceId.empty()) return L"";
+
+        // DeviceID values like "Disk #0, Partition #1" contain characters
+        // (#, comma, space) that are valid inside WQL string literals as-is
+        // - no escaping needed for this specific associator syntax.
+        std::wstring diskQuery =
+            L"ASSOCIATORS OF {Win32_DiskPartition.DeviceID='" + partitionDeviceId + L"'} "
+            L"WHERE AssocClass=Win32_DiskDriveToDiskPartition ResultClass=Win32_DiskDrive";
+        return QueryFirstInternal(diskQuery, L"SerialNumber", false);
+    }
+private:
 };
 
 static std::wstring ReadMachineGuid() {
@@ -502,12 +564,25 @@ static std::map<std::string, std::string> ParseMarkedSections(const std::string&
 }
 
 // Returns "Darwin", "Linux", or "" if undetermined.
+// Detects the Wine host OS via Wine's own official ntdll.dll export
+// wine_get_host_version(const char** sysname, const char** release) -
+// documented by Wine as a thin wrapper over the host's own uname(), and
+// exactly what wine_get_host_version reports as "Darwin" on macOS. This
+// replaces an earlier implementation that shelled out to run `uname -s`
+// as a separate process - using the exported function directly is faster
+// (no process spawn), and more reliable (no dependency on the shell/PATH
+// environment being sane). Follows the identical
+// GetModuleHandleA+GetProcAddress pattern already used by IsWine() below.
 static std::string DetectWineHostOS() {
-    std::string output;
-    if (!RunHostShellCommand("echo ===OS===; uname -s", output, 3000)) return "";
-    auto parsed = ParseMarkedSections(output);
-    auto it = parsed.find("OS");
-    return (it != parsed.end()) ? it->second : "";
+    HMODULE ntdll = GetModuleHandleA("ntdll.dll");
+    if (!ntdll) return "";
+    typedef void (__cdecl *WineGetHostVersionFn)(const char** sysname, const char** release);
+    auto fn = reinterpret_cast<WineGetHostVersionFn>(GetProcAddress(ntdll, "wine_get_host_version"));
+    if (!fn) return "";
+    const char* sysname = nullptr;
+    const char* release = nullptr;
+    fn(&sysname, &release);
+    return sysname ? std::string(sysname) : "";
 }
 
 // ============================================================================
@@ -535,24 +610,14 @@ static std::string ReadUnixFileDirect(const std::wstring& zPath) {
 
 // Enumerates /sys/class/net/* (world-readable, no process spawn needed) to
 // find the first real (non-loopback, non-zero) interface's MAC address.
-static std::string ReadPrimaryLinuxMac() {
-    WIN32_FIND_DATAW findData;
-    HANDLE h = FindFirstFileW(L"Z:\\sys\\class\\net\\*", &findData);
-    if (h == INVALID_HANDLE_VALUE) return "";
-    std::string result;
-    do {
-        std::wstring name = findData.cFileName;
-        if (name == L"." || name == L".." || name == L"lo") continue;
-        std::wstring addrPath = L"Z:\\sys\\class\\net\\" + name + L"\\address";
-        std::string mac = ReadUnixFileDirect(addrPath);
-        if (!mac.empty() && mac != "00:00:00:00:00:00") {
-            result = mac;
-            break;
-        }
-    } while (FindNextFileW(h, &findData));
-    FindClose(h);
-    return result;
-}
+// ReadPrimaryLinuxMac() REMOVED (2026) - was reading /sys/class/net/*
+// via FindFirstFileW/FindNextFileW directory enumeration and taking
+// whichever non-loopback interface happened to appear FIRST in that
+// listing order. That order is not guaranteed stable across reboots
+// (kernel/udev/driver interface-registration timing can vary), so the
+// whole machine_id could silently change on reboot. See the
+// linuxPrimaryMac field removal note above for the full reasoning
+// (including MAC randomization as a second, independent problem).
 
 // ============================================================================
 // Cloud provider metadata service (AWS/Azure/GCP) - the strongest possible
@@ -698,8 +763,6 @@ static IdentityRecord CollectMacIdentity(bool* gotAny) {
         "/usr/sbin/ioreg -d2 -c IOPlatformExpertDevice 2>/dev/null | awk -F'\\\"' '/IOPlatformUUID/{print $(NF-1)}'; "
         "echo ===SERIAL===; "
         "/usr/sbin/ioreg -d2 -c IOPlatformExpertDevice 2>/dev/null | awk -F'\\\"' '/IOPlatformSerialNumber/{print $(NF-1)}'; "
-        "echo ===MAC===; "
-        "/sbin/ifconfig en0 2>/dev/null | awk '/ether/{print $2}'; "
         "echo ===MODEL===; "
         "/usr/sbin/sysctl -n hw.model 2>/dev/null; "
         "echo ===CPU===; "
@@ -711,7 +774,7 @@ static IdentityRecord CollectMacIdentity(bool* gotAny) {
 
     r.macPlatformUuid = MakeSignalUtf8(L"MAC_PLATFORM_UUID", parsed.count("UUID") ? parsed["UUID"] : "");
     r.macPlatformSerial = MakeSignalUtf8(L"MAC_PLATFORM_SERIAL", parsed.count("SERIAL") ? parsed["SERIAL"] : "");
-    r.macPrimaryMac = MakeSignalUtf8(L"MAC_PRIMARY_MAC", parsed.count("MAC") ? parsed["MAC"] : "");
+    // MAC_PRIMARY_MAC removed - see field declaration comment above.
     r.macModel = MakeSignalUtf8(L"MAC_MODEL", parsed.count("MODEL") ? parsed["MODEL"] : "");
     r.macCpuBrand = MakeSignalUtf8(L"MAC_CPU_BRAND", parsed.count("CPU") ? parsed["CPU"] : "");
 
@@ -735,7 +798,7 @@ static IdentityRecord CollectLinuxIdentity(bool* gotAny) {
 
     r.linuxMachineId = MakeSignalUtf8(L"LINUX_MACHINE_ID", ReadUnixFileDirect(L"Z:\\etc\\machine-id"));
     r.linuxProductUuid = MakeSignalUtf8(L"LINUX_PRODUCT_UUID", ReadUnixFileDirect(L"Z:\\sys\\class\\dmi\\id\\product_uuid"));
-    r.linuxPrimaryMac = MakeSignalUtf8(L"LINUX_PRIMARY_MAC", ReadPrimaryLinuxMac());
+    // LINUX_PRIMARY_MAC removed - see field declaration comment above.
     r.linuxBoardVendor = MakeSignalUtf8(L"LINUX_BOARD_VENDOR", ReadUnixFileDirect(L"Z:\\sys\\class\\dmi\\id\\board_vendor"));
 
     CloudMetadataResult cloud = QueryCloudMetadata();
@@ -757,13 +820,12 @@ static bool HasAtLeastCoreIdentity(const IdentityRecord& r) {
             const bool cpu = r.cpuId.valid;
             const bool disk = r.diskSerial.valid;
             const bool guid = r.machineGuid.valid;
-            const bool mac = r.macAddress.valid;
-            if (uuid && (board || bios || disk || systemSerial || mac)) return true;
-            if (systemSerial && (board || bios || disk || mac)) return true;
-            if (board && (bios || disk || uuid || systemSerial || mac)) return true;
-            if (bios && (board || uuid || systemSerial || disk || mac)) return true;
-            if (mac && (board || bios || disk || uuid || systemSerial)) return true;
-            if (guid && (uuid || systemSerial || board || bios || disk || cpu || mac)) return true;
+            // macAddress removed - see field declaration comment above.
+            if (uuid && (board || bios || disk || systemSerial)) return true;
+            if (systemSerial && (board || bios || disk)) return true;
+            if (board && (bios || disk || uuid || systemSerial)) return true;
+            if (bios && (board || uuid || systemSerial || disk)) return true;
+            if (guid && (uuid || systemSerial || board || bios || disk || cpu)) return true;
             return false;
         }
 
@@ -800,7 +862,7 @@ static bool HasAtLeastCoreIdentity(const IdentityRecord& r) {
             // signals in total.
             int strongSignals = 0;
             if (IsPlausibleUuid(r.systemUuid.value)) strongSignals++;
-            if (r.macAddress.valid) strongSignals++;
+            // macAddress removed - see field declaration comment above.
             if (r.systemSerial.valid) strongSignals++;
             if (r.baseboardSerial.valid) strongSignals++;
             if (r.biosSerial.valid) strongSignals++;
@@ -812,11 +874,13 @@ static bool HasAtLeastCoreIdentity(const IdentityRecord& r) {
 
         case PlatformKind::WineMacOS: {
             if (r.cloudInstanceId.valid) return true;
-            const bool uuid = r.macPlatformUuid.valid;
-            const bool serial = r.macPlatformSerial.valid;
-            const bool mac = r.macPrimaryMac.valid;
-            if (uuid && (serial || mac)) return true;
-            if (serial && mac) return true;
+            // MAC (formerly used as corroboration alongside uuid/serial)
+            // removed - see field declaration comment. IOPlatformUUID and
+            // IOPlatformSerialNumber are each independently strong,
+            // per-device signals in their own right, so either one alone
+            // is now sufficient.
+            if (r.macPlatformUuid.valid) return true;
+            if (r.macPlatformSerial.valid) return true;
             // NOTE: macModel/macCpuBrand are deliberately NOT used here,
             // on reflection - same reasoning as WineLinux's
             // linuxBoardVendor below. hw.model (e.g. "MacBookPro18,3") and
@@ -836,11 +900,19 @@ static bool HasAtLeastCoreIdentity(const IdentityRecord& r) {
 
         case PlatformKind::WineLinux: {
             if (r.cloudInstanceId.valid) return true;
-            const bool productUuid = r.linuxProductUuid.valid;
-            const bool machineId = r.linuxMachineId.valid;
-            const bool mac = r.linuxPrimaryMac.valid;
-            if (productUuid && (machineId || mac)) return true;
-            if (machineId && mac) return true;
+            // MAC removed (see above). Both remaining signals are now
+            // independently sufficient - CORRECTED after direct Wine
+            // testing showed requiring linuxProductUuid+linuxMachineId
+            // paired together left common real-world cases (product_uuid
+            // is very often root-only or entirely absent, e.g. inside
+            // containers) with NO valid acceptance path at all, which is
+            // a worse outcome than the documented VM-template-cloning
+            // risk of trusting machine_id alone - that risk is
+            // scenario-specific (only affects VMs deployed from a shared
+            // template), while the previous requirement broke the common
+            // case (an ordinary non-root Linux install) entirely.
+            if (r.linuxProductUuid.valid) return true;
+            if (r.linuxMachineId.valid) return true;
             // NOTE: linuxBoardVendor is deliberately NOT used here, unlike
             // the analogous extensions above for WindowsVM/WineMacOS. It is
             // too coarse to safely count toward acceptance even as
@@ -879,10 +951,10 @@ static std::wstring Canonicalize(const IdentityRecord& r) {
 
     switch (r.platform) {
         case PlatformKind::WindowsPhysical: {
-            ss << L"PROFILE=WINDOWS\nVERSION=1\n";
+            ss << L"PROFILE=WINDOWS\nVERSION=2\n";
             const Signal* signals[] = {
                 &r.systemUuid, &r.systemSerial, &r.baseboardSerial, &r.biosSerial,
-                &r.cpuId, &r.diskSerial, &r.machineGuid, &r.macAddress,
+                &r.cpuId, &r.diskSerial, &r.machineGuid,
                 &r.manufacturer, &r.family, &r.product, &r.sku
             };
             for (const Signal* s : signals) AppendSignal(ss, *s);
@@ -897,10 +969,10 @@ static std::wstring Canonicalize(const IdentityRecord& r) {
             // the accompanying research notes). Any license activated
             // under the OLD VM canonical format will need one-time
             // re-activation after this change.
-            ss << L"PROFILE=WINDOWS_VM\nVERSION=2\n";
+            ss << L"PROFILE=WINDOWS_VM\nVERSION=3\n";
             const Signal* signals[] = {
                 &r.systemUuid, &r.systemSerial, &r.baseboardSerial, &r.biosSerial,
-                &r.cpuId, &r.diskSerial, &r.machineGuid, &r.macAddress,
+                &r.cpuId, &r.diskSerial, &r.machineGuid,
                 &r.manufacturer, &r.family, &r.product, &r.sku
             };
             for (const Signal* s : signals) AppendSignal(ss, *s);
@@ -909,10 +981,10 @@ static std::wstring Canonicalize(const IdentityRecord& r) {
         }
 
         case PlatformKind::WineMacOS: {
-            ss << L"PROFILE=MACOS_WINE\nVERSION=1\n";
+            ss << L"PROFILE=MACOS_WINE\nVERSION=2\n";
             AppendSignal(ss, r.macPlatformUuid);
             AppendSignal(ss, r.macPlatformSerial);
-            AppendSignal(ss, r.macPrimaryMac);
+            // macPrimaryMac removed - see field declaration comment.
             AppendSignal(ss, r.macModel);
             AppendSignal(ss, r.macCpuBrand);
             AppendSignal(ss, r.cloudInstanceId);
@@ -920,10 +992,10 @@ static std::wstring Canonicalize(const IdentityRecord& r) {
         }
 
         case PlatformKind::WineLinux: {
-            ss << L"PROFILE=LINUX_WINE\nVERSION=1\n";
+            ss << L"PROFILE=LINUX_WINE\nVERSION=2\n";
             AppendSignal(ss, r.linuxMachineId);
             AppendSignal(ss, r.linuxProductUuid);
-            AppendSignal(ss, r.linuxPrimaryMac);
+            // linuxPrimaryMac removed - see field declaration comment.
             AppendSignal(ss, r.linuxBoardVendor);
             AppendSignal(ss, r.cloudInstanceId);
             break;
@@ -1340,9 +1412,9 @@ static IdentityRecord CollectIdentity(bool* wmiOk) {
     r.baseboardSerial = MakeSignal(L"BASEBOARD_SERIAL", wmi.QueryFirst(L"Win32_BaseBoard", L"SerialNumber"));
     r.biosSerial = MakeSignal(L"BIOS_SERIAL", wmi.QueryFirst(L"Win32_BIOS", L"SerialNumber"));
     r.cpuId = MakeSignal(L"CPU_ID", wmi.QueryFirst(L"Win32_Processor", L"ProcessorId"));
-    r.diskSerial = MakeSignal(L"DISK_SERIAL", wmi.QueryFirst(L"Win32_DiskDrive", L"SerialNumber"));
+    r.diskSerial = MakeSignal(L"DISK_SERIAL", wmi.QuerySystemDiskSerial());
     r.machineGuid = MakeSignal(L"MACHINE_GUID", ReadMachineGuid());
-    r.macAddress = MakeSignal(L"MAC_ADDRESS", wmi.QueryFirstEnabledMac());
+    // MAC_ADDRESS removed - see field declaration comment above.
     r.manufacturer = MakeSignal(L"MANUFACTURER", wmi.QueryFirst(L"Win32_ComputerSystemProduct", L"Vendor"));
     r.family = MakeSignal(L"FAMILY", wmi.QueryFirst(L"Win32_ComputerSystem", L"SystemFamily"));
     r.product = MakeSignal(L"PRODUCT", wmi.QueryFirst(L"Win32_ComputerSystemProduct", L"Name"));
