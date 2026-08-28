@@ -226,19 +226,39 @@ void CoordinatorCore::WorkerLoop()
         // Layer 1 (cheap, local-only clone/copy detection - see the
         // accompanying design discussion): before trusting a locally
         // cached lease AT ALL, confirm it was actually issued for THIS
-        // machine. A naively copied license file (machine_id spoofing not
-        // involved) fails this immediately and is treated exactly like
-        // "no valid local lease" - i.e. this machine behaves like a fresh
-        // install and must complete a real network verify before it can
-        // ever be trusted, which is also when Layer 2 (the rotating
-        // refresh token, server-side) gets its chance to catch a deeper
-        // clone where machine_id itself was also spoofed.
-        std::string localMachineIdForCheck;
+        // machine AND this device key. A naively copied license file
+        // (machine_id/device_key spoofing not involved) fails this
+        // immediately and is treated exactly like "no valid local lease" -
+        // i.e. this machine behaves like a fresh install and must
+        // complete a real network verify before it can ever be trusted,
+        // which is also when Layer 2 (VPS IP-binding, server-side) and the
+        // rotating refresh token mechanism get their chance to catch a
+        // deeper clone.
+        //
+        // IMPORTANT LIMITATION, stated plainly rather than left implicit:
+        // checking device_key_hash here does NOT add any real protection
+        // against a genuine full VM/disk clone (e.g. a VPS provider's
+        // self-service "Clone"/"Create Image" feature applied to an
+        // ALREADY Nutricula-activated instance) - in that scenario the
+        // device key file itself is copied byte-for-byte along with
+        // everything else on disk, so the clone's own freshly-computed
+        // device key hash is IDENTICAL to what's in the lease, same as
+        // machine_id above. This check exists for the SEPARATE, simpler
+        // case of someone copying just the lease file (or just the lease
+        // file + a mismatched/regenerated device key) without also
+        // copying the device key file - a real, if narrower, scenario
+        // this closes for free, since both values were already being
+        // read/computed anyway. It is deliberate defense-in-depth, not a
+        // solution to full-clone detection - that remains Layer 2's job.
+        std::string localMachineIdForCheck, localDeviceKeyHashForCheck;
         bool machineMatches = false;
         if (local.hasLease)
         {
-            if (MachineIdBridge::GenerateMachineId(localMachineIdForCheck))
-                machineMatches = (local.lease.machineId == localMachineIdForCheck);
+            bool gotMachineId = MachineIdBridge::GenerateMachineId(localMachineIdForCheck);
+            bool gotDeviceKeyHash = MachineIdBridge::GetDeviceKeyHash(localDeviceKeyHashForCheck);
+            machineMatches = gotMachineId && gotDeviceKeyHash &&
+                (local.lease.machineId == localMachineIdForCheck) &&
+                (local.lease.deviceKeyHash == localDeviceKeyHashForCheck);
         }
 
         // Layer 2 scheduling: the next request time is requested_at + a
