@@ -36,6 +36,18 @@ CREATE TABLE nutricula_licenses (
        last actually succeed" can be told apart. */
     last_success_time BIGINT UNSIGNED NULL,
 
+    /* --- VPS IP-Binding (audit/support only - 2026) ---
+       For device_type='windows_vm' licenses, the `machine_id` column above
+       already contains SHA-256("NUTRICULA_VPS_BIND_V1|"+raw_machine_id+
+       "|"+canonical_ip) - see nutricula_effective_machine_id() in
+       license_common.php, which is the ONLY thing any security decision
+       ever compares. vps_bound_ip below is NOT used in any authorization
+       check anywhere - it exists purely so support staff can see, in
+       plain text, which IP a VPS license was bound to when a customer
+       reports it broke, without which the opaque machine_id hash gives no
+       clue at all what actually changed. NULL for every non-VPS license. */
+    vps_bound_ip VARCHAR(45) NULL,
+
     /* --- Rotating single-use refresh token (Clone/Copy detection) ---
        current_refresh_token_hash: SHA-256 of the ONLY token this license
        currently accepts. Every successful verify rotates this to a fresh

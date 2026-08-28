@@ -475,6 +475,118 @@ function nutricula_client_ip(array $config): string
     return $remote;
 }
 
+/* ============================================================================
+   VPS IP-Binding (2026) - see the accompanying design discussion for the
+   full reasoning. Summary: for VPS installs specifically (device_type ===
+   'windows_vm'), the server-observed connection IP (nutricula_client_ip()
+   above - already Cloudflare-aware, NOT client-reported) is folded into
+   the machine_id used for DATABASE STORAGE AND COMPARISON ONLY.
+
+   CRITICAL DISTINCTION - do not blur these two things:
+   - The RAW client-reported machine_id (the $machineId variable everywhere
+     else in this codebase) is what goes into the signed lease canonical
+     sent back to the client - this MUST stay exactly as before, unchanged,
+     because the Coordinator's own Layer 1 defense (comparing the lease's
+     machine_id against its own freshly-computed local machine_id) depends
+     on this being the same raw value the client itself can reproduce. The
+     client never learns about, computes, or needs to know about the IP
+     augmentation at all.
+   - The EFFECTIVE machine_id (this function's output) is ONLY ever written
+     to / compared against the `machine_id` DATABASE COLUMN. It never
+     appears in any lease, challenge, or client-facing response.
+
+   This mirrors a design this project already tried once before in a
+   different form (folding client-REPORTED local_ip directly into the
+   machine_id hash) and deliberately reverted, per the comment on
+   $localIp above ("made machine_id unstable... IP proved unreliable").
+   That earlier attempt is NOT the same thing as this one: it trusted a
+   client-supplied value (trivially wrong/spoofable) and folded it into a
+   hash the CLIENT itself also had to reproduce identically forever after
+   (impossible, since the client cannot know its own public inbound IP).
+   This version instead uses a SERVER-OBSERVED value (the actual TCP
+   connection's source IP - not attacker-controllable without genuinely
+   controlling that network path) and only the SERVER ever needs to
+   reproduce the computation - the client's own hash never changes.
+   ============================================================================ */
+
+/** Canonicalizes an IP address to a single, unambiguous string form, so the
+    exact same physical address always hashes identically regardless of
+    which textual representation arrived (e.g. an IPv4-mapped IPv6 address
+    like "::ffff:1.2.3.4" and plain "1.2.3.4" are the same underlying
+    address and MUST canonicalize to the same string, or a VPS-bound
+    license would break the very first time the web server's dual-stack
+    socket layer happened to report the address in the other form).
+    Returns '' if the input is not a valid IP at all - callers must treat
+    an empty result as "no valid IP available", never fall back to the
+    raw input. */
+function nutricula_canonicalize_ip(string $ip): string
+{
+    $binary = @inet_pton($ip);
+    if ($binary === false) return '';
+    // IPv4-mapped IPv6 (::ffff:a.b.c.d, the 12-byte prefix below) is the
+    // exact same address as plain IPv4 a.b.c.d - collapse it down so both
+    // representations of the identical connection produce one canonical
+    // form.
+    if (strlen($binary) === 16 && substr($binary, 0, 12) === "\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\xff\xff") {
+        $binary = substr($binary, 12);
+    }
+    $canonical = @inet_ntop($binary);
+    return $canonical === false ? '' : $canonical;
+}
+
+/** Whether this device_type value should have its machine_id bound to the
+    server-observed connection IP at all. Currently only windows_vm - see
+    the design discussion for why macos_wine/linux_wine (Wine-hosted, could
+    be a real desktop, not necessarily a rented VPS) and windows (a real
+    physical machine's IP genuinely does change routinely - home ISP
+    reconnects, laptop travel - with no attacker involved at all) are
+    deliberately excluded. Centralized here as the single source of truth
+    for which device_type values this applies to, rather than repeating
+    the string comparison at every call site. */
+function nutricula_is_vps_device_type(string $deviceType): bool
+{
+    return $deviceType === 'windows_vm';
+}
+
+/** THE core VPS IP-binding computation - see the block comment above this
+    section for the full design and the critical raw-vs-effective
+    distinction. For any device_type nutricula_is_vps_device_type() does
+    not recognize, returns $rawMachineId completely unchanged (byte for
+    byte) - every existing non-VPS code path is a no-op under this
+    function, by construction, not by accident.
+
+    For a VPS device_type: canonicalizes $observedIp and, only if that
+    succeeds, returns a NEW 64-hex-char value: SHA-256 of
+    "NUTRICULA_VPS_BIND_V1|{$rawMachineId}|{$canonicalIp}" (uppercase hex,
+    matching this codebase's existing machine_id formatting convention
+    throughout). The literal "NUTRICULA_VPS_BIND_V1|" prefix is domain
+    separation - without it, e.g. a raw machine_id ending in "1" concatenated
+    with an IP starting in "2.3.4.5" is byte-identical to a differently
+    split raw machine_id + IP pair; the labeled, pipe-delimited prefix
+    removes that ambiguity structurally, the same convention already used
+    throughout this file's other canonical-string constructions (license
+    lease canonicals, etc.) - not a new pattern introduced just for this.
+
+    If $observedIp cannot be canonicalized to a valid IP at all (should be
+    essentially unreachable in practice, since nutricula_client_ip() already
+    validates REMOTE_ADDR upstream - kept as defense in depth, e.g. against
+    some future refactor of the caller), returns '' - callers MUST treat
+    this as "can never match anything, reject" and must NEVER silently fall
+    back to $rawMachineId for a VPS device_type in that case; doing so would
+    quietly disable this entire binding for exactly the failure case it
+    exists to be strict about. */
+function nutricula_effective_machine_id(string $deviceType, string $rawMachineId, string $observedIp): string
+{
+    if (!nutricula_is_vps_device_type($deviceType)) {
+        return $rawMachineId;
+    }
+    $canonicalIp = nutricula_canonicalize_ip($observedIp);
+    if ($canonicalIp === '') {
+        return '';
+    }
+    return strtoupper(hash('sha256', "NUTRICULA_VPS_BIND_V1|{$rawMachineId}|{$canonicalIp}"));
+}
+
 /* Simple DDoS-mitigation rate limit: a fixed 60-second window counter per
    (client IP, endpoint name), backed by nutricula_rate_limits. Applied as
    the FIRST thing every customer-facing endpoint does, before any

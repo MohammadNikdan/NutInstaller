@@ -129,7 +129,16 @@ try {
 
     $licenseDbId = (int)$license['id'];
 
-    if (!hash_equals((string)$license['machine_id'], $machineId)) {
+    /* VPS IP-Binding - see nutricula_effective_machine_id()'s doc comment
+       in license_common.php. $machineId stays the raw, client-reported
+       value everywhere else below (including the signed lease canonical
+       further down) - only this comparison uses the effective (possibly
+       IP-augmented) form. For any non-VPS device_type, this function
+       returns $machineId completely unchanged, so this check is byte-for-
+       byte identical to the pre-existing behavior for every license that
+       isn't device_type='windows_vm'. */
+    $effectiveMachineId = nutricula_effective_machine_id((string)$license['device_type'], $machineId, $observedIp);
+    if ($effectiveMachineId === '' || !hash_equals((string)$license['machine_id'], $effectiveMachineId)) {
         nutricula_reject($config, 'machine_mismatch');
     }
     if (!hash_equals((string)$license['device_public_key_hash'], $deviceKeyHash)) {

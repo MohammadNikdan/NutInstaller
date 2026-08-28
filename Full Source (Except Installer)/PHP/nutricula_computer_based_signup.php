@@ -76,6 +76,26 @@ try {
        above for why. */
     $deviceType = $platformProfile !== '' ? strtolower($platformProfile) : 'unknown';
 
+    /* VPS IP-Binding - see nutricula_effective_machine_id()'s own doc
+       comment in license_common.php for the full design. $machineId
+       (raw, client-reported) stays untouched everywhere else in this
+       file, including the signed lease canonical below - only
+       $effectiveMachineId (this new value) ever gets written to the
+       machine_id DATABASE column. */
+    $effectiveMachineId = nutricula_effective_machine_id($deviceType, $machineId, $observedIp);
+    if ($effectiveMachineId === '') {
+        // Only reachable for a VPS device_type whose observed connection IP
+        // failed to canonicalize - see the function's doc comment. Fail
+        // closed: never silently activate a VPS install without a real IP
+        // binding in place. No transaction is open yet at this point in the
+        // flow, so no rollback() is needed here (unlike the later
+        // rejections below, which run inside begin_transaction()).
+        nutricula_reject($config, 'vps_ip_unavailable');
+    }
+    // Audit-only, NEVER used in any security decision - see the column
+    // comment in schema.sql.
+    $vpsBoundIp = nutricula_is_vps_device_type($deviceType) ? nutricula_canonicalize_ip($observedIp) : null;
+
     $saleInfo = nutricula_find_edd_sale($config, $email, $purchaseKey);
     $productId = (int)$saleInfo['product_id'];
     $productName = (string)$saleInfo['product_name'];
@@ -114,7 +134,7 @@ try {
            capitalization at signup vs. now. */
         if (strcasecmp((string)$existing['user_email'], $email) !== 0 ||
             (int)$existing['product_id'] !== $productId ||
-            !hash_equals((string)$existing['machine_id'], $machineId)) {
+            !hash_equals((string)$existing['machine_id'], $effectiveMachineId)) {
             // Note: device_public_key_hash is NOT compared here. The device
             // key is normally stable and reused as-is across activations on
             // the same computer (see MachineIdService.GetDevicePublicKey -
@@ -185,11 +205,11 @@ try {
         $update = $conn->prepare(
             'UPDATE nutricula_licenses
              SET machine_id=?, device_public_key_b64=?, device_public_key_hash=?,
-                 claimed_local_ip=?, last_observed_ip=?, last_seen_at=NOW()
+                 claimed_local_ip=?, last_observed_ip=?, vps_bound_ip=?, last_seen_at=NOW()
              WHERE id=?'
         );
         if (!$update) throw new RuntimeException('DB prepare failed.');
-        $update->bind_param('sssssi', $machineId, $devicePublicKey, $deviceKeyHash, $localIp, $observedIp, $licenseId);
+        $update->bind_param('ssssssi', $effectiveMachineId, $devicePublicKey, $deviceKeyHash, $localIp, $observedIp, $vpsBoundIp, $licenseId);
         if (!$update->execute()) throw new RuntimeException('DB update failed.');
         $update->close();
 
@@ -205,19 +225,19 @@ try {
              (license_uuid,user_email,purchase_key,product_id,product_name,machine_id,
               device_public_key_b64,device_public_key_hash,device_type,claimed_local_ip,
               first_observed_ip,last_observed_ip,license_issued_at,license_expires_at,
-              last_request_time,last_success_time,current_refresh_token_hash,status,activated_at,last_seen_at)
-             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,"active",NOW(),NOW())'
+              last_request_time,last_success_time,current_refresh_token_hash,vps_bound_ip,status,activated_at,last_seen_at)
+             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,"active",NOW(),NOW())'
         );
         if (!$insert) throw new RuntimeException('DB prepare failed.');
 
         $insert->bind_param(
-            'sssissssssssiiiis',
+            'sssissssssssiiiiss',
             $licenseUuid,
             $email,
             $purchaseKey,
             $productId,
             $productName,
-            $machineId,
+            $effectiveMachineId,
             $devicePublicKey,
             $deviceKeyHash,
             $deviceType,
@@ -228,7 +248,8 @@ try {
             $licenseExpires,
             $now,
             $now,
-            $newRefreshTokenHash
+            $newRefreshTokenHash,
+            $vpsBoundIp
         );
 
         try {
