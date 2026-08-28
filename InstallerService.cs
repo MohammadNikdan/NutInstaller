@@ -1235,6 +1235,18 @@ namespace NutriculaInstaller
                     case "license_expired":
                         return "This license has expired. Please renew your license to continue.";
 
+                    // VPS IP-Binding (2026): reached when this install was
+                    // detected as a VPS (device_type=windows_vm) but the
+                    // server could not determine a valid connecting IP to
+                    // bind the license to at all - should be essentially
+                    // unreachable in practice (nutricula_client_ip()
+                    // already validates REMOTE_ADDR before this point), so
+                    // this message stays generic rather than exposing the
+                    // internal reason.
+                    case "vps_ip_unavailable":
+                        return "This license could not be activated on this VPS right now. " +
+                               "Please try again in a moment, or contact Nutricula support if this continues.";
+
                     // Reaching too_early already required an exact match on
                     // email, purchase key, this computer's machine ID, AND its
                     // device key - i.e. genuinely being the license's existing,
@@ -1266,6 +1278,15 @@ namespace NutriculaInstaller
 
                     // See the security note above the method - these five are
                     // deliberately indistinguishable from each other.
+                    // NOTE (2026): this generic message now also covers a
+                    // re-signup on the same purchase key where a VPS
+                    // (device_type=windows_vm) license's bound connection
+                    // IP no longer matches - see nutricula_effective_
+                    // machine_id() in license_common.php. Deliberately kept
+                    // exactly as generic as every other case here already
+                    // was; NOT changed to mention IP/VPS specifically, so a
+                    // failed attempt reveals nothing about which underlying
+                    // check actually failed.
                     case "signup_identity_mismatch":
                     case "transfer_key_invalid":
                     case "transfer_key_already_used":
