@@ -98,22 +98,24 @@ std::atomic<bool> g_publicKeyLoaded{false};
 // 2026 rotating-refresh-token migration) so a single missed cycle never
 // falsely degrades the license, but short enough that a genuinely
 // broken/disabled Coordinator is noticed well within one billing period.
-// Recomputed with the same ~1.4x safety margin the original 75-minute
-// value used against its own 54-minute base (54*1.39=75) - here applied
-// to the new 50-minute worst case (50*1.4=70).
-constexpr long long STALE_COORDINATOR_DEGRADE_SECONDS = 70 * 60; // 70 minutes
-std::atomic<long long> g_lastVerifiedTierTime{0};
-
-long long NowUnixSeconds()
-{
-    FILETIME ft;
-    GetSystemTimeAsFileTime(&ft);
-    ULARGE_INTEGER v;
-    v.LowPart = ft.dwLowDateTime;
-    v.HighPart = ft.dwHighDateTime;
-    const unsigned long long EPOCH_DIFF_100NS = 116444736000000000ULL;
-    return static_cast<long long>((v.QuadPart - EPOCH_DIFF_100NS) / 10000000ULL);
-}
+// Recomputed with the same ~1.4x safety margin used before (was 50*1.4=70
+// for the old 50-minute worst case; now 15*1.4=21 for the new 15-minute
+// worst case - see the CoordinatorCore.cpp verify-window shrink from
+// 10:01-50:00 down to 4:00-15:00, part of the same 2026 clock-tampering
+// hardening work).
+//
+// Tracked via GetTickCount64() (system-boot-relative milliseconds), NOT
+// NowUnixSeconds() (the ordinary, settable wall clock) - g_lastVerifiedTierTime
+// is a plain in-process variable that naturally resets to 0 on every fresh
+// MT4/MT5 launch anyway, so it needs no disk persistence the way the
+// Coordinator's own ClockAnchor does, but comparing it against a
+// wall-clock timestamp would have the exact same tampering weakness this
+// whole feature exists to close: freezing/rewinding the system clock
+// would make g_lastVerifiedTierTime never look stale, so a broken/disabled
+// Coordinator's last-known tier would be trusted forever instead of
+// degrading to TIER_FREE within a bounded window.
+constexpr long long STALE_COORDINATOR_DEGRADE_SECONDS = 21 * 60; // 21 minutes
+std::atomic<unsigned long long> g_lastVerifiedTierTickMs{0};
 
 bool EnsurePublicKeyLoaded()
 {
@@ -221,8 +223,8 @@ extern "C" __declspec(dllexport) void __cdecl Nutricula_Poll()
         // repeatedly, or - the case explicitly worth suspecting - someone
         // deliberately tampering with it), the license state degrades to
         // TIER_FREE rather than staying licensed forever on stale trust.
-        long long lastVerified = g_lastVerifiedTierTime.load();
-        if (lastVerified != 0 && (NowUnixSeconds() - lastVerified) > STALE_COORDINATOR_DEGRADE_SECONDS)
+        unsigned long long lastVerifiedTick = g_lastVerifiedTierTickMs.load();
+        if (lastVerifiedTick != 0 && (GetTickCount64() - lastVerifiedTick) > static_cast<unsigned long long>(STALE_COORDINATOR_DEGRADE_SECONDS) * 1000ULL)
         {
             g_tier.store(TIER_FREE);
         }
@@ -252,7 +254,7 @@ extern "C" __declspec(dllexport) void __cdecl Nutricula_Poll()
         if (sigOk && status.tier == TIER_LICENSED)
         {
             g_tier.store(TIER_LICENSED);
-            g_lastVerifiedTierTime.store(NowUnixSeconds());
+            g_lastVerifiedTierTickMs.store(GetTickCount64());
         }
         else if (sigOk && status.tier == TIER_FREE)
         {
