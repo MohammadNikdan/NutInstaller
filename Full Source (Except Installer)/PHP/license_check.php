@@ -15,6 +15,24 @@ const CHECK_ALLOWED_FIELDS = [
     'refresh_token',
 ];
 const CHALLENGE_STAGE_FIELDS = ['v', 'stage', 'license_id', 'machine_id', 'device_key_hash', 'local_ip'];
+/* Free-tier telemetry (2026): a lightweight, unauthenticated check-in the
+   Coordinator sends periodically whenever it has NO usable local lease at
+   all (missing file, corrupt file, or a lease that failed Layer 1's
+   machine/device match) - i.e. whenever it is about to present TIER_FREE
+   locally with nothing else to report. Deliberately minimal: no
+   license_id (there may genuinely be none), no challenge/signature (there
+   is no license private key relationship to prove possession of anything
+   against - this is not an authorization request, just "a free-tier
+   install exists and is still running"). Still travels inside the same
+   mandatory GCM transport envelope as every other request (Transport Key),
+   so it is not readable in transit, but carries no cryptographic proof of
+   device ownership beyond that - by design, since nothing is being
+   authorized. See nutricula_track_unlicensed_checkin() for what gets
+   recorded, and the "reject reasons that map to TIER_FREE" handling below
+   for how a MISMATCHED-but-real lease (Layer 1 catches it locally, but the
+   Coordinator still owns a real license_id) is tracked through the
+   existing challenge/verify path instead of this one. */
+const FREE_CHECKIN_STAGE_FIELDS = ['v', 'stage', 'machine_id', 'device_key_hash'];
 /* build_id/ex5_hash/dll32_hash/dll64_hash/service_hash: Artifact Evidence
    (architecture points 47-49/88) - the Coordinator's own measured hashes of
    the currently-installed EX5/DLL32/DLL64/Service, bound into the SAME
@@ -81,8 +99,41 @@ try {
     if ((string)($fields['v'] ?? '') !== '3') throw new RuntimeException('Invalid protocol version.');
 
     $stage = trim(nutricula_required_field($fields, 'stage'));
-    if ($stage !== 'challenge' && $stage !== 'verify') {
+    if ($stage !== 'challenge' && $stage !== 'verify' && $stage !== 'free_checkin') {
         throw new RuntimeException('Invalid stage.');
+    }
+
+    if ($stage === 'free_checkin') {
+        foreach (array_keys($fields) as $key) {
+            if (!in_array($key, FREE_CHECKIN_STAGE_FIELDS, true)) {
+                throw new RuntimeException('Field not valid for this stage: ' . $key);
+            }
+        }
+        $checkinMachineId = strtoupper(trim(nutricula_required_field($fields, 'machine_id')));
+        $checkinDeviceKeyHash = strtoupper(trim(nutricula_required_field($fields, 'device_key_hash')));
+        if (!preg_match('/\A[0-9A-F]{64}\z/', $checkinMachineId)) throw new RuntimeException('Invalid machine ID.');
+        if (!preg_match('/\A[0-9A-F]{64}\z/', $checkinDeviceKeyHash)) throw new RuntimeException('Invalid device key hash.');
+
+        /* Same per-IP rate limit machinery already used elsewhere in this
+           file (e.g. the challenge stage below) - a single install pinging
+           every ~10 minutes is completely normal and unaffected, while
+           someone scripting rapid-fire fake check-ins to inflate the
+           free-tier count gets throttled the same way any other endpoint
+           here already throttles abuse. */
+        $conn = nutricula_db($config);
+        nutricula_rate_limit_check($conn, $config, 'free_checkin');
+
+        nutricula_track_unlicensed_checkin($conn, $checkinMachineId, $checkinDeviceKeyHash);
+        $conn->close();
+
+        http_response_code(200);
+        header('Content-Type: text/plain; charset=UTF-8');
+        try {
+            echo nutricula_gcm_encrypt('NL3-FREE-CHECKIN-OK', $config);
+        } catch (Throwable $e) {
+            echo 'no';
+        }
+        exit;
     }
 
     /* Reject any field that doesn't belong to THIS stage specifically, not
@@ -106,6 +157,27 @@ try {
     if (!preg_match('/\A[0-9A-F]{64}\z/', $deviceKeyHash)) throw new RuntimeException('Invalid device key hash.');
     if ($localIp !== '' && filter_var($localIp, FILTER_VALIDATE_IP) === false) throw new RuntimeException('Invalid local IP.');
 
+    /* Wraps nutricula_reject() to also record a free-tier check-in first,
+       for every reject reason EXCEPT the two that do NOT result in
+       TIER_FREE client-side (update_required -> TIER_UPDATE_REQUIRED,
+       blocked -> TIER_BLOCKED - see CoordinatorCore.cpp's tier mapping).
+       Every other reason here - license_not_found, machine_mismatch,
+       device_key_mismatch, license_inactive, license_expired,
+       artifact_mismatch, signature_invalid, challenge_*, too_early, etc. -
+       all leave the client at TIER_FREE, and per the "track every free-tier
+       outcome, however it happens" requirement, all of them get tracked
+       identically here rather than requiring a separate tracking call
+       hand-added at each individual reject site (error-prone with this
+       many call sites - centralizing it here means a future new reject
+       reason is tracked correctly by default, not by remembering to add a
+       line at the new call site). */
+    $rejectTracked = function (string $reason, int $retryAfterSeconds = 0) use ($config, $conn, $machineId, $deviceKeyHash): never {
+        if ($reason !== 'update_required' && $reason !== 'blocked') {
+            nutricula_track_unlicensed_checkin($conn, $machineId, $deviceKeyHash);
+        }
+        nutricula_reject($config, $reason, $retryAfterSeconds);
+    };
+
     $stmt = $conn->prepare(
         'SELECT * FROM nutricula_licenses WHERE license_uuid=? LIMIT 1'
     );
@@ -123,8 +195,7 @@ try {
        eventual commit (license state could otherwise change in between -
        e.g. an admin revoking the license mid-request). */
     if (!$license) {
-        nutricula_track_unlicensed_checkin($conn, $machineId, $deviceKeyHash);
-        nutricula_reject($config, 'license_not_found');
+        $rejectTracked('license_not_found');
     }
 
     $licenseDbId = (int)$license['id'];
@@ -139,17 +210,17 @@ try {
        isn't device_type='windows_vm'. */
     $effectiveMachineId = nutricula_effective_machine_id((string)$license['device_type'], $machineId, $observedIp);
     if ($effectiveMachineId === '' || !hash_equals((string)$license['machine_id'], $effectiveMachineId)) {
-        nutricula_reject($config, 'machine_mismatch');
+        $rejectTracked('machine_mismatch');
     }
     if (!hash_equals((string)$license['device_public_key_hash'], $deviceKeyHash)) {
-        nutricula_reject($config, 'device_key_mismatch');
+        $rejectTracked('device_key_mismatch');
     }
     if ($license['status'] !== 'active') {
-        nutricula_reject($config, 'license_inactive');
+        $rejectTracked('license_inactive');
     }
     $now = time();
     if ((int)$license['license_expires_at'] <= $now) {
-        nutricula_reject($config, 'license_expired');
+        $rejectTracked('license_expired');
     }
 
     /* No longer scoring on local_ip vs observed_ip mismatch - that check
@@ -180,7 +251,7 @@ try {
         if (!nutricula_challenge_rate_ok($conn, $licenseDbId, $now)) {
             nutricula_log_activity($conn, $licenseDbId, $machineId, $deviceKeyHash, $localIp, $observedIp, 'challenge', 'challenge_rate_limited', $riskScore);
             $conn->close();
-            nutricula_reject($config, 'challenge_rate_limited', 60);
+            $rejectTracked('challenge_rate_limited', 60);
         }
 
         /* Housekeeping: any earlier still-unused challenge for this license is
@@ -246,7 +317,7 @@ try {
         $challengeId = trim(nutricula_required_field($fields, 'challenge_id'));
         $signatureB64 = trim(nutricula_required_field($fields, 'signature'));
         if (!nutricula_is_valid_uuid($challengeId) || $signatureB64 === '') {
-            nutricula_reject($config, 'challenge_not_found');
+            $rejectTracked('challenge_not_found');
         }
 
         /* Artifact Evidence (architecture points 47-49/88) - required on
@@ -261,9 +332,9 @@ try {
         $dll64Hash = strtolower(trim(nutricula_required_field($fields, 'dll64_hash')));
         $serviceHash = strtolower(trim(nutricula_required_field($fields, 'service_hash')));
         $brokerHash = strtolower(trim(nutricula_required_field($fields, 'broker_hash')));
-        if ($buildId === '' || strlen($buildId) > 64) nutricula_reject($config, 'artifact_mismatch');
+        if ($buildId === '' || strlen($buildId) > 64) $rejectTracked('artifact_mismatch');
         foreach ([$ex5Hash, $ex4Hash, $dll32Hash, $dll64Hash, $serviceHash, $brokerHash] as $h) {
-            if (!preg_match('/\A[0-9a-f]{64}\z/', $h)) nutricula_reject($config, 'artifact_mismatch');
+            if (!preg_match('/\A[0-9a-f]{64}\z/', $h)) $rejectTracked('artifact_mismatch');
         }
 
         $stmt = $conn->prepare(
@@ -275,13 +346,13 @@ try {
         $challenge = $stmt->get_result()->fetch_assoc();
         $stmt->close();
 
-        if (!$challenge) nutricula_reject($config, 'challenge_not_found');
-        if ((int)$challenge['license_id'] !== $licenseDbId) nutricula_reject($config, 'challenge_wrong_license');
-        if ($challenge['used_at'] !== null) nutricula_reject($config, 'challenge_already_used');
+        if (!$challenge) $rejectTracked('challenge_not_found');
+        if ((int)$challenge['license_id'] !== $licenseDbId) $rejectTracked('challenge_wrong_license');
+        if ($challenge['used_at'] !== null) $rejectTracked('challenge_already_used');
 
         $challengeExpires = strtotime((string)$challenge['expires_at'] . ' UTC');
         if ($challengeExpires === false || $challengeExpires <= $now) {
-            nutricula_reject($config, 'challenge_expired');
+            $rejectTracked('challenge_expired');
         }
 
         $nonceB64 = base64_encode($challenge['nonce']);
@@ -301,7 +372,7 @@ try {
 
         $publicKeyPem = nutricula_build_p256_pem((string)$license['device_public_key_b64']);
         if (!nutricula_verify_device_signature($publicKeyPem, $message, $signatureB64)) {
-            nutricula_reject($config, 'signature_invalid');
+            $rejectTracked('signature_invalid');
         }
 
         /* Signature is now proven valid, so the reported hashes genuinely
@@ -348,7 +419,7 @@ try {
             !hash_equals((string)$expectedManifest['dll32_sha256'], $dll32Hash) ||
             !hash_equals((string)$expectedManifest['dll64_sha256'], $dll64Hash) ||
             !$serviceMatches || !$brokerMatches) {
-            nutricula_reject($config, 'artifact_mismatch');
+            $rejectTracked('artifact_mismatch');
         }
 
         /* Mandatory-update gate: the artifact hashes above proved this
@@ -367,7 +438,7 @@ try {
         $installedVersion = (string)($expectedManifest['version'] ?? '');
         if ($latestVersion !== '' && $installedVersion !== '' &&
             version_compare($installedVersion, $latestVersion, '<')) {
-            nutricula_reject($config, 'update_required');
+            $rejectTracked('update_required');
         }
 
         /* Signature is now proven valid - genuine possession of the private
@@ -393,13 +464,13 @@ try {
             $conn->rollback();
             nutricula_log_activity($conn, $licenseDbId, $machineId, $deviceKeyHash, $localIp, $observedIp, 'verify', 'license_inactive', $riskScore);
             $conn->close();
-            nutricula_reject($config, 'license_inactive');
+            $rejectTracked('license_inactive');
         }
         if ((int)$lockedLicense['license_expires_at'] <= $finalNow) {
             $conn->rollback();
             nutricula_log_activity($conn, $licenseDbId, $machineId, $deviceKeyHash, $localIp, $observedIp, 'verify', 'license_expired', $riskScore);
             $conn->close();
-            nutricula_reject($config, 'license_expired');
+            $rejectTracked('license_expired');
         }
 
         $stmt = $conn->prepare(
@@ -413,7 +484,7 @@ try {
         $stmt->close();
         if ($affected !== 1) {
             $conn->rollback();
-            nutricula_reject($config, 'challenge_already_used');
+            $rejectTracked('challenge_already_used');
         }
 
         /* THE time lock - see the design note above. A signature has already
@@ -429,7 +500,7 @@ try {
             $conn->commit(); // the challenge-used and time-lock touches must still persist
             nutricula_log_activity($conn, $licenseDbId, $machineId, $deviceKeyHash, $localIp, $observedIp, 'verify', 'too_early', $riskScore);
             $conn->close();
-            nutricula_reject($config, 'too_early', $lock['retry_after_seconds']);
+            $rejectTracked('too_early', $lock['retry_after_seconds']);
         }
 
         /* THE rotating refresh-token check - this is what actually detects
@@ -442,7 +513,7 @@ try {
             $conn->commit(); // persist the blocked_until write
             nutricula_log_activity($conn, $licenseDbId, $machineId, $deviceKeyHash, $localIp, $observedIp, 'verify', 'blocked', $riskScore);
             $conn->close();
-            nutricula_reject($config, 'blocked', (int)$config['clone_block_hours'] * 3600);
+            $rejectTracked('blocked', (int)$config['clone_block_hours'] * 3600);
         }
         $newRefreshToken = (string)$tokenResult['new_token'];
 
