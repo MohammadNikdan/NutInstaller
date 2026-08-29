@@ -26,8 +26,8 @@ constexpr int MAX_ATTEMPTS = 10;
 // Terminal/Service restarts without any new persisted state, and cannot
 // be "re-rolled" by restarting (the token itself only changes when a
 // genuine new lease is issued).
-constexpr long long MIN_RANDOM_OFFSET_SEC = 601;   // 10:01
-constexpr long long MAX_RANDOM_OFFSET_SEC = 3000;  // 50:00
+constexpr long long MIN_RANDOM_OFFSET_SEC = 240;   // 4:00
+constexpr long long MAX_RANDOM_OFFSET_SEC = 900;   // 15:00
 
 // Deterministically derives the next-request offset from a lease's
 // refresh token - same token always yields the same offset (so a
@@ -138,6 +138,153 @@ bool WriteLicenseFileAtomic(const std::wstring& path, const std::string& content
     return ok;
 }
 
+// ============================================================================
+// Clock Anchor (2026) - defense against wall-clock manipulation.
+//
+// PROBLEM: NowUnix() above is GetSystemTimeAsFileTime() - the ordinary
+// Windows system clock, changeable by anyone with rights to right-click the
+// taskbar clock and pick a different date. Comparing it directly against a
+// cached lease's requested_at/license_expires_at (as this code used to)
+// meant freezing or rewinding the system clock could make a cached lease
+// look perpetually fresh and perpetually unexpired - forever, with a
+// single genuinely-once-valid lease.
+//
+// FIX: never trust NowUnix() alone for a security decision. Instead, anchor
+// "what time is it" to the LAST cryptographically-verified timestamp this
+// machine actually received FROM THE SERVER (every Reject and every Lease
+// carries requested_at inside its RSA-signed canonical - the attacker
+// cannot forge this without the server's private key), then track elapsed
+// time since that anchor using GetTickCount64() - a counter that runs from
+// system BOOT, not from any settable calendar date, and has no standard
+// Windows API to "set" it backward the way the wall clock can be set.
+//
+// This does NOT claim to be unbreakable (see the accompanying design
+// discussion - a sufficiently privileged attacker could in principle patch
+// kernel-level tick sources too) - it raises the bar from "change the date
+// in Settings" to something meaningfully harder, while the real security
+// backbone remains requiring FREQUENT genuine server round-trips (the
+// shrunk 4:00-15:00 window below) rather than trusting any local
+// elapsed-time judgment for long.
+// ============================================================================
+struct ClockAnchor
+{
+    long long wallClockUnix = 0;      // last server-verified "now", in Unix seconds
+    unsigned long long tickCountMs = 0; // GetTickCount64() at the moment that was recorded
+};
+
+std::wstring GetClockAnchorFilePathW()
+{
+    std::wstring licensePath = GetLicenseFilePathW();
+    if (licensePath.empty()) return L"";
+    return licensePath + L".clockanchor";
+}
+
+// Deliberately plain (not signed/encrypted) - this file's purpose is
+// raising the bar against casual wall-clock tampering, not protecting a
+// secret. A sophisticated attacker who locates and hand-edits this exact
+// file to match a spoofed clock is a meaningfully higher bar than the
+// trivial "change the date" attack this exists to close, and even a
+// tampered anchor file can only ever DELAY the moment this machine's
+// estimated time catches up to reality (see EstimatedNow's "never go
+// backward past the wall clock's own forward progress" logic below) -
+// it cannot be used to push the estimate further ahead than the real
+// wall clock already independently shows.
+bool LoadClockAnchor(ClockAnchor& out)
+{
+    std::wstring path = GetClockAnchorFilePathW();
+    if (path.empty()) return false;
+    HANDLE h = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr,
+        OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (h == INVALID_HANDLE_VALUE) return false;
+    char buf[64] = {};
+    DWORD readBytes = 0;
+    bool ok = ReadFile(h, buf, sizeof(buf) - 1, &readBytes, nullptr) != 0;
+    CloseHandle(h);
+    if (!ok || readBytes == 0) return false;
+    long long w = 0; unsigned long long t = 0;
+    if (sscanf_s(buf, "%lld|%llu", &w, &t) != 2) return false;
+    out.wallClockUnix = w;
+    out.tickCountMs = t;
+    return true;
+}
+
+void SaveClockAnchor(const ClockAnchor& anchor)
+{
+    std::wstring path = GetClockAnchorFilePathW();
+    if (path.empty()) return;
+    char buf[64] = {};
+    int len = sprintf_s(buf, "%lld|%llu", anchor.wallClockUnix, anchor.tickCountMs);
+    if (len <= 0) return;
+    WriteLicenseFileAtomic(path, std::string(buf, buf + len));
+}
+
+// Called after every genuinely signature-verified server response
+// (Reject or Lease - both carry an authentic, server-signed requested_at).
+// Only ever moves the anchor FORWARD - never accepts a serverWallClock
+// value older than the currently-stored anchor, which would otherwise let
+// a malicious/misconfigured intermediary (or a genuinely stale cached
+// response somehow replayed) push the anchor backward.
+void UpdateClockAnchor(long long serverWallClock)
+{
+    ClockAnchor existing;
+    bool hadExisting = LoadClockAnchor(existing);
+    if (hadExisting && serverWallClock <= existing.wallClockUnix) return;
+
+    ClockAnchor fresh;
+    fresh.wallClockUnix = serverWallClock;
+    fresh.tickCountMs = GetTickCount64();
+    SaveClockAnchor(fresh);
+}
+
+// The actual replacement for "what time is it" in every security-relevant
+// comparison below (license expiry, cooldown scheduling). See the block
+// comment above ClockAnchor for the full reasoning.
+long long EstimatedNow()
+{
+    long long wallNow = NowUnix();
+
+    ClockAnchor anchor;
+    if (!LoadClockAnchor(anchor))
+    {
+        // No anchor yet at all (e.g. very first run, before any server
+        // contact has ever succeeded) - nothing to compare against yet,
+        // fall back to the raw system clock. This is the SAME trust level
+        // every fresh install already had before this feature existed;
+        // the protection only engages once a real anchor exists, which
+        // happens on the very first successful server exchange.
+        return wallNow;
+    }
+
+    unsigned long long currentTick = GetTickCount64();
+    long long estimated;
+    if (currentTick < anchor.tickCountMs)
+    {
+        // GetTickCount64() only ever goes backward across a genuine
+        // reboot (it counts from system boot, so it resets to a small
+        // value then) - the tick-delta math below is no longer valid
+        // against this anchor. Fall back to the raw wall clock for this
+        // one evaluation, but NEVER return anything earlier than the last
+        // confirmed-real anchor - if the wall clock now claims to be
+        // BEFORE that anchor (rolled back across the reboot too), clamp
+        // to the anchor instead of trusting the rolled-back clock.
+        estimated = (wallNow > anchor.wallClockUnix) ? wallNow : anchor.wallClockUnix;
+    }
+    else
+    {
+        long long elapsedSec = static_cast<long long>((currentTick - anchor.tickCountMs) / 1000ULL);
+        long long tickBasedEstimate = anchor.wallClockUnix + elapsedSec;
+        // If the wall clock is AHEAD of the tick-based estimate, real time
+        // has genuinely progressed further than our last anchor accounted
+        // for (completely normal - e.g. it's simply been a while since the
+        // last server contact) - prefer the more precise wall clock. If the
+        // wall clock is BEHIND the tick-based estimate, someone rewound or
+        // froze it - trust the tick-based estimate instead, since it can
+        // only move forward from a genuine server-verified starting point.
+        estimated = (wallNow > tickBasedEstimate) ? wallNow : tickBasedEstimate;
+    }
+    return estimated;
+}
+
 LocalFileState EvaluateLocalFile()
 {
     LocalFileState state;
@@ -164,7 +311,7 @@ LocalFileState EvaluateLocalFile()
         state.hasLease = true;
         state.lease = parsed.lease;
         state.requestedAt = static_cast<long long>(parsed.lease.requestedAt);
-        state.licenseCurrentlyExpired = (static_cast<long long>(parsed.lease.licenseExpiresAt) <= NowUnix());
+        state.licenseCurrentlyExpired = (static_cast<long long>(parsed.lease.licenseExpiresAt) <= EstimatedNow());
         state.canonical = parsed.rawCanonical;
         state.signatureB64 = parsed.rawSignatureB64;
     }
@@ -221,7 +368,7 @@ void CoordinatorCore::WorkerLoop()
     for (;;)
     {
         LocalFileState local = EvaluateLocalFile();
-        long long now = NowUnix();
+        long long now = EstimatedNow();
 
         // Layer 1 (cheap, local-only clone/copy detection - see the
         // accompanying design discussion): before trusting a locally
@@ -298,7 +445,7 @@ void CoordinatorCore::WorkerLoop()
             long long anchor = (local.hasLease && machineMatches) ? local.requestedAt : now;
             long long offsetToUse = (local.hasLease && machineMatches) ? randomOffset : MIN_RANDOM_OFFSET_SEC;
             long long target = anchor + offsetToUse;
-            long long waitSeconds = target - NowUnix();
+            long long waitSeconds = target - EstimatedNow();
             if (waitSeconds > 0)
             {
                 // Wait, but wake up early (and re-evaluate from the top) if
@@ -447,6 +594,10 @@ void CoordinatorCore::WorkerLoop()
                         : TIER_FREE;
                     finalCanonical = challengeParsed.rawCanonical;
                     finalSignatureB64 = challengeParsed.rawSignatureB64;
+                    // Clock Anchor: this Reject's own requestedAt is authentic
+                    // (RSA-signature-verified by DecryptAndVerify before
+                    // kind==Rejected was ever set) server time.
+                    UpdateClockAnchor(static_cast<long long>(challengeParsed.requestedAt));
                     break;
                 }
                 if (advance && challengeParsed.kind != ResponseKind::Challenge) advance = false;
@@ -509,6 +660,10 @@ void CoordinatorCore::WorkerLoop()
                         : TIER_FREE;
                     finalCanonical = verifyParsed.rawCanonical;
                     finalSignatureB64 = verifyParsed.rawSignatureB64;
+                    // Clock Anchor: same reasoning as the challenge-stage
+                    // Reject above - this is an authentic, signature-verified
+                    // server timestamp.
+                    UpdateClockAnchor(static_cast<long long>(verifyParsed.requestedAt));
                     break;
                 }
                 if (verifyParsed.kind != ResponseKind::Lease) { if (attempt < MAX_ATTEMPTS) Sleep(2000); continue; }
@@ -520,6 +675,11 @@ void CoordinatorCore::WorkerLoop()
                 finalStable = TIER_LICENSED;
                 finalCanonical = reReadCheck.canonical;
                 finalSignatureB64 = reReadCheck.signatureB64;
+                // Clock Anchor: a freshly-issued, re-parsed-from-disk
+                // (and therefore signature-re-verified via EvaluateLocalFile's
+                // own DecryptAndVerify call) Lease's requestedAt is authentic
+                // server time.
+                UpdateClockAnchor(reReadCheck.requestedAt);
                 break;
             }
 
