@@ -55,10 +55,11 @@ return [
        license signup) for the same license/device is rejected as too_early
        if fewer than this many seconds have passed since the last request
        (successful or rejected) for that license. Set well below the
-       client's own minimum random offset (10:01) so a legitimate client
-       following its own schedule never trips this - 9 minutes leaves a
-       comfortable margin. There is deliberately NO upper bound. */
-    'min_request_gap_seconds' => 540, // 9 minutes
+       client's own minimum random offset (4:00) so a legitimate client
+       following its own schedule never trips this - 3 minutes leaves the
+       same ~61-second margin as before. There is deliberately NO upper
+       bound. */
+    'min_request_gap_seconds' => 179, // 2:59 (~3 minutes)
 
     /* How many hours a license is fully blocked (all requests rejected,
        tier -100) after two CONSECUTIVE stale-refresh-token presentations
