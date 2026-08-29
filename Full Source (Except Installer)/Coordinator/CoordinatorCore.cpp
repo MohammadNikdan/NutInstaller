@@ -261,13 +261,23 @@ long long EstimatedNow()
     {
         // GetTickCount64() only ever goes backward across a genuine
         // reboot (it counts from system boot, so it resets to a small
-        // value then) - the tick-delta math below is no longer valid
-        // against this anchor. Fall back to the raw wall clock for this
-        // one evaluation, but NEVER return anything earlier than the last
-        // confirmed-real anchor - if the wall clock now claims to be
-        // BEFORE that anchor (rolled back across the reboot too), clamp
-        // to the anchor instead of trusting the rolled-back clock.
-        estimated = (wallNow > anchor.wallClockUnix) ? wallNow : anchor.wallClockUnix;
+        // value then) - the tick-delta math below (against the OLD boot
+        // session's tick) is no longer valid. But currentTick itself is
+        // now milliseconds elapsed since THIS boot - a genuine,
+        // unfakeable lower bound on real elapsed time, since the reboot
+        // necessarily happened strictly after the anchor was recorded (in
+        // the previous boot session). Add it to the anchor rather than
+        // discarding it - this keeps the estimate advancing continuously
+        // through the new boot session (starting from the last
+        // known-good point, not from zero) instead of freezing solid at
+        // the anchor value forever, which was the actual bug here: an
+        // attacker who both rebooted AND rolled the wall clock back past
+        // the anchor could otherwise freeze time indefinitely by
+        // repeating "reboot, roll clock back" before every scheduled
+        // check-in, since no genuinely forced progress ever occurred.
+        long long minGuaranteedElapsedThisBoot = static_cast<long long>(currentTick / 1000ULL);
+        long long rebootAdjustedEstimate = anchor.wallClockUnix + minGuaranteedElapsedThisBoot;
+        estimated = (wallNow > rebootAdjustedEstimate) ? wallNow : rebootAdjustedEstimate;
     }
     else
     {
