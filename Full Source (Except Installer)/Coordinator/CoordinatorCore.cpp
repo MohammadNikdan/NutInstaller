@@ -376,6 +376,38 @@ void CoordinatorCore::WorkerLoop()
             }
 
             std::string licenseIdForRequest = local.hasLease ? local.lease.licenseId : std::string();
+
+            if (licenseIdForRequest.empty())
+            {
+                // Free-tier telemetry (2026): there is no license_id at all
+                // to attempt a real challenge/verify with (no lease file,
+                // a corrupt/incomplete one, or one whose signature didn't
+                // even verify) - previously this meant the Coordinator
+                // made NO network contact whatsoever while sitting at
+                // TIER_FREE, silently, forever. Send a lightweight,
+                // unauthenticated "I am a free-tier install and still
+                // running" ping instead, so the vendor can actually see
+                // free-tier usage exists. Fire-and-forget: no retry loop,
+                // the response (if any) is not even inspected - this is
+                // pure telemetry, not something that gates tier or any
+                // other behavior below.
+                std::map<std::string, std::string> checkinFields;
+                checkinFields["v"] = "3";
+                checkinFields["stage"] = "free_checkin";
+                checkinFields["machine_id"] = machineId;
+                checkinFields["device_key_hash"] = deviceKeyHash;
+                std::string checkinEnvelope = LicenseProtocol::BuildRequestEnvelope(checkinFields);
+                if (!checkinEnvelope.empty())
+                {
+                    const std::wstring checkinHost = L"nutriculaexpert.com";
+                    const std::wstring checkinPath = L"/license_validator_phps/license_check.php";
+                    Transport::PostEnvelope(checkinHost, checkinPath, checkinEnvelope, 15000);
+                }
+                m_state.tier.store(TIER_FREE);
+                m_state.pending.store(PENDING_IDLE);
+                continue;
+            }
+
             const std::wstring host = L"nutriculaexpert.com";
             const std::wstring urlPath = L"/license_validator_phps/license_check.php";
             long finalStable = TIER_FAILED;
