@@ -567,8 +567,30 @@ void CoordinatorCore::WorkerLoop()
 
             const std::wstring host = L"nutriculaexpert.com";
             const std::wstring urlPath = L"/license_validator_phps/license_check.php";
-            long finalStable = TIER_FAILED;
-            std::string finalCanonical, finalSignatureB64;
+            // BUG FIX (found via code review): previously defaulted to
+            // TIER_FAILED with an EMPTY canonical/signature here, meaning
+            // that if every single network attempt below failed purely due
+            // to a transient outage (DNS hiccup, brief firewall blip, WiFi
+            // drop) - NOT an actual reject from the server - a perfectly
+            // valid, unexpired, already-signature-verified local lease got
+            // silently replaced with an unauthenticated TIER_FAILED after
+            // only ~20 seconds (MAX_ATTEMPTS=10 x 2s Sleep). The thin DLL
+            // accepts TIER_FAILED with NO signature check at all (see its
+            // own comment: "carries no signature to verify by design"), so
+            // this collapsed trading within 20 seconds of a brief network
+            // blip - nowhere near the 21-minute STALE_COORDINATOR_DEGRADE_
+            // SECONDS grace period the whole design elsewhere promises.
+            // Fix: default to what we already know is valid (the existing
+            // local lease, already signature-verified moments ago by
+            // EvaluateLocalFile's own DecryptAndVerify call) rather than an
+            // empty failure state - an actual reject or a fresh lease from
+            // the server can still override this via a real break below;
+            // only genuine network SILENCE now correctly means "keep
+            // trusting what we already verified," not "assume the worst."
+            bool localLeaseStillGood = local.hasLease && !local.licenseCurrentlyExpired;
+            long finalStable = localLeaseStillGood ? TIER_LICENSED : TIER_FAILED;
+            std::string finalCanonical = localLeaseStillGood ? local.canonical : std::string();
+            std::string finalSignatureB64 = localLeaseStillGood ? local.signatureB64 : std::string();
 
             for (int attempt = 1; attempt <= MAX_ATTEMPTS && !licenseIdForRequest.empty(); attempt++)
             {
