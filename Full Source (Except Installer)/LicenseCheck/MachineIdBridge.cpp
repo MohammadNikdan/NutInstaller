@@ -1,7 +1,9 @@
 #include "MachineIdBridge.h"
 #include <windows.h>
+#include <wincrypt.h>
 #include <vector>
 #include <cstring>
+#pragma comment(lib, "crypt32.lib")
 
 //
 // ASSUMPTIONS ON THE NEIGHBOR DLL'S EXACT SIGNATURES - PLEASE VERIFY
@@ -23,8 +25,26 @@ namespace
     typedef int (__cdecl* GenerateMachineIdFn)(char* output, int outputCapacity);
     typedef int (__cdecl* GetDevicePublicKeyFn)(char* output, int outputCapacity);
     typedef int (__cdecl* GetDeviceKeyHashFn)(char* output, int outputCapacity);
-    typedef int (__cdecl* GetLicensePathFn)(wchar_t* output, int outputCapacityChars);
-    typedef int (__cdecl* SignChallengeFn)(const char* message, char* outputSignatureB64, int outputCapacity);
+    // BUG FIX: Nutricula_GetLicensePath's real, confirmed signature (see
+    // NutriculaMachineId.h) is (char* output, int outputCapacity) - a UTF-8
+    // byte buffer, exactly like every other export here, NOT (wchar_t*,
+    // int). GetProcAddress resolves by name only; it cannot catch a
+    // signature mismatch, so this previously compiled and linked "fine"
+    // while silently corrupting every license file path computed at
+    // runtime (a wchar_t buffer's raw bytes reinterpreted as if they were
+    // already UTF-16, when the callee actually wrote UTF-8 into them).
+    typedef int (__cdecl* GetLicensePathFn)(char* output, int outputCapacity);
+    // BUG FIX: Nutricula_SignChallenge's real, confirmed signature takes an
+    // explicit messageLength parameter (message is treated as a raw byte
+    // buffer, not assumed NUL-terminated) - the bridge's typedef was
+    // missing this 2nd parameter entirely. Every call previously shifted
+    // every subsequent argument one slot early: what should have been the
+    // signature output buffer pointer was read as messageLength (an int),
+    // and what should have been outputCapacity was read as the
+    // signatureOutput pointer - i.e. the real function would have
+    // attempted to write the signature through a pointer value that was
+    // actually meant to be the capacity integer.
+    typedef int (__cdecl* SignChallengeFn)(const char* message, int messageLength, char* outputSignatureB64, int outputCapacity);
     typedef int (__cdecl* IsWineEnvironmentFn)();
 
     HMODULE g_module = nullptr;
@@ -112,11 +132,17 @@ bool MachineIdBridge::GetDeviceKeyHash(std::string& outHashHex)
 bool MachineIdBridge::GetLicenseFilePath(std::wstring& outPath)
 {
     if (!g_getLicensePath) return false;
-    std::vector<wchar_t> buffer(LICENSE_PATH_CAPACITY_CHARS, 0);
+    std::vector<char> buffer(LICENSE_PATH_CAPACITY_CHARS, 0);
     int result = g_getLicensePath(buffer.data(), LICENSE_PATH_CAPACITY_CHARS);
     if (result != 1) return false;
-    buffer[LICENSE_PATH_CAPACITY_CHARS - 1] = L'\0';
-    outPath.assign(buffer.data());
+    buffer[LICENSE_PATH_CAPACITY_CHARS - 1] = '\0';
+    // The callee writes UTF-8 bytes (see Nutricula_GetLicensePath's own
+    // ToUtf8() call) - convert properly rather than widening byte-for-byte.
+    int wideLen = MultiByteToWideChar(CP_UTF8, 0, buffer.data(), -1, nullptr, 0);
+    if (wideLen <= 0) return false;
+    std::vector<wchar_t> wideBuffer(wideLen);
+    if (MultiByteToWideChar(CP_UTF8, 0, buffer.data(), -1, wideBuffer.data(), wideLen) <= 0) return false;
+    outPath.assign(wideBuffer.data());
     return !outPath.empty();
 }
 
@@ -129,11 +155,32 @@ bool MachineIdBridge::IsWineEnvironment()
 bool MachineIdBridge::SignChallenge(const std::string& message, std::string& outSignatureB64)
 {
     if (!g_signChallenge) return false;
-    std::vector<char> buffer(SIGNATURE_CAPACITY, 0);
-    int result = g_signChallenge(message.c_str(), buffer.data(), SIGNATURE_CAPACITY);
-    if (result != 1) return false;
-    buffer[SIGNATURE_CAPACITY - 1] = '\0';
-    outSignatureB64.assign(buffer.data());
+    std::vector<char> rawSigBuffer(SIGNATURE_CAPACITY, 0);
+    // BUG FIX: Nutricula_SignChallenge's real, confirmed implementation
+    // returns the actual byte length of the raw ECDSA signature it wrote
+    // (64 for P-256 - see its own "return rc > 0 ? rc : 0" and the
+    // BCryptSignHash call above it) on success, and 0/negative on failure -
+    // NOT a simple boolean 1. The previous "result != 1" check here meant
+    // this always evaluated as failure (result was always 64, never
+    // exactly 1), so no Challenge could ever be signed and no verify could
+    // ever succeed past this point, on any license, ever.
+    int rawSigLen = g_signChallenge(message.data(), static_cast<int>(message.size()), rawSigBuffer.data(), SIGNATURE_CAPACITY);
+    if (rawSigLen <= 0) return false;
+
+    // BUG FIX (second, related): the buffer the callee writes into holds
+    // RAW signature bytes (arbitrary binary, not NUL-terminated, not
+    // already Base64 - see the same BCryptSignHash call), but this was
+    // previously being assigned directly into outSignatureB64 as if it
+    // were already a Base64 C-string. The server's "signature" field
+    // expects Base64 (see CoordinatorCore.cpp sending it directly as
+    // verifyFields["signature"]), so encode it here.
+    DWORD b64Len = 0;
+    if (!CryptBinaryToStringA(reinterpret_cast<const BYTE*>(rawSigBuffer.data()), static_cast<DWORD>(rawSigLen),
+        CRYPT_STRING_BASE64 | CRYPT_STRING_NOCRLF, nullptr, &b64Len)) return false;
+    std::vector<char> b64Buffer(b64Len);
+    if (!CryptBinaryToStringA(reinterpret_cast<const BYTE*>(rawSigBuffer.data()), static_cast<DWORD>(rawSigLen),
+        CRYPT_STRING_BASE64 | CRYPT_STRING_NOCRLF, b64Buffer.data(), &b64Len)) return false;
+    outSignatureB64.assign(b64Buffer.data(), strnlen(b64Buffer.data(), b64Len));
     return !outSignatureB64.empty();
 }
 
