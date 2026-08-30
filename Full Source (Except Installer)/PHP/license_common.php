@@ -597,7 +597,7 @@ function nutricula_effective_machine_id(string $deviceType, string $rawMachineId
    conventional, moderate API rate limit (commonly seen in the 10-100
    req/min range for endpoints like this) - generous enough that legitimate
    retries/troubleshooting during activation never hit it (a real license
-   check happens roughly once per 54 minutes; even a customer manually
+   check happens roughly once every 4-15 minutes; even a customer manually
    retrying an activation attempt a dozen times in a minute stays well
    under this), while still capping how much load a single source can put
    on the server during a flood.

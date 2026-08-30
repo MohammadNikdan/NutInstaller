@@ -72,6 +72,20 @@ try {
        whether local_ip happened to be present. */
     $newDeviceType = $platformProfile !== '' ? strtolower($platformProfile) : 'unknown';
 
+    /* VPS IP-Binding for the NEW (destination) computer - same bug fix as
+       signup.php: $newMachineId (raw) stays unchanged everywhere else in
+       this file, including the signed lease canonical near the bottom -
+       only $newEffectiveMachineId is ever written to the machine_id
+       DATABASE column. */
+    $newEffectiveMachineId = nutricula_effective_machine_id($newDeviceType, $newMachineId, $observedIp);
+    if ($newEffectiveMachineId === '') {
+        // Same fail-closed reasoning as signup.php - no transaction is
+        // open yet at this point in the flow.
+        nutricula_reject($config, 'vps_ip_unavailable');
+    }
+    // Audit-only, NEVER used in any security decision.
+    $vpsBoundIp = nutricula_is_vps_device_type($newDeviceType) ? nutricula_canonicalize_ip($observedIp) : null;
+
     $riskScore = 0;
     if ($newDeviceType === 'windows_vm') $riskScore += 10;
 
@@ -231,21 +245,22 @@ try {
     $update = $conn->prepare(
         'UPDATE nutricula_licenses
          SET license_uuid=?, machine_id=?, device_public_key_b64=?, device_public_key_hash=?,
-             device_type=?, claimed_local_ip=?, last_observed_ip=?,
+             device_type=?, claimed_local_ip=?, last_observed_ip=?, vps_bound_ip=?,
              last_request_time=?, last_success_time=?, last_seen_at=NOW(),
              current_refresh_token_hash=?, token_suspicious=0, blocked_until=NULL
          WHERE id=?'
     );
     if (!$update) throw new RuntimeException('DB prepare failed.');
     $update->bind_param(
-        'sssssssiisi',
+        'ssssssssiisi',
         $newLicenseUuid,
-        $newMachineId,
+        $newEffectiveMachineId,
         $newDevicePublicKey,
         $newDeviceKeyHash,
         $newDeviceType,
         $localIp,
         $observedIp,
+        $vpsBoundIp,
         $finalNow,
         $finalNow,
         $newRefreshTokenHash,
