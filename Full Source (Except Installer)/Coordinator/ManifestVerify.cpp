@@ -68,10 +68,10 @@ std::string HashFileSha256(const std::wstring& path)
     BCRYPT_HASH_HANDLE hash = nullptr;
     bool ok = BCryptCreateHash(alg, &hash, nullptr, 0, nullptr, 0, 0) >= 0;
 
-    // Stream in chunks (architecture point 30: full-file hash is fine since
-    // it only runs once per refresh cycle, ~54 minutes apart - but still
-    // read in bounded chunks rather than loading an arbitrarily large file
-    // fully into memory at once).
+    // Stream in chunks (full-file hash is fine since it only runs once per
+    // refresh cycle, a few minutes apart at most - but still read in
+    // bounded chunks rather than loading an arbitrarily large file fully
+    // into memory at once).
     char buf[65536];
     DWORD read = 0;
     while (ok && ReadFile(h, buf, sizeof(buf), &read, nullptr) && read > 0)
