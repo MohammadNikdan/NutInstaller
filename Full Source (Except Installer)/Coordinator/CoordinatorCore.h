@@ -95,6 +95,13 @@ private:
     std::atomic<bool> m_started{false};
     HANDLE m_wakeEvent = nullptr; // signaled by RequestRefreshIfDue to interrupt an idle wait early
     std::wstring m_coordinatorFileName;
+    // Free-tier telemetry (see WorkerLoop): the local "do I have a lease at
+    // all" check stays fast (same MIN_RANDOM_OFFSET_SEC cycle as everything
+    // else), but the actual network free_checkin call is independently
+    // rate-limited to roughly every 30 minutes via this timestamp - this is
+    // pure statistics, not a security-relevant check, so there is no need
+    // to burden the server with it as often as real license verification.
+    long long m_lastFreeCheckinSentAt = 0;
 };
 
 } // namespace Coordinator
