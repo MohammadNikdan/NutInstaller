@@ -451,7 +451,7 @@ try {
            challenge branch above for why it belongs here and not there. */
         $conn->begin_transaction();
 
-        $lockStmt = $conn->prepare('SELECT id, status, license_expires_at, current_refresh_token_hash, token_suspicious, blocked_until FROM nutricula_licenses WHERE id=? FOR UPDATE');
+        $lockStmt = $conn->prepare('SELECT id, product_id, status, license_expires_at, current_refresh_token_hash, token_suspicious, blocked_until FROM nutricula_licenses WHERE id=? FOR UPDATE');
         if (!$lockStmt) throw new RuntimeException('DB prepare failed.');
         $lockStmt->bind_param('i', $licenseDbId);
         $lockStmt->execute();
@@ -553,7 +553,7 @@ try {
         $canonical =
             'v=3' .
             '|license_id=' . $licenseId .
-            '|product_id=' . (int)$license['product_id'] .
+            '|product_id=' . (int)$lockedLicense['product_id'] .
             '|machine_id=' . $machineId .
             '|device_key_hash=' . $deviceKeyHash .
             '|license_expires_at=' . $licenseExpires .
