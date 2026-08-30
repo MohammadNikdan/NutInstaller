@@ -77,27 +77,27 @@ namespace NutriculaInstaller
             {
                 Task<FileInstallOutcome> freeInstallTask = InstallFilesAsync(terminals, token, progress, log);
 
-                /* Best-effort only: creates (or confirms) this computer's
-                   machine ID and device key pair so an identity already
-                   exists locally for later use (e.g. unlicensed-usage
-                   statistics, or a future upgrade to Premium) - but a Free
-                   install must always proceed regardless of whether this
-                   succeeds, unlike Premium/Transfer where the same failure
-                   is blocking. Deliberately not awaited together with a
-                   throwing continuation - failures are only logged. */
-                Task freeIdentityTask = TryEnsureDeviceIdentityAsync(log);
+                /* Device key creation is now a REQUIRED step for a Free
+                   install to report success - see TryEnsureDeviceIdentityAsync's
+                   own summary for why (free-tier statistics need at least
+                   the device key to identify this computer). */
+                Task<bool> freeIdentityTask = TryEnsureDeviceIdentityAsync(log);
 
                 await Task.WhenAll(freeInstallTask, freeIdentityTask).ConfigureAwait(true);
                 FileInstallOutcome freeOutcome = freeInstallTask.Result;
+                bool deviceIdentityOk = freeIdentityTask.Result;
+                bool freeSucceeded = freeOutcome.AllSucceeded && deviceIdentityOk;
 
                 result.FilesInstalled = freeOutcome.AllSucceeded;
                 result.ServerRequestFinished = true;
                 result.LicenseFileOperationFinished = true;
-                result.LicenseSucceeded = freeOutcome.AllSucceeded;
-                result.OverallSuccess = freeOutcome.AllSucceeded;
-                result.FinalMessage = freeOutcome.AllSucceeded
+                result.LicenseSucceeded = freeSucceeded;
+                result.OverallSuccess = freeSucceeded;
+                result.FinalMessage = freeSucceeded
                     ? Messages.FreeSuccess
-                    : Messages.ForFileFailure(freeOutcome.FailureKind);
+                    : (!freeOutcome.AllSucceeded
+                        ? Messages.ForFileFailure(freeOutcome.FailureKind)
+                        : Messages.FreeDeviceIdentityFailure);
                 return result;
             }
 
@@ -207,30 +207,43 @@ namespace NutriculaInstaller
 
         /// <summary>
         /// Best-effort only - creates (or confirms) this computer's machine ID
-        /// and device key pair for Free installs, purely so an identity
-        /// already exists locally for later use. Never throws: any failure
-        /// is caught and logged, never surfaced as an error to the user,
-        /// since a Free install must always be allowed to proceed regardless
-        /// of machine identity issues (unlike Premium/Transfer, where the
-        /// same failure blocks the license request - see RequestLicenseAsync).
+        /// <summary>
+        /// Creates (or confirms) this computer's machine ID and device key
+        /// pair for Free installs. This is a REQUIRED step - a Free install
+        /// only reports success if the device key was actually created or
+        /// already existed and loaded correctly, because the free-tier
+        /// statistics table identifies a computer by machine_id and/or
+        /// device_key_hash; without at least the device key, this
+        /// install could never be recognized in a later free_checkin, and
+        /// (if machine_id also can't be generated on this computer) the
+        /// device key becomes the ONLY identifier available at all.
         /// </summary>
-        private static Task TryEnsureDeviceIdentityAsync(Action<string> log)
+        private static Task<bool> TryEnsureDeviceIdentityAsync(Action<string> log)
         {
             return Task.Run(delegate
             {
                 try
                 {
+                    // Machine ID is attempted but its success is NOT
+                    // required here (see the free_checkin design: a device
+                    // key alone is sufficient to identify this computer in
+                    // the unlicensed-usage table if machine_id can't be
+                    // produced on this particular system - very rare, but
+                    // possible, e.g. inside certain restricted containers).
                     MachineIdService.GenerateComputerId();
-                    MachineIdService.GetDevicePublicKey();
+                    string devicePublicKey = MachineIdService.GetDevicePublicKey();
+                    if (string.IsNullOrEmpty(devicePublicKey))
+                    {
+                        log("Device key could not be created or loaded during the free install.");
+                        return false;
+                    }
                     log("Free install setup completed.");
+                    return true;
                 }
                 catch (Exception)
                 {
-                    // Non-blocking by design - see summary above. This is a
-                    // plain diagnostic log line, not a user-facing message -
-                    // it never affects the install's success/failure or the
-                    // final banner shown to the user.
-                    log("A non-essential setup step could not be completed during the free install (this does not affect the install).");
+                    log("Device key could not be created or loaded during the free install.");
+                    return false;
                 }
             });
         }
@@ -738,6 +751,17 @@ namespace NutriculaInstaller
             CancellationToken token,
             Action<string> log)
         {
+            // Anti-tamper (see SelfIntegrityCheck.cs for full scope/limits):
+            // fail closed before consuming a purchase key or transfer key if
+            // this installer's own binary does not match its vendor-signed
+            // hash. A Free install is NOT gated on this (see the Free branch
+            // above) - Free installs cannot consume any purchase/transfer
+            // key at all, so there is nothing here to protect for that path.
+            if (!Program.SelfIntegrityVerified)
+            {
+                return ServerResult.Failed(ServerFailureKind.SelfIntegrityFailed, null);
+            }
+
             string machineId;
             try
             {
@@ -1043,7 +1067,8 @@ namespace NutriculaInstaller
             DecryptionFailed,
             UnrecognizedFormat,
             MachineIdUnavailable,
-            DeviceSecurityUnavailable
+            DeviceSecurityUnavailable,
+            SelfIntegrityFailed
         }
 
         private enum LocalFileFailureKind
@@ -1112,6 +1137,11 @@ namespace NutriculaInstaller
             // ---- Success (green) ----
             public const string FreeSuccess =
                 "Nutricula Free Version was installed successfully." + ToolsOptionsReminder;
+
+            public const string FreeDeviceIdentityFailure =
+                "Nutricula could not complete the free installation because it was unable to create or " +
+                "read a required device identity file on this computer. Please make sure the installer is " +
+                "running with sufficient permissions and try again, or contact Nutricula support.";
 
             public const string PremiumSuccess =
                 "Your license was successfully activated and Nutricula was installed on your computer. " +
@@ -1185,6 +1215,9 @@ namespace NutriculaInstaller
                     case ServerFailureKind.DeviceSecurityUnavailable:
                         return "We couldn't complete this operation on this computer. " +
                                "Please try again, or contact support if this continues.";
+                    case ServerFailureKind.SelfIntegrityFailed:
+                        return "This installer file appears to have been modified and cannot be used to activate a " +
+                               "license. Please download a fresh, unmodified copy of the Nutricula installer and try again.";
                     case ServerFailureKind.Timeout:
                         return "The Nutricula server did not respond in time. Please check your internet connection and try again.";
                     case ServerFailureKind.HttpError:
