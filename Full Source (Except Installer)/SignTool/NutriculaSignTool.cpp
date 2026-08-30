@@ -124,7 +124,7 @@ int main(int argc, char** argv)
         return 1;
     }
 
-    std::string fullManifest = signedPortion + "signature=" + Base64Encode(signature, 96) + "\n";
+    std::string fullManifest = signedPortion + "signature=" + Base64Encode(signature, 64) + "\n";
 
     HANDLE h = CreateFileW(outPath.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
     if (h == INVALID_HANDLE_VALUE)
