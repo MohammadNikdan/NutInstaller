@@ -951,10 +951,15 @@ static std::wstring Canonicalize(const IdentityRecord& r) {
 
     switch (r.platform) {
         case PlatformKind::WindowsPhysical: {
-            ss << L"PROFILE=WINDOWS\nVERSION=2\n";
+            ss << L"PROFILE=WINDOWS\n";
+            // machineGuid is deliberately NOT included here (see the
+            // comment on its removal from WindowsVM below, which applies
+            // identically to physical Windows) - it still counts toward
+            // acceptance strength in HasAtLeastCoreIdentity, just not
+            // toward the hashed value itself.
             const Signal* signals[] = {
                 &r.systemUuid, &r.systemSerial, &r.baseboardSerial, &r.biosSerial,
-                &r.cpuId, &r.diskSerial, &r.machineGuid,
+                &r.cpuId, &r.diskSerial,
                 &r.manufacturer, &r.family, &r.product, &r.sku
             };
             for (const Signal* s : signals) AppendSignal(ss, *s);
@@ -969,10 +974,26 @@ static std::wstring Canonicalize(const IdentityRecord& r) {
             // the accompanying research notes). Any license activated
             // under the OLD VM canonical format will need one-time
             // re-activation after this change.
-            ss << L"PROFILE=WINDOWS_VM\nVERSION=3\n";
+            ss << L"PROFILE=WINDOWS_VM\n";
+            // machineGuid (HKLM\SOFTWARE\Microsoft\Cryptography\MachineGuid)
+            // is deliberately EXCLUDED from the hashed value, even though it
+            // is still read and still counts toward acceptance strength in
+            // HasAtLeastCoreIdentity. Windows regenerates this GUID fresh on
+            // every clean OS install - it is a property of the CURRENT
+            // Windows installation, not of the underlying hardware, and is
+            // completely independent of which physical disk or partition
+            // Windows was reinstalled onto. Including its VALUE in the hash
+            // would mean any Windows reinstall - even onto the exact same
+            // drive, with every other hardware signal (System UUID, System
+            // Serial, Baseboard Serial, BIOS Serial, CPU ID, Disk Serial)
+            // completely unchanged - silently changes machine_id, forcing
+            // an unnecessary re-activation. This follows the same
+            // "no signal that can drift without the underlying hardware
+            // actually changing belongs in the hash" principle already
+            // applied to MAC addresses (see their removal notes above).
             const Signal* signals[] = {
                 &r.systemUuid, &r.systemSerial, &r.baseboardSerial, &r.biosSerial,
-                &r.cpuId, &r.diskSerial, &r.machineGuid,
+                &r.cpuId, &r.diskSerial,
                 &r.manufacturer, &r.family, &r.product, &r.sku
             };
             for (const Signal* s : signals) AppendSignal(ss, *s);
@@ -981,7 +1002,7 @@ static std::wstring Canonicalize(const IdentityRecord& r) {
         }
 
         case PlatformKind::WineMacOS: {
-            ss << L"PROFILE=MACOS_WINE\nVERSION=2\n";
+            ss << L"PROFILE=MACOS_WINE\n";
             AppendSignal(ss, r.macPlatformUuid);
             AppendSignal(ss, r.macPlatformSerial);
             // macPrimaryMac removed - see field declaration comment.
@@ -992,8 +1013,28 @@ static std::wstring Canonicalize(const IdentityRecord& r) {
         }
 
         case PlatformKind::WineLinux: {
-            ss << L"PROFILE=LINUX_WINE\nVERSION=2\n";
-            AppendSignal(ss, r.linuxMachineId);
+            ss << L"PROFILE=LINUX_WINE\n";
+            // Unlike Windows (which has ~10 independent hardware signals
+            // remaining even after excluding its OS-instance-specific
+            // Machine GUID), Linux has only ONE other meaningfully unique
+            // signal at all: linuxProductUuid - and it is very often
+            // unavailable (root-only, or absent entirely in containers -
+            // see HasAtLeastCoreIdentity's own comment above).
+            // linuxBoardVendor is explicitly NOT unique (identical across
+            // every VM under the same hypervisor - same reasoning as its
+            // exclusion from acceptance above) and cloudInstanceId is empty
+            // on any non-cloud system. So linuxMachineId can only be safely
+            // excluded from the hash when product_uuid is ALSO genuinely
+            // available to take over as the stable signal - for the many
+            // real-world non-root, non-cloud Linux installs where
+            // product_uuid is not available at all, machine-id remains the
+            // only signal with any real uniqueness, so it stays in the
+            // hash for them (accepting that a fresh distro reinstall will
+            // change their machine_id - unavoidable there without leaving
+            // those installs with no unique signal at all).
+            if (!r.linuxProductUuid.valid) {
+                AppendSignal(ss, r.linuxMachineId);
+            }
             AppendSignal(ss, r.linuxProductUuid);
             // linuxPrimaryMac removed - see field declaration comment.
             AppendSignal(ss, r.linuxBoardVendor);
