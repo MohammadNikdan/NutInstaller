@@ -1267,6 +1267,17 @@ namespace NutriculaInstaller
                     // generic "temporary server error" messages below - this
                     // is a permanent, non-retryable outcome for this exact
                     // device, with clear, specific guidance for the user.
+                    // VPS IP-Binding: reached when this install was detected
+                    // as a VPS (device_type=windows_vm) but the server could
+                    // not determine a valid connecting IP to bind the
+                    // license to at all - should be essentially unreachable
+                    // in practice (nutricula_client_ip() already validates
+                    // REMOTE_ADDR before this point), so this message stays
+                    // generic rather than exposing the internal reason.
+                    case "vps_ip_unavailable":
+                        return "This license could not be activated on this VPS right now. " +
+                               "Please try again in a moment, or contact Nutricula support if this continues.";
+
                     case "device_already_licensed":
                         return "This device has already been used to register another license. " +
                                "Please either activate your license on a different device, or contact support.";
