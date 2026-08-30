@@ -52,6 +52,8 @@
     <Compile Include="CryptoService.cs" />
     <Compile Include="TerminalDiscoveryService.cs" />
     <Compile Include="UiHelpers.cs" />
+    <Compile Include="VendorPublicKeyEmbedded.cs" />
+    <Compile Include="SelfIntegrityCheck.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
   </ItemGroup>
 
