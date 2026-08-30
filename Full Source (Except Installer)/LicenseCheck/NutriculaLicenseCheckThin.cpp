@@ -117,6 +117,128 @@ std::atomic<bool> g_publicKeyLoaded{false};
 constexpr long long STALE_COORDINATOR_DEGRADE_SECONDS = 21 * 60; // 21 minutes
 std::atomic<unsigned long long> g_lastVerifiedTierTickMs{0};
 
+// ============================================================================
+// Anti-debug / anti-tamper (2026 hardening).
+//
+// HONEST SCOPE: none of this defeats a sufficiently determined attacker with
+// kernel-level tooling, a hardware debugger, or the willingness to patch
+// this very code out of the binary - no purely software, source-level
+// technique can. What this DOES meaningfully raise the bar against is the
+// common case: attaching an ordinary user-mode debugger (x64dbg, OllyDbg,
+// Cheat Engine, WinDbg) to this process and editing g_tier directly in
+// memory, or single-stepping through Poll() to watch/redirect its logic.
+// Multiple independent detection methods are used because each can be
+// individually patched around once found - requiring an attacker to find
+// and defeat all of them raises the effort needed well above "flip one
+// byte", even though it still doesn't reach "impossible".
+// ============================================================================
+
+using NtQueryInformationProcessFn = LONG(WINAPI*)(HANDLE, ULONG, PVOID, ULONG, PULONG);
+
+bool IsDebuggerAttached()
+{
+    // Method 1: the standard, well-known API - trivially patched around by
+    // itself, but still catches naive attach attempts and unmodified tools.
+    if (IsDebuggerPresent()) return true;
+
+    // Method 2: remote debugger check - catches some debuggers Method 1 misses
+    // (e.g. certain kernel-assisted or "stealth" debuggers).
+    BOOL remoteDebugger = FALSE;
+    if (CheckRemoteDebuggerPresent(GetCurrentProcess(), &remoteDebugger) && remoteDebugger) return true;
+
+    // Method 3: NtQueryInformationProcess(ProcessDebugPort) - reads a lower-
+    // level kernel structure than the two API calls above, so a debugger
+    // that hides itself from IsDebuggerPresent (a common evasion trick)
+    // often still shows up here. Resolved via GetProcAddress rather than
+    // linking ntdll.lib directly, matching this project's existing pattern
+    // for undocumented ntdll exports (see DetectWineHostOS in the
+    // MachineID DLL).
+    HMODULE ntdll = GetModuleHandleA("ntdll.dll");
+    if (ntdll)
+    {
+        auto ntQueryInformationProcess = reinterpret_cast<NtQueryInformationProcessFn>(
+            GetProcAddress(ntdll, "NtQueryInformationProcess"));
+        if (ntQueryInformationProcess)
+        {
+            const ULONG ProcessDebugPort = 7;
+            DWORD_PTR debugPort = 0;
+            ULONG returned = 0;
+            if (ntQueryInformationProcess(GetCurrentProcess(), ProcessDebugPort,
+                &debugPort, sizeof(debugPort), &returned) == 0 && debugPort != 0)
+            {
+                return true;
+            }
+        }
+    }
+
+    // Method 4: a coarse timing check - single-stepping or breakpointing
+    // through this exact sequence of instructions takes drastically longer
+    // in wall-clock time than executing it normally, even though each
+    // individual API call above is fast. A generous threshold (50ms) is
+    // used deliberately: this must never produce a false positive on a
+    // slow/loaded but otherwise legitimate machine, since a false positive
+    // here means denying a paying customer their license.
+    LARGE_INTEGER freq, start, end;
+    QueryPerformanceFrequency(&freq);
+    QueryPerformanceCounter(&start);
+    volatile int dummy = 0;
+    for (int i = 0; i < 1000; i++) dummy += i;
+    QueryPerformanceCounter(&end);
+    double elapsedMs = static_cast<double>(end.QuadPart - start.QuadPart) * 1000.0 / static_cast<double>(freq.QuadPart);
+    if (elapsedMs > 50.0) return true;
+
+    return false;
+}
+
+// Cache of the last genuinely, independently signature-verified canonical +
+// its signature (NOT just the resulting tier int) - see GetLicenseTier's own
+// comment below for why this, rather than trusting g_tier alone, is the
+// actual point of this whole section.
+std::mutex g_verifiedCacheMutex;
+std::string g_verifiedCanonical;
+std::string g_verifiedSignatureB64;
+int g_verifiedTierClaim = TIER_FREE;
+unsigned long long g_verifiedLicenseExpiresAt = 0; // parsed from canonical, 0 = not a Lease (no expiry field)
+
+// Pulls "license_expires_at=" out of a pipe-delimited canonical string - a
+// minimal, local parse (not the full LicenseProtocol parser, which lives in
+// the Coordinator) just so a replayed OLD-but-genuinely-signed canonical
+// (see GetLicenseTier) can be caught even without contacting the server
+// again. Returns 0 if the field isn't present (e.g. a Reject canonical,
+// which has no license_expires_at at all).
+unsigned long long ParseLicenseExpiresAt(const std::string& canonical)
+{
+    const std::string key = "|license_expires_at=";
+    size_t pos = canonical.find(key);
+    if (pos == std::string::npos) return 0;
+    pos += key.size();
+    unsigned long long value = 0;
+    while (pos < canonical.size() && canonical[pos] >= '0' && canonical[pos] <= '9')
+    {
+        value = value * 10 + static_cast<unsigned long long>(canonical[pos] - '0');
+        pos++;
+    }
+    return value;
+}
+
+// Plain wall-clock read, deliberately NOT the full ClockAnchor treatment
+// (that lives in the Coordinator, which is what actually gates whether a
+// Lease gets issued in the first place). This is only a defense-in-depth
+// sanity check against a directly-injected, OLD-but-genuinely-signed
+// canonical being replayed into this DLL's memory - even a raw,
+// tamperable wall-clock read is strictly better here than no check at all,
+// since the alternative is trusting the replayed value forever.
+unsigned long long ThinDllNowUnixSeconds()
+{
+    FILETIME ft;
+    GetSystemTimeAsFileTime(&ft);
+    ULARGE_INTEGER v;
+    v.LowPart = ft.dwLowDateTime;
+    v.HighPart = ft.dwHighDateTime;
+    const unsigned long long EPOCH_DIFF_100NS = 116444736000000000ULL;
+    return (v.QuadPart - EPOCH_DIFF_100NS) / 10000000ULL;
+}
+
 bool EnsurePublicKeyLoaded()
 {
     if (g_publicKeyLoaded.load()) return true;
@@ -180,9 +302,52 @@ extern "C" __declspec(dllexport) int __cdecl Nutricula_Initialize()
     return EnsurePublicKeyLoaded() ? 1 : 0;
 }
 
+// How often GetLicenseTier actually re-runs the real cryptographic
+// re-verification, rather than every single call - this function runs in
+// MQL's OnTick hot path (architecture point 3), which can fire hundreds or
+// thousands of times per second on an active chart; a full RSA signature
+// verification on every single call would be far too slow to be practical
+// there. An attacker who patches g_tier in memory now only gets away with
+// it for at most this long before the next real re-verification catches
+// and reverts it - not "never checked" (the original gap), and not
+// "checked every microsecond" (too slow to ship).
+constexpr unsigned long long TIER_REVERIFY_INTERVAL_MS = 3000; // 3 seconds
+std::atomic<unsigned long long> g_lastReverifyTickMs{0};
+std::atomic<bool> g_lastReverifyResult{true}; // cached outcome between real re-verifications
+
 extern "C" __declspec(dllexport) int __cdecl Nutricula_GetLicenseTier()
 {
-    return g_tier.load();
+    int cached = g_tier.load();
+    if (cached != TIER_LICENSED) return cached;
+
+    unsigned long long nowTick = GetTickCount64();
+    unsigned long long lastTick = g_lastReverifyTickMs.load();
+    if (lastTick != 0 && (nowTick - lastTick) < TIER_REVERIFY_INTERVAL_MS)
+    {
+        // Within the rate-limit window - use the last real result rather
+        // than re-running expensive crypto on every hot-path call.
+        return g_lastReverifyResult.load() ? TIER_LICENSED : TIER_FREE;
+    }
+
+    // Time for a real re-verification. The actual anti-tamper point: g_tier
+    // alone is NOT trusted for a TIER_LICENSED claim, no matter what value
+    // it currently holds - it is cross-checked against an independent
+    // re-verification of the last genuinely signed canonical this process
+    // itself received and already verified once (in Poll). Patching g_tier
+    // directly in memory (e.g. via a debugger or Cheat-Engine-style tool)
+    // no longer has unlimited effect: it is caught and reverted within
+    // TIER_REVERIFY_INTERVAL_MS at the latest.
+    bool ok = !IsDebuggerAttached();
+    if (ok)
+    {
+        std::lock_guard<std::mutex> lock(g_verifiedCacheMutex);
+        ok = (g_verifiedTierClaim == TIER_LICENSED) &&
+             ServerSignatureVerify::Verify(g_verifiedCanonical, g_verifiedSignatureB64) &&
+             (g_verifiedLicenseExpiresAt == 0 || g_verifiedLicenseExpiresAt > ThinDllNowUnixSeconds());
+    }
+    g_lastReverifyResult.store(ok);
+    g_lastReverifyTickMs.store(nowTick);
+    return ok ? TIER_LICENSED : TIER_FREE;
 }
 
 extern "C" __declspec(dllexport) int __cdecl Nutricula_GetLicensePending()
@@ -255,14 +420,29 @@ extern "C" __declspec(dllexport) void __cdecl Nutricula_Poll()
         {
             g_tier.store(TIER_LICENSED);
             g_lastVerifiedTierTickMs.store(GetTickCount64());
+            {
+                std::lock_guard<std::mutex> lock(g_verifiedCacheMutex);
+                g_verifiedCanonical = canonical;
+                g_verifiedSignatureB64 = signatureB64;
+                g_verifiedTierClaim = TIER_LICENSED;
+                g_verifiedLicenseExpiresAt = ParseLicenseExpiresAt(canonical);
+            }
+            // Force GetLicenseTier's own rate-limited cache to re-check
+            // immediately on the next call rather than serving a stale
+            // cached result from before this fresh verification.
+            g_lastReverifyTickMs.store(0);
         }
         else if (sigOk && status.tier == TIER_FREE)
         {
             g_tier.store(TIER_FREE);
+            std::lock_guard<std::mutex> lock(g_verifiedCacheMutex);
+            g_verifiedTierClaim = TIER_FREE;
         }
         else if (sigOk && status.tier == TIER_UPDATE_REQUIRED)
         {
             g_tier.store(TIER_UPDATE_REQUIRED);
+            std::lock_guard<std::mutex> lock(g_verifiedCacheMutex);
+            g_verifiedTierClaim = TIER_UPDATE_REQUIRED;
         }
         else if (!sigOk)
         {
