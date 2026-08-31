@@ -29,17 +29,6 @@ constexpr int MAX_ATTEMPTS = 10;
 constexpr long long MIN_RANDOM_OFFSET_SEC = 240;   // 4:00
 constexpr long long MAX_RANDOM_OFFSET_SEC = 900;   // 15:00
 
-// Free-tier telemetry only (2026): how often an ACTUAL network free_checkin
-// request is sent when there is no lease at all. Deliberately much longer
-// than the paid-tier verify window above - this is pure statistics (which
-// computers are using the free tier), not a security check, so there is no
-// reason to burden the server as often as real license verification. The
-// fast local "do I have a lease" determination itself is NOT slowed down by
-// this - see WorkerLoop, which still wakes on the same MIN_RANDOM_OFFSET_SEC
-// cycle and sets TIER_FREE immediately either way; only the network POST
-// itself is throttled to this interval via m_lastFreeCheckinSentAt.
-constexpr long long FREE_CHECKIN_INTERVAL_SEC = 1800; // 30:00
-
 // Deterministically derives the next-request offset from a lease's
 // refresh token - same token always yields the same offset (so a
 // restart never changes it), but the value is unpredictable to anyone
@@ -418,15 +407,24 @@ void CoordinatorCore::WorkerLoop()
         // this closes for free, since both values were already being
         // read/computed anyway. It is deliberate defense-in-depth, not a
         // solution to full-clone detection - that remains Layer 2's job.
-        std::string localMachineIdForCheck, localDeviceKeyHashForCheck;
+        std::string localMachineIdForCheck, localMachineIdAltForCheck, localDeviceKeyHashForCheck;
         bool machineMatches = false;
         if (local.hasLease)
         {
             bool gotMachineId = MachineIdBridge::GenerateMachineId(localMachineIdForCheck);
+            bool gotMachineIdAlt = MachineIdBridge::GenerateMachineIdWithGuid(localMachineIdAltForCheck);
             bool gotDeviceKeyHash = MachineIdBridge::GetDeviceKeyHash(localDeviceKeyHashForCheck);
-            machineMatches = gotMachineId && gotDeviceKeyHash &&
-                (local.lease.machineId == localMachineIdForCheck) &&
-                (local.lease.deviceKeyHash == localDeviceKeyHashForCheck);
+            // 2026 hardening: check against EITHER variant, not just the
+            // primary one - a computer legitimately activated via the
+            // WithGuid fallback (see the server's own machine_requires_
+            // confirmation flow) has local.lease.machineId equal to the
+            // WithGuid variant, not the primary one; without this OR, this
+            // exact same, legitimately-licensed computer would fail its
+            // own Layer 1 check every single time and be treated as if it
+            // were a clone.
+            machineMatches = gotDeviceKeyHash && (local.lease.deviceKeyHash == localDeviceKeyHashForCheck) &&
+                ((gotMachineId && local.lease.machineId == localMachineIdForCheck) ||
+                 (gotMachineIdAlt && local.lease.machineId == localMachineIdAltForCheck));
         }
 
         // Layer 2 scheduling: the next request time is requested_at + a
@@ -463,19 +461,8 @@ void CoordinatorCore::WorkerLoop()
             // claim to that lease's schedule at all, so it should behave
             // exactly like a fresh install (wait one fresh random window
             // from right now, same as never having had a lease).
-            //
-            // A genuinely EXPIRED local lease gets the free-tier interval
-            // (30 min) instead of the normal paid-tier window - once a
-            // license has actually expired, hammering the server every
-            // 4-15 minutes to re-confirm "still expired" is pure
-            // statistics territory (same as having no lease at all), not
-            // a security-relevant check. A real renewal is still picked
-            // up automatically, just with up to a 30-minute delay instead
-            // of the usual few minutes.
-            bool localLeaseExpired = local.hasLease && machineMatches && local.licenseCurrentlyExpired;
             long long anchor = (local.hasLease && machineMatches) ? local.requestedAt : now;
-            long long offsetToUse = localLeaseExpired ? FREE_CHECKIN_INTERVAL_SEC
-                : (local.hasLease && machineMatches) ? randomOffset : MIN_RANDOM_OFFSET_SEC;
+            long long offsetToUse = (local.hasLease && machineMatches) ? randomOffset : MIN_RANDOM_OFFSET_SEC;
             long long target = anchor + offsetToUse;
             long long waitSeconds = target - EstimatedNow();
             if (waitSeconds > 0)
@@ -545,13 +532,36 @@ void CoordinatorCore::WorkerLoop()
             // never a separately (and therefore potentially stale/replay-
             // able) computed value.
 
-            std::string machineId, deviceKeyHash;
-            if (!MachineIdBridge::GenerateMachineId(machineId) || !MachineIdBridge::GetDeviceKeyHash(deviceKeyHash))
+            std::string primaryMachineId, altMachineId, deviceKeyHash;
+            if (!MachineIdBridge::GenerateMachineId(primaryMachineId) ||
+                !MachineIdBridge::GenerateMachineIdWithGuid(altMachineId) ||
+                !MachineIdBridge::GetDeviceKeyHash(deviceKeyHash))
             {
                 m_state.tier.store(TIER_FAILED);
                 m_state.pending.store(PENDING_IDLE);
                 Sleep(5000);
                 continue;
+            }
+
+            // 2026 hardening - dual machine_id (physical Windows only; on
+            // every other platform primaryMachineId==altMachineId already,
+            // see Nutricula_GenerateMachineIdWithGuid's own comment, so
+            // this reduces to a no-op there). If the local lease already
+            // knows which variant this license is actually stored under
+            // (from a previous successful verify or the original
+            // signup/transfer), put THAT value in the primary "machine_id"
+            // field - this is what the server's own matched-value logic
+            // expects (see license_check.php's $matchedRawMachineId) and
+            // what this Coordinator signs the Challenge message with
+            // below, so the two must agree. Falls back to
+            // primary-first (the common case) when there is no local
+            // lease yet to consult.
+            std::string machineId = primaryMachineId;
+            std::string machineIdAlt = altMachineId;
+            if (local.hasLease && local.lease.machineId == altMachineId && local.lease.machineId != primaryMachineId)
+            {
+                machineId = altMachineId;
+                machineIdAlt = primaryMachineId;
             }
 
             std::string licenseIdForRequest = local.hasLease ? local.lease.licenseId : std::string();
@@ -570,24 +580,24 @@ void CoordinatorCore::WorkerLoop()
                 // the response (if any) is not even inspected - this is
                 // pure telemetry, not something that gates tier or any
                 // other behavior below.
+                //
+                // Free installs always use the WithGuid variant (altMachineId),
+                // never the dual-machine_id complexity Premium needs - see
+                // Nutricula_GenerateMachineIdWithGuid's own comment, point 2.
+                // machine_id_alt is deliberately NOT sent here at all (this
+                // is the one stage where the server treats it as fully
+                // optional and never needs a fallback candidate).
                 std::map<std::string, std::string> checkinFields;
                 checkinFields["v"] = "3";
                 checkinFields["stage"] = "free_checkin";
-                checkinFields["machine_id"] = machineId;
+                checkinFields["machine_id"] = altMachineId;
                 checkinFields["device_key_hash"] = deviceKeyHash;
-                long long nowForCheckin = EstimatedNow();
-                bool dueForNetworkCheckin = (m_lastFreeCheckinSentAt == 0) ||
-                    (nowForCheckin - m_lastFreeCheckinSentAt >= FREE_CHECKIN_INTERVAL_SEC);
-                if (dueForNetworkCheckin)
+                std::string checkinEnvelope = LicenseProtocol::BuildRequestEnvelope(checkinFields);
+                if (!checkinEnvelope.empty())
                 {
-                    std::string checkinEnvelope = LicenseProtocol::BuildRequestEnvelope(checkinFields);
-                    if (!checkinEnvelope.empty())
-                    {
-                        const std::wstring checkinHost = L"nutriculaexpert.com";
-                        const std::wstring checkinPath = L"/license_validator_phps/license_check.php";
-                        Transport::PostEnvelope(checkinHost, checkinPath, checkinEnvelope, 15000);
-                    }
-                    m_lastFreeCheckinSentAt = nowForCheckin;
+                    const std::wstring checkinHost = L"nutriculaexpert.com";
+                    const std::wstring checkinPath = L"/license_validator_phps/license_check.php";
+                    Transport::PostEnvelope(checkinHost, checkinPath, checkinEnvelope, 15000);
                 }
                 m_state.tier.store(TIER_FREE);
                 m_state.pending.store(PENDING_IDLE);
@@ -628,6 +638,7 @@ void CoordinatorCore::WorkerLoop()
                 challengeFields["stage"] = "challenge";
                 challengeFields["license_id"] = licenseIdForRequest;
                 challengeFields["machine_id"] = machineId;
+                challengeFields["machine_id_alt"] = machineIdAlt;
                 challengeFields["device_key_hash"] = deviceKeyHash;
                 std::string challengeEnvelope = LicenseProtocol::BuildRequestEnvelope(challengeFields);
 
@@ -690,6 +701,7 @@ void CoordinatorCore::WorkerLoop()
                 verifyFields["stage"] = "verify";
                 verifyFields["license_id"] = licenseIdForRequest;
                 verifyFields["machine_id"] = machineId;
+                verifyFields["machine_id_alt"] = machineIdAlt;
                 verifyFields["device_key_hash"] = deviceKeyHash;
                 verifyFields["challenge_id"] = challengeParsed.challenge.challengeId;
                 verifyFields["build_id"] = manifest.buildId;
