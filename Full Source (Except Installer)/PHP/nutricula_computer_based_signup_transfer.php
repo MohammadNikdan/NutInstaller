@@ -11,7 +11,8 @@ require_once __DIR__ . '/license_common.php';
    for why this replaces parse_str(). */
 const TRANSFER_ALLOWED_FIELDS = [
     'v', 'rnd_number', 'email', 'purchase_key', 'transfer_key',
-    'machine_id', 'device_public_key', 'local_ip', 'platform_profile',
+    'machine_id', 'machine_id_alt', 'machine_id_alt_confirmed',
+    'device_public_key', 'local_ip', 'platform_profile',
 ];
 
 /* The only platform_profile values the client-side machine ID DLL can ever
@@ -45,6 +46,11 @@ try {
     $transferKeyHash = hash('sha256', $transferKey);
     $rndNumber = trim(nutricula_required_field($fields, 'rnd_number'));
     $newMachineId = strtoupper(trim(nutricula_required_field($fields, 'machine_id')));
+    /* Secondary machine_id variant (2026 hardening) - same defaulting
+       logic as signup.php's identical field. */
+    $newMachineIdAltRaw = trim((string)($fields['machine_id_alt'] ?? ''));
+    $newMachineIdAlt = ($newMachineIdAltRaw !== '') ? strtoupper($newMachineIdAltRaw) : $newMachineId;
+    $machineIdAltConfirmed = (string)($fields['machine_id_alt_confirmed'] ?? '') === '1';
     $newDevicePublicKey = trim(nutricula_required_field($fields, 'device_public_key'));
     /* Client-claimed only - kept for optional monitoring/reference; no
        longer used for device classification or risk scoring at all - see
@@ -62,6 +68,7 @@ try {
     if ($transferKey === '' || strlen($transferKey) > 255) throw new RuntimeException('Invalid transfer key.');
     if (!preg_match('/\A[0-9]{32}\z/', $rndNumber)) throw new RuntimeException('Invalid random number.');
     if (!preg_match('/\A[0-9A-F]{64}\z/', $newMachineId)) throw new RuntimeException('Invalid machine ID.');
+    if (!preg_match('/\A[0-9A-F]{64}\z/', $newMachineIdAlt)) throw new RuntimeException('Invalid machine ID.');
     if ($localIp !== '' && filter_var($localIp, FILTER_VALIDATE_IP) === false) throw new RuntimeException('Invalid local IP.');
 
     $newDevicePublicKeyPem = nutricula_validate_device_public_key($newDevicePublicKey);
@@ -81,6 +88,10 @@ try {
     if ($newEffectiveMachineId === '') {
         // Same fail-closed reasoning as signup.php - no transaction is
         // open yet at this point in the flow.
+        nutricula_reject($config, 'vps_ip_unavailable');
+    }
+    $newEffectiveMachineIdAlt = nutricula_effective_machine_id($newDeviceType, $newMachineIdAlt, $observedIp);
+    if ($newEffectiveMachineIdAlt === '') {
         nutricula_reject($config, 'vps_ip_unavailable');
     }
     // Audit-only, NEVER used in any security decision.
@@ -164,7 +175,8 @@ try {
         nutricula_log_activity($conn, $licenseDbId, $newMachineId, $newDeviceKeyHash, $localIp, $observedIp, 'transfer', 'license_expired', $riskScore);
         nutricula_reject($config, 'license_expired');
     }
-    if (hash_equals((string)$license['machine_id'], $newMachineId)) {
+    if (hash_equals((string)$license['machine_id'], $newMachineId) ||
+        hash_equals((string)$license['machine_id'], $newMachineIdAlt)) {
         nutricula_log_activity($conn, $licenseDbId, $newMachineId, $newDeviceKeyHash, $localIp, $observedIp, 'transfer', 'transfer_same_machine', $riskScore);
         nutricula_reject($config, 'transfer_same_machine');
     }
@@ -219,11 +231,55 @@ try {
         $conn->close();
         nutricula_reject($config, 'license_expired');
     }
-    if (hash_equals((string)$lockedLicense['machine_id'], $newMachineId)) {
+    if (hash_equals((string)$lockedLicense['machine_id'], $newMachineId) ||
+        hash_equals((string)$lockedLicense['machine_id'], $newMachineIdAlt)) {
         $conn->rollback();
         nutricula_log_activity($conn, $licenseDbId, $newMachineId, $newDeviceKeyHash, $localIp, $observedIp, 'transfer', 'transfer_same_machine', $riskScore);
         $conn->close();
         nutricula_reject($config, 'transfer_same_machine');
+    }
+
+    /* 2026 hardening - dual machine_id confirmation flow, with the same
+       device_key-aware safety check as signup.php's INSERT path (see its
+       own comment for the full reasoning) - here applied to "does the NEW
+       machine already hold a different active license" instead of "brand
+       new machine". */
+    if ($machineIdAltConfirmed) {
+        $conflict = nutricula_find_conflicting_license($conn, $productId, $newEffectiveMachineIdAlt, $purchaseKey);
+        if ($conflict !== null) {
+            $conn->rollback();
+            $conn->close();
+            nutricula_reject($config, hash_equals((string)$conflict['device_public_key_hash'], $newDeviceKeyHash)
+                ? 'device_already_licensed' : 'machine_already_licensed');
+        }
+        $finalMachineIdToUse = $newEffectiveMachineIdAlt;
+    } else {
+        $conflictPrimary = nutricula_find_conflicting_license($conn, $productId, $newEffectiveMachineId, $purchaseKey);
+        if ($conflictPrimary === null) {
+            $finalMachineIdToUse = $newEffectiveMachineId;
+        } elseif (hash_equals((string)$conflictPrimary['device_public_key_hash'], $newDeviceKeyHash)) {
+            // Proven to be THIS SAME (new/destination) computer - hard
+            // reject, never offer the alt fallback for a same-device
+            // conflict.
+            $conn->rollback();
+            $conn->close();
+            nutricula_reject($config, 'device_already_licensed');
+        } else {
+            $conflictAlt = nutricula_find_conflicting_license($conn, $productId, $newEffectiveMachineIdAlt, $purchaseKey);
+            if ($conflictAlt === null) {
+                $conn->rollback();
+                $conn->close();
+                nutricula_reject($config, 'machine_requires_confirmation');
+            } elseif (hash_equals((string)$conflictAlt['device_public_key_hash'], $newDeviceKeyHash)) {
+                $conn->rollback();
+                $conn->close();
+                nutricula_reject($config, 'device_already_licensed');
+            } else {
+                $conn->rollback();
+                $conn->close();
+                nutricula_reject($config, 'machine_already_licensed');
+            }
+        }
     }
 
     /* Capture the source ("old") computer's identity before overwriting it. */
@@ -254,7 +310,7 @@ try {
     $update->bind_param(
         'ssssssssiisi',
         $newLicenseUuid,
-        $newEffectiveMachineId,
+        $finalMachineIdToUse,
         $newDevicePublicKey,
         $newDeviceKeyHash,
         $newDeviceType,
@@ -359,7 +415,7 @@ try {
         'v=3' .
         '|license_id=' . $newLicenseUuid .
         '|product_id=' . $productId .
-        '|machine_id=' . $newMachineId .
+        '|machine_id=' . $finalMachineIdToUse .
         '|device_key_hash=' . $newDeviceKeyHash .
         '|license_expires_at=' . $licenseExpires .
         '|requested_at=' . $finalNow .

@@ -393,72 +393,27 @@ function nutricula_log_activity(mysqli $conn, int $licenseDbId, string $machineI
 }
 
 /**
- * Statistics only - records that this computer checked in without having a
- * license, identified by machine_id and/or device_public_key_hash. At least
- * one of the two must be non-empty (enforced by the caller); either one
- * ALONE is sufficient to recognize a returning computer across check-ins -
- * a free install's machine_id can genuinely fail to generate on some
- * systems, in which case the device key is the only identifier available.
- * Deliberately never throws: a failure here can never interfere with the
- * actual response the caller is about to send.
+ * Statistics only - records that this (machine_id, device_public_key_hash)
+ * pair checked in without having a license. Purely additive/informational:
+ * deliberately never throws, so a failure here can never interfere with the
+ * actual license_not_found response the caller is about to send.
  */
-function nutricula_track_unlicensed_checkin(mysqli $conn, ?string $machineId, ?string $deviceKeyHash): void
+function nutricula_track_unlicensed_checkin(mysqli $conn, string $machineId, string $deviceKeyHash): void
 {
-    $machineId = ($machineId !== null && $machineId !== '') ? $machineId : null;
-    $deviceKeyHash = ($deviceKeyHash !== null && $deviceKeyHash !== '') ? $deviceKeyHash : null;
-    if ($machineId === null && $deviceKeyHash === null) return; // nothing to identify this computer by
-
     try {
-        // Look for an existing row by whichever identifier is available -
-        // machine_id first (more stable across device-key resets), then
-        // device_key_hash. Either match is treated as "this same computer".
-        $existingId = null;
-        if ($machineId !== null) {
-            $stmt = $conn->prepare('SELECT id, device_public_key_hash FROM nutricula_unlicensed_checkins WHERE machine_id = ? LIMIT 1');
-            $stmt->bind_param('s', $machineId);
-            $stmt->execute();
-            $row = $stmt->get_result()->fetch_assoc();
-            $stmt->close();
-            if ($row) $existingId = (int)$row['id'];
-        }
-        if ($existingId === null && $deviceKeyHash !== null) {
-            $stmt = $conn->prepare('SELECT id FROM nutricula_unlicensed_checkins WHERE device_public_key_hash = ? LIMIT 1');
-            $stmt->bind_param('s', $deviceKeyHash);
-            $stmt->execute();
-            $row = $stmt->get_result()->fetch_assoc();
-            $stmt->close();
-            if ($row) $existingId = (int)$row['id'];
-        }
-
-        if ($existingId !== null) {
-            // Touch last_seen_at, and opportunistically fill in whichever
-            // identifier was previously missing (e.g. machine_id becomes
-            // available on a later check-in after initially failing).
-            $stmt = $conn->prepare(
-                'UPDATE nutricula_unlicensed_checkins
-                 SET last_seen_at = NOW(),
-                     machine_id = COALESCE(machine_id, ?),
-                     device_public_key_hash = COALESCE(device_public_key_hash, ?)
-                 WHERE id = ?'
-            );
-            $stmt->bind_param('ssi', $machineId, $deviceKeyHash, $existingId);
-            $stmt->execute();
-            $stmt->close();
-            return;
-        }
-
         $stmt = $conn->prepare(
             'INSERT INTO nutricula_unlicensed_checkins
              (machine_id, device_public_key_hash, first_seen_at, last_seen_at)
-             VALUES (?, ?, NOW(), NOW())'
+             VALUES (?, ?, NOW(), NOW())
+             ON DUPLICATE KEY UPDATE last_seen_at = NOW()'
         );
+        if (!$stmt) {
+            error_log('[Nutricula unlicensed tracking] prepare failed');
+            return;
+        }
         $stmt->bind_param('ss', $machineId, $deviceKeyHash);
         if (!$stmt->execute()) {
-            // Benign race: another concurrent check-in from the same
-            // computer inserted first - not an error worth logging.
-            if ($conn->errno !== 1062) {
-                error_log('[Nutricula unlicensed tracking] insert failed: ' . $conn->error);
-            }
+            error_log('[Nutricula unlicensed tracking] insert/update failed');
         }
         $stmt->close();
     } catch (Throwable $e) {
@@ -620,6 +575,45 @@ function nutricula_is_vps_device_type(string $deviceType): bool
     back to $rawMachineId for a VPS device_type in that case; doing so would
     quietly disable this entire binding for exactly the failure case it
     exists to be strict about. */
+/**
+ * Returns the conflicting row (specifically its device_public_key_hash) if
+ * the given machine_id currently has an ACTIVE, non-expired license
+ * (within the same product) tied to a DIFFERENT purchase_key than
+ * $excludePurchaseKey - or null if there is no such conflict.
+ *
+ * WHY THIS RETURNS THE DEVICE KEY, NOT JUST A BOOLEAN (2026 hardening,
+ * dual machine_id safety fix): a machine_id collision alone is NOT enough
+ * to tell "a genuinely different physical computer happens to share this
+ * identifier" apart from "this is literally the SAME computer, trying to
+ * activate a second purchase_key on itself" (e.g. testing, a mistaken
+ * re-entry, or someone deliberately trying to stack two licenses on one
+ * machine by exploiting the primary/WithGuid fallback). device_key is the
+ * disambiguator: it is generated once per computer and never reused across
+ * genuinely different machines (DPAPI-protected, effectively impossible to
+ * coincidentally collide) - see nutricula_computer_based_signup.php's own
+ * comment at its call site for exactly how this is used to close that gap.
+ *
+ * Scoped to the same product only (matching the existing uq_product_device
+ * pattern) - a machine_id having an active license for a DIFFERENT product
+ * is not a conflict.
+ */
+function nutricula_find_conflicting_license(mysqli $conn, int $productId, string $machineId, string $excludePurchaseKey): ?array
+{
+    $stmt = $conn->prepare(
+        'SELECT id, device_public_key_hash FROM nutricula_licenses
+         WHERE product_id = ? AND machine_id = ? AND purchase_key != ?
+               AND status = "active" AND license_expires_at > ?
+         LIMIT 1'
+    );
+    if (!$stmt) throw new RuntimeException('DB prepare failed.');
+    $now = time();
+    $stmt->bind_param('issi', $productId, $machineId, $excludePurchaseKey, $now);
+    $stmt->execute();
+    $row = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+    return $row ?: null;
+}
+
 function nutricula_effective_machine_id(string $deviceType, string $rawMachineId, string $observedIp): string
 {
     if (!nutricula_is_vps_device_type($deviceType)) {

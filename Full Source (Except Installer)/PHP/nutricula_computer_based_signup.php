@@ -11,7 +11,8 @@ require_once __DIR__ . '/license_common.php';
    replaces parse_str() here. */
 const SIGNUP_ALLOWED_FIELDS = [
     'v', 'rnd_number', 'email', 'purchase_key', 'transfer_key',
-    'machine_id', 'device_public_key', 'local_ip', 'platform_profile',
+    'machine_id', 'machine_id_alt', 'machine_id_alt_confirmed',
+    'device_public_key', 'local_ip', 'platform_profile',
 ];
 
 /* The only platform_profile values the client-side machine ID DLL can ever
@@ -40,6 +41,17 @@ try {
     $purchaseKey = trim(nutricula_required_field($fields, 'purchase_key'));
     $rndNumber = trim(nutricula_required_field($fields, 'rnd_number'));
     $machineId = strtoupper(trim(nutricula_required_field($fields, 'machine_id')));
+    /* Secondary machine_id variant (2026 hardening, physical Windows dual-
+       identity flow - see nutricula_machine_id_has_active_license's own
+       doc comment for why this exists). Optional: absent entirely for
+       every non-Windows-physical client (they are byte-identical anyway -
+       see Nutricula_GenerateMachineIdWithGuid's own comment) and for any
+       older client that predates this feature; defaults to the same value
+       as $machineId so every OR-based comparison below degrades cleanly
+       to a plain single-value check. */
+    $machineIdAltRaw = trim((string)($fields['machine_id_alt'] ?? ''));
+    $machineIdAlt = ($machineIdAltRaw !== '') ? strtoupper($machineIdAltRaw) : $machineId;
+    $machineIdAltConfirmed = (string)($fields['machine_id_alt_confirmed'] ?? '') === '1';
     $devicePublicKey = trim(nutricula_required_field($fields, 'device_public_key'));
     /* Client-claimed only - NEVER treated as authoritative for any security
        decision, and no longer used for device classification or risk
@@ -60,6 +72,7 @@ try {
     if ($purchaseKey === '' || strlen($purchaseKey) > 255) throw new RuntimeException('Invalid purchase key.');
     if (!preg_match('/\A[0-9]{32}\z/', $rndNumber)) throw new RuntimeException('Invalid random number.');
     if (!preg_match('/\A[0-9A-F]{64}\z/', $machineId)) throw new RuntimeException('Invalid machine ID.');
+    if (!preg_match('/\A[0-9A-F]{64}\z/', $machineIdAlt)) throw new RuntimeException('Invalid machine ID.');
     if ($localIp !== '' && filter_var($localIp, FILTER_VALIDATE_IP) === false) throw new RuntimeException('Invalid local IP.');
 
     $devicePublicKeyPem = nutricula_validate_device_public_key($devicePublicKey);
@@ -95,6 +108,15 @@ try {
         // closed: never silently activate a VPS install without a real IP
         // binding in place. No transaction is open yet at this point in
         // the flow, so no rollback() is needed here.
+        nutricula_reject($config, 'vps_ip_unavailable');
+    }
+    // Same treatment for the secondary variant - for every device_type
+    // other than physical Windows, $machineIdAlt === $machineId already
+    // (see its own comment above), so this is simply the same effective
+    // value again; for physical Windows (never VPS-bound) it is just the
+    // raw secondary value unchanged by nutricula_effective_machine_id.
+    $effectiveMachineIdAlt = nutricula_effective_machine_id($deviceType, $machineIdAlt, $observedIp);
+    if ($effectiveMachineIdAlt === '') {
         nutricula_reject($config, 'vps_ip_unavailable');
     }
     // Audit-only, NEVER used in any security decision - see the
@@ -139,7 +161,8 @@ try {
            capitalization at signup vs. now. */
         if (strcasecmp((string)$existing['user_email'], $email) !== 0 ||
             (int)$existing['product_id'] !== $productId ||
-            !hash_equals((string)$existing['machine_id'], $effectiveMachineId)) {
+            (!hash_equals((string)$existing['machine_id'], $effectiveMachineId) &&
+             !hash_equals((string)$existing['machine_id'], $effectiveMachineIdAlt))) {
             // Note: device_public_key_hash is NOT compared here. The device
             // key is normally stable and reused as-is across activations on
             // the same computer (see MachineIdService.GetDevicePublicKey -
@@ -147,13 +170,18 @@ try {
             // new one), so it will typically already match anyway; but even
             // if it happened to differ, that is handled below via the same
             // stale-token state machine, not an identity-mismatch rejection.
-            // machine_id is still required to match - a genuinely different
-            // computer is a hard reject; that is what Transfer is for.
+            // machine_id is checked against BOTH variants (2026 hardening) -
+            // a genuine match on EITHER one is accepted, since a customer
+            // who originally activated via the WithGuid fallback (their
+            // primary/no-GUID variant was already taken by someone else's
+            // license) must still be able to re-signup normally later.
             $conn->rollback();
             nutricula_reject($config, 'signup_identity_mismatch');
         }
 
         $licenseId = (int)$existing['id'];
+        $finalMachineIdUsed = hash_equals((string)$existing['machine_id'], $effectiveMachineId)
+            ? $effectiveMachineId : $effectiveMachineIdAlt;
 
         if ($existing['status'] !== 'active') {
             $conn->rollback();
@@ -214,7 +242,7 @@ try {
              WHERE id=?'
         );
         if (!$update) throw new RuntimeException('DB prepare failed.');
-        $update->bind_param('ssssssi', $effectiveMachineId, $devicePublicKey, $deviceKeyHash, $localIp, $observedIp, $vpsBoundIp, $licenseId);
+        $update->bind_param('ssssssi', $finalMachineIdUsed, $devicePublicKey, $deviceKeyHash, $localIp, $observedIp, $vpsBoundIp, $licenseId);
         if (!$update->execute()) throw new RuntimeException('DB update failed.');
         $update->close();
 
@@ -224,6 +252,72 @@ try {
         $licenseExpires = nutricula_total_expiration($duration);
         $newRefreshToken = nutricula_generate_refresh_token();
         $newRefreshTokenHash = hash('sha256', $newRefreshToken);
+
+        /* 2026 hardening - dual machine_id confirmation flow, with a
+           critical device_key-aware safety check (see
+           nutricula_find_conflicting_license's own doc comment for the
+           full reasoning): a machine_id collision alone does NOT prove
+           "a different physical computer" - it could just as easily be
+           THIS SAME computer attempting to activate a second purchase_key
+           on itself (testing, a mistaken re-entry, or a deliberate attempt
+           to stack two licenses on one machine via the WithGuid fallback).
+           device_key is the disambiguator: if the conflicting record's
+           device_key matches what THIS request is presenting, it is
+           provably the same physical computer - reject immediately,
+           never offer the alt fallback or confirmation dialog for a
+           same-device conflict. Only a device_key MISMATCH proves this is
+           genuinely a different machine sharing a coincidentally-identical
+           hardware-signal hash, which is the only case the fallback exists
+           to handle at all. */
+        if ($machineIdAltConfirmed) {
+            // The user already saw the confirmation dialog on a previous
+            // attempt and explicitly chose to proceed with the WithGuid
+            // variant - go straight to it, still re-checking for safety
+            // (a lot could have changed since the dialog was shown).
+            $conflict = nutricula_find_conflicting_license($conn, $productId, $effectiveMachineIdAlt, $purchaseKey);
+            if ($conflict !== null) {
+                $conn->rollback();
+                nutricula_reject($config, hash_equals((string)$conflict['device_public_key_hash'], $deviceKeyHash)
+                    ? 'device_already_licensed' : 'machine_already_licensed');
+            }
+            $finalMachineIdUsed = $effectiveMachineIdAlt;
+        } else {
+            $conflictPrimary = nutricula_find_conflicting_license($conn, $productId, $effectiveMachineId, $purchaseKey);
+            if ($conflictPrimary === null) {
+                // Common case: this machine_id is either brand new or its
+                // previous license has expired - proceed immediately, no
+                // confirmation dialog needed.
+                $finalMachineIdUsed = $effectiveMachineId;
+            } elseif (hash_equals((string)$conflictPrimary['device_public_key_hash'], $deviceKeyHash)) {
+                // Proven to be THIS SAME computer (device_key matches) -
+                // hard reject, never offer the alt fallback for a
+                // same-device conflict.
+                $conn->rollback();
+                nutricula_reject($config, 'device_already_licensed');
+            } else {
+                // Genuinely a different physical computer (different
+                // device_key) that happens to share the primary
+                // machine_id - safe to consider the alt fallback.
+                $conflictAlt = nutricula_find_conflicting_license($conn, $productId, $effectiveMachineIdAlt, $purchaseKey);
+                if ($conflictAlt === null) {
+                    $conn->rollback();
+                    nutricula_reject($config, 'machine_requires_confirmation');
+                } elseif (hash_equals((string)$conflictAlt['device_public_key_hash'], $deviceKeyHash)) {
+                    // This computer's OWN alt identity already has a
+                    // different active license on it too (e.g. a previous
+                    // WithGuid-confirmed activation under yet another
+                    // purchase_key) - still the same device, still a hard
+                    // reject.
+                    $conn->rollback();
+                    nutricula_reject($config, 'device_already_licensed');
+                } else {
+                    // Both variants already belong to other, genuinely
+                    // different physical computers - no fallback possible.
+                    $conn->rollback();
+                    nutricula_reject($config, 'machine_already_licensed');
+                }
+            }
+        }
 
         $insert = $conn->prepare(
             'INSERT INTO nutricula_licenses
@@ -242,7 +336,7 @@ try {
             $purchaseKey,
             $productId,
             $productName,
-            $effectiveMachineId,
+            $finalMachineIdUsed,
             $devicePublicKey,
             $deviceKeyHash,
             $deviceType,
@@ -307,7 +401,7 @@ try {
         'v=3' .
         '|license_id=' . $licenseUuid .
         '|product_id=' . $productId .
-        '|machine_id=' . $machineId .
+        '|machine_id=' . $finalMachineIdUsed .
         '|device_key_hash=' . $deviceKeyHash .
         '|license_expires_at=' . $licenseExpires .
         '|requested_at=' . $now .

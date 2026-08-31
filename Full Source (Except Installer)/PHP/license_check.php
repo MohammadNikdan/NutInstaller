@@ -14,7 +14,7 @@ const CHECK_ALLOWED_FIELDS = [
     'challenge_id', 'signature', 'build_id', 'ex5_hash', 'ex4_hash', 'dll32_hash', 'dll64_hash', 'service_hash', 'broker_hash',
     'refresh_token',
 ];
-const CHALLENGE_STAGE_FIELDS = ['v', 'stage', 'license_id', 'machine_id', 'device_key_hash', 'local_ip'];
+const CHALLENGE_STAGE_FIELDS = ['v', 'stage', 'license_id', 'machine_id', 'machine_id_alt', 'device_key_hash', 'local_ip'];
 /* Free-tier telemetry (2026): a lightweight, unauthenticated check-in the
    Coordinator sends periodically whenever it has NO usable local lease at
    all (missing file, corrupt file, or a lease that failed Layer 1's
@@ -41,7 +41,7 @@ const FREE_CHECKIN_STAGE_FIELDS = ['v', 'stage', 'machine_id', 'device_key_hash'
    comparison against nutricula_build_manifests below, which is the only
    source of "expected" hashes this endpoint ever consults. */
 const VERIFY_STAGE_FIELDS = [
-    'v', 'stage', 'license_id', 'machine_id', 'device_key_hash', 'local_ip', 'challenge_id', 'signature',
+    'v', 'stage', 'license_id', 'machine_id', 'machine_id_alt', 'device_key_hash', 'local_ip', 'challenge_id', 'signature',
     'build_id', 'ex5_hash', 'ex4_hash', 'dll32_hash', 'dll64_hash', 'service_hash', 'broker_hash',
     'refresh_token',
 ];
@@ -109,29 +109,15 @@ try {
                 throw new RuntimeException('Field not valid for this stage: ' . $key);
             }
         }
-        // Both optional here (unlike verify) - a free install's machine_id
-        // can genuinely fail to generate on some systems (see
-        // NutriculaMachineId's own acceptance logic); the device key alone
-        // is then sufficient to recognize this computer across check-ins.
-        // At least one of the two must be present and validly formatted.
-        $rawMachineId = isset($fields['machine_id']) ? strtoupper(trim($fields['machine_id'])) : '';
-        $rawDeviceKeyHash = isset($fields['device_key_hash']) ? strtoupper(trim($fields['device_key_hash'])) : '';
-        $checkinMachineId = ($rawMachineId !== '') ? $rawMachineId : null;
-        $checkinDeviceKeyHash = ($rawDeviceKeyHash !== '') ? $rawDeviceKeyHash : null;
-        if ($checkinMachineId === null && $checkinDeviceKeyHash === null) {
-            throw new RuntimeException('At least one of machine_id or device_key_hash is required.');
-        }
-        if ($checkinMachineId !== null && !preg_match('/\A[0-9A-F]{64}\z/', $checkinMachineId)) {
-            throw new RuntimeException('Invalid machine ID.');
-        }
-        if ($checkinDeviceKeyHash !== null && !preg_match('/\A[0-9A-F]{64}\z/', $checkinDeviceKeyHash)) {
-            throw new RuntimeException('Invalid device key hash.');
-        }
+        $checkinMachineId = strtoupper(trim(nutricula_required_field($fields, 'machine_id')));
+        $checkinDeviceKeyHash = strtoupper(trim(nutricula_required_field($fields, 'device_key_hash')));
+        if (!preg_match('/\A[0-9A-F]{64}\z/', $checkinMachineId)) throw new RuntimeException('Invalid machine ID.');
+        if (!preg_match('/\A[0-9A-F]{64}\z/', $checkinDeviceKeyHash)) throw new RuntimeException('Invalid device key hash.');
 
         /* Same per-IP rate limit machinery already used elsewhere in this
            file (e.g. the challenge stage below) - a single install pinging
-           roughly every 30 minutes is completely normal and unaffected,
-           while someone scripting rapid-fire fake check-ins to inflate the
+           every ~10 minutes is completely normal and unaffected, while
+           someone scripting rapid-fire fake check-ins to inflate the
            free-tier count gets throttled the same way any other endpoint
            here already throttles abuse. */
         $conn = nutricula_db($config);
@@ -162,12 +148,19 @@ try {
 
     $licenseId = trim(nutricula_required_field($fields, 'license_id'));
     $machineId = strtoupper(trim(nutricula_required_field($fields, 'machine_id')));
+    /* Secondary machine_id variant (2026 hardening) - see the identical,
+       more detailed comment in nutricula_computer_based_signup.php.
+       Optional: defaults to $machineId when absent (every non-Windows-
+       physical client, and any older client predating this feature). */
+    $machineIdAltRaw = trim((string)($fields['machine_id_alt'] ?? ''));
+    $machineIdAlt = ($machineIdAltRaw !== '') ? strtoupper($machineIdAltRaw) : $machineId;
     $deviceKeyHash = strtoupper(trim(nutricula_required_field($fields, 'device_key_hash')));
     $localIp = trim((string)($fields['local_ip'] ?? ''));
     $observedIp = nutricula_client_ip($config);
 
     if (!nutricula_is_valid_uuid($licenseId)) throw new RuntimeException('Invalid license id.');
     if (!preg_match('/\A[0-9A-F]{64}\z/', $machineId)) throw new RuntimeException('Invalid machine ID.');
+    if (!preg_match('/\A[0-9A-F]{64}\z/', $machineIdAlt)) throw new RuntimeException('Invalid machine ID.');
     if (!preg_match('/\A[0-9A-F]{64}\z/', $deviceKeyHash)) throw new RuntimeException('Invalid device key hash.');
     if ($localIp !== '' && filter_var($localIp, FILTER_VALIDATE_IP) === false) throw new RuntimeException('Invalid local IP.');
 
@@ -223,9 +216,22 @@ try {
        byte identical to the pre-existing behavior for every license that
        isn't device_type='windows_vm'. */
     $effectiveMachineId = nutricula_effective_machine_id((string)$license['device_type'], $machineId, $observedIp);
-    if ($effectiveMachineId === '' || !hash_equals((string)$license['machine_id'], $effectiveMachineId)) {
+    $effectiveMachineIdAlt = nutricula_effective_machine_id((string)$license['device_type'], $machineIdAlt, $observedIp);
+    $primaryMatches = ($effectiveMachineId !== '' && hash_equals((string)$license['machine_id'], $effectiveMachineId));
+    $altMatches = ($effectiveMachineIdAlt !== '' && hash_equals((string)$license['machine_id'], $effectiveMachineIdAlt));
+    if (!$primaryMatches && !$altMatches) {
         $rejectTracked('machine_mismatch');
     }
+    /* Whichever raw (client-reported, non-effective) value actually
+       matched what's on file - this is what must go into the signed
+       Lease canonical below, NOT unconditionally $machineId, since a
+       customer activated via the WithGuid fallback has $license['machine_id']
+       equal to the effective form of $machineIdAlt, not $machineId. The
+       client's own Layer 1 local check (CoordinatorCore.cpp) compares the
+       Lease's machine_id against its own freshly recomputed value, so the
+       Lease must carry whichever raw variant genuinely corresponds to
+       what was stored. */
+    $matchedRawMachineId = $primaryMatches ? $machineId : $machineIdAlt;
     if (!hash_equals((string)$license['device_public_key_hash'], $deviceKeyHash)) {
         $rejectTracked('device_key_mismatch');
     }
@@ -375,7 +381,7 @@ try {
             '|challenge_id=' . $challengeId .
             '|nonce=' . $nonceB64 .
             '|license_id=' . $licenseId .
-            '|machine_id=' . $machineId .
+            '|machine_id=' . $matchedRawMachineId .
             '|build_id=' . $buildId .
             '|ex5_hash=' . $ex5Hash .
             '|ex4_hash=' . $ex4Hash .
@@ -568,7 +574,7 @@ try {
             'v=3' .
             '|license_id=' . $licenseId .
             '|product_id=' . (int)$lockedLicense['product_id'] .
-            '|machine_id=' . $machineId .
+            '|machine_id=' . $matchedRawMachineId .
             '|device_key_hash=' . $deviceKeyHash .
             '|license_expires_at=' . $licenseExpires .
             '|requested_at=' . $finalNow .
