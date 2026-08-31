@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using System.Reflection;
 using System.Security.Cryptography;
+using System.Text;
 
 namespace NutriculaInstaller
 {
@@ -21,23 +22,30 @@ namespace NutriculaInstaller
     /// tampered installer that still activates real licenses is
     /// meaningfully higher than editing one file with a hex editor.
     ///
-    /// A separate signing step (mirroring NutriculaSignTool's manifest
-    /// signing) must run AFTER the final Installer.exe is built, producing
-    /// a ".sig" file (SHA-256 of the exe's bytes, signed with the vendor's
-    /// P-256 private key) placed alongside the .exe. That .sig file is what
-    /// this class verifies at startup - it is NOT embedded inside the exe
-    /// itself (that would be circular: signing the exe would change its own
-    /// bytes and invalidate the very hash being signed).
+    /// A separate signing step (NutriculaSignInstaller.exe) must run AFTER
+    /// the final Installer.exe is built. It signs the exe by APPENDING a
+    /// small trailer directly onto the same file - there is no second file
+    /// to distribute; the signed Installer.exe IS the one and only file
+    /// customers ever download. See NutriculaSignInstaller.cpp's own header
+    /// comment for the full trailer format and why appending is safe (the
+    /// PE loader and .NET's own metadata reader never read past what their
+    /// own size fields describe, so trailing bytes are simply invisible to
+    /// them at runtime - this was verified empirically, not just assumed).
     /// </summary>
     internal static class SelfIntegrityCheck
     {
+        private const int SignatureLen = 64;
+        private const int MagicLen = 8;
+        private const int TrailerLen = SignatureLen + MagicLen;
+        private static readonly byte[] MagicBytes = Encoding.ASCII.GetBytes("NUTRSIG1");
+
         /// <summary>
-        /// Returns true if the currently-running executable's SHA-256 hash
-        /// matches a valid, vendor-signed hash found in "<exe>.sig" next to
-        /// it. Never throws - any failure (missing .sig file, corrupt data,
-        /// I/O error) is treated as "not verified", never as a crash that
-        /// could itself be a distinguishing signal for an attacker probing
-        /// this check.
+        /// Returns true if this exe's own trailing signature trailer is
+        /// present and validly signed over everything before it. Never
+        /// throws - any failure (file too short, no magic marker, corrupt
+        /// signature, I/O error) is treated as "not verified", never as a
+        /// crash that could itself be a distinguishing signal for an
+        /// attacker probing this check.
         /// </summary>
         public static bool Verify(out string failureReason)
         {
@@ -45,30 +53,36 @@ namespace NutriculaInstaller
             try
             {
                 string exePath = Assembly.GetExecutingAssembly().Location;
-                string sigPath = exePath + ".sig";
+                byte[] fileBytes = File.ReadAllBytes(exePath);
 
-                if (!File.Exists(sigPath))
+                if (fileBytes.Length < TrailerLen)
                 {
-                    failureReason = "No integrity signature file was found next to the installer.";
+                    failureReason = "This installer file is missing its integrity signature.";
                     return false;
                 }
 
-                byte[] exeBytes = File.ReadAllBytes(exePath);
-                byte[] actualHash;
+                int magicOffset = fileBytes.Length - MagicLen;
+                for (int i = 0; i < MagicLen; i++)
+                {
+                    if (fileBytes[magicOffset + i] != MagicBytes[i])
+                    {
+                        failureReason = "This installer file is missing its integrity signature.";
+                        return false;
+                    }
+                }
+
+                int signatureOffset = fileBytes.Length - TrailerLen;
+                byte[] signatureBytes = new byte[SignatureLen];
+                Array.Copy(fileBytes, signatureOffset, signatureBytes, 0, SignatureLen);
+
+                // Everything BEFORE the trailer is exactly what
+                // NutriculaSignInstaller hashed and signed - never the
+                // trailer itself (that would be circular).
+                int cleanLength = fileBytes.Length - TrailerLen;
+                byte[] cleanHash;
                 using (SHA256 sha256 = SHA256.Create())
                 {
-                    actualHash = sha256.ComputeHash(exeBytes);
-                }
-
-                string signatureB64 = File.ReadAllText(sigPath).Trim();
-                byte[] signatureBytes = Convert.FromBase64String(signatureB64);
-                // Raw (r||s) P-256 signature, 64 bytes - same convention
-                // used everywhere else in this project (device key
-                // signatures, server lease signatures).
-                if (signatureBytes.Length != 64)
-                {
-                    failureReason = "The integrity signature file is malformed.";
-                    return false;
+                    cleanHash = sha256.ComputeHash(fileBytes, 0, cleanLength);
                 }
 
                 using (ECDsaCng ecdsa = new ECDsaCng(CngKey.Import(
@@ -76,7 +90,7 @@ namespace NutriculaInstaller
                     CngKeyBlobFormat.EccPublicBlob)))
                 {
                     ecdsa.HashAlgorithm = CngAlgorithm.Sha256;
-                    bool valid = ecdsa.VerifyHash(actualHash, signatureBytes);
+                    bool valid = ecdsa.VerifyHash(cleanHash, signatureBytes);
                     if (!valid)
                     {
                         failureReason = "The installer's integrity signature does not match this file's contents.";
