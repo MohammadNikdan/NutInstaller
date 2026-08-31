@@ -31,6 +31,7 @@ public:
     static bool Load(const std::wstring& dllDirectory);
 
     static bool GenerateMachineId(std::string& outMachineIdHex);
+    static bool GenerateMachineIdWithGuid(std::string& outMachineIdHex);
     static bool GetDevicePublicKeyB64(std::string& outPublicKeyB64);
     static bool GetDeviceKeyHash(std::string& outHashHex);
     static bool GetLicenseFilePath(std::wstring& outPath);

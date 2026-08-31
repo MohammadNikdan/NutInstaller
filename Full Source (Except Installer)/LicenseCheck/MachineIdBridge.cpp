@@ -23,6 +23,7 @@
 namespace
 {
     typedef int (__cdecl* GenerateMachineIdFn)(char* output, int outputCapacity);
+    typedef int (__cdecl* GenerateMachineIdWithGuidFn)(char* output, int outputCapacity);
     typedef int (__cdecl* GetDevicePublicKeyFn)(char* output, int outputCapacity);
     typedef int (__cdecl* GetDeviceKeyHashFn)(char* output, int outputCapacity);
     // BUG FIX: Nutricula_GetLicensePath's real, confirmed signature (see
@@ -49,6 +50,7 @@ namespace
 
     HMODULE g_module = nullptr;
     GenerateMachineIdFn g_generateMachineId = nullptr;
+    GenerateMachineIdWithGuidFn g_generateMachineIdWithGuid = nullptr;
     GetDevicePublicKeyFn g_getDevicePublicKey = nullptr;
     GetDeviceKeyHashFn g_getDeviceKeyHash = nullptr;
     GetLicensePathFn g_getLicensePath = nullptr;
@@ -78,6 +80,7 @@ bool MachineIdBridge::Load(const std::wstring& dllDirectory)
     if (!g_module) return false;
 
     g_generateMachineId = reinterpret_cast<GenerateMachineIdFn>(GetProcAddress(g_module, "Nutricula_GenerateMachineId"));
+    g_generateMachineIdWithGuid = reinterpret_cast<GenerateMachineIdWithGuidFn>(GetProcAddress(g_module, "Nutricula_GenerateMachineIdWithGuid"));
     g_getDevicePublicKey = reinterpret_cast<GetDevicePublicKeyFn>(GetProcAddress(g_module, "Nutricula_GetDevicePublicKey"));
     g_getDeviceKeyHash = reinterpret_cast<GetDeviceKeyHashFn>(GetProcAddress(g_module, "Nutricula_GetDeviceKeyHash"));
     g_getLicensePath = reinterpret_cast<GetLicensePathFn>(GetProcAddress(g_module, "Nutricula_GetLicensePath"));
@@ -101,6 +104,24 @@ bool MachineIdBridge::GenerateMachineId(std::string& outMachineIdHex)
     if (!g_generateMachineId) return false;
     std::vector<char> buffer(MACHINE_ID_CAPACITY, 0);
     int result = g_generateMachineId(buffer.data(), MACHINE_ID_CAPACITY);
+    if (result != 1) return false;
+    buffer[MACHINE_ID_CAPACITY - 1] = '\0';
+    outMachineIdHex.assign(buffer.data());
+    return outMachineIdHex.size() == 64;
+}
+
+// Secondary machine_id variant (2026 hardening) - see
+// Nutricula_GenerateMachineIdWithGuid's own comment in
+// NutriculaMachineId.cpp. Falls back to the primary variant's own value if
+// the export isn't found at all (an older MachineId DLL predating this
+// feature) - callers then simply send the same value twice, which the
+// server already treats as "no secondary variant available", exactly the
+// same as it does for every non-Windows-physical client today.
+bool MachineIdBridge::GenerateMachineIdWithGuid(std::string& outMachineIdHex)
+{
+    if (!g_generateMachineIdWithGuid) return GenerateMachineId(outMachineIdHex);
+    std::vector<char> buffer(MACHINE_ID_CAPACITY, 0);
+    int result = g_generateMachineIdWithGuid(buffer.data(), MACHINE_ID_CAPACITY);
     if (result != 1) return false;
     buffer[MACHINE_ID_CAPACITY - 1] = '\0';
     outMachineIdHex.assign(buffer.data());
