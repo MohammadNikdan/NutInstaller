@@ -29,6 +29,17 @@ constexpr int MAX_ATTEMPTS = 10;
 constexpr long long MIN_RANDOM_OFFSET_SEC = 240;   // 4:00
 constexpr long long MAX_RANDOM_OFFSET_SEC = 900;   // 15:00
 
+// Free-tier telemetry only (2026): how often an ACTUAL network free_checkin
+// request is sent when there is no lease at all. Deliberately much longer
+// than the paid-tier verify window above - this is pure statistics (which
+// computers are using the free tier), not a security check, so there is no
+// reason to burden the server as often as real license verification. The
+// fast local "do I have a lease" determination itself is NOT slowed down by
+// this - the Coordinator still wakes on the same MIN_RANDOM_OFFSET_SEC
+// cycle and sets TIER_FREE immediately either way; only the network POST
+// itself is throttled to this interval via m_lastFreeCheckinSentAt.
+constexpr long long FREE_CHECKIN_INTERVAL_SEC = 1800; // 30:00
+
 // Deterministically derives the next-request offset from a lease's
 // refresh token - same token always yields the same offset (so a
 // restart never changes it), but the value is unpredictable to anyone
@@ -592,12 +603,19 @@ void CoordinatorCore::WorkerLoop()
                 checkinFields["stage"] = "free_checkin";
                 checkinFields["machine_id"] = altMachineId;
                 checkinFields["device_key_hash"] = deviceKeyHash;
-                std::string checkinEnvelope = LicenseProtocol::BuildRequestEnvelope(checkinFields);
-                if (!checkinEnvelope.empty())
+                long long nowForCheckin = EstimatedNow();
+                bool dueForNetworkCheckin = (m_lastFreeCheckinSentAt == 0) ||
+                    (nowForCheckin - m_lastFreeCheckinSentAt >= FREE_CHECKIN_INTERVAL_SEC);
+                if (dueForNetworkCheckin)
                 {
-                    const std::wstring checkinHost = L"nutriculaexpert.com";
-                    const std::wstring checkinPath = L"/license_validator_phps/license_check.php";
-                    Transport::PostEnvelope(checkinHost, checkinPath, checkinEnvelope, 15000);
+                    std::string checkinEnvelope = LicenseProtocol::BuildRequestEnvelope(checkinFields);
+                    if (!checkinEnvelope.empty())
+                    {
+                        const std::wstring checkinHost = L"nutriculaexpert.com";
+                        const std::wstring checkinPath = L"/license_validator_phps/license_check.php";
+                        Transport::PostEnvelope(checkinHost, checkinPath, checkinEnvelope, 15000);
+                    }
+                    m_lastFreeCheckinSentAt = nowForCheckin;
                 }
                 m_state.tier.store(TIER_FREE);
                 m_state.pending.store(PENDING_IDLE);
