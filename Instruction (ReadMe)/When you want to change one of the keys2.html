@@ -158,18 +158,18 @@ table.summary td b{color:var(--text);}
   <dt>کاربرد</dt><dd>امضای Manifest با <code class="inline">NutriculaSignTool</code>، و امضای خود Installer برای چک خودتمامیتی (Self-Integrity) در برابر دستکاری باینری.</dd>
   <dt>فایل خصوصی</dt><dd><span class="file-tag secret">Keys/VendorSigningKey_Private.pem</span> — حساس، PEM خام</dd>
   <dt>فایل عمومی</dt><dd><span class="file-tag">Keys/VendorSigningKey_Public.pem</span> — PEM خام</dd>
-  <dt>مصرف‌کننده</dt><dd><code class="inline">Coordinator/VendorIdentityPrivate.h</code> (فقط SignTool)، <code class="inline">Coordinator/VendorIdentity.h</code> (Coordinator)، و <code class="inline">VendorPublicKeyEmbedded.cs</code> در ریشهٔ پروژهٔ Installer (کنار <code class="inline">InstallerService.cs</code>)</dd>
+  <dt>مصرف‌کننده</dt><dd><code class="inline">Coordinator/VendorIdentityPrivate.h</code> (SignTool و SignInstaller)، <code class="inline">Coordinator/VendorIdentity.h</code> (Coordinator)، و <code class="inline">VendorPublicKeyEmbedded.cs</code> در ریشهٔ پروژهٔ Installer (کنار <code class="inline">InstallerService.cs</code>)</dd>
 </dl>
 <div class="howto"><b>بعد از تغییرش:</b>
 <ol>
 <li><code class="inline">KeyBaker.exe</code> را اجرا کنید — این ابزار حالا علاوه بر هدرهای C++‎، فایل <code class="inline">../../VendorPublicKeyEmbedded.cs</code> را هم مستقیماً از روی <code class="inline">VendorSigningKey_Public.pem</code> بازتولید می‌کند (مختصات X/Y را با <code class="inline">CryptStringToBinaryA</code> از PEM استخراج می‌کند — دیگر نیازی به کپی دستی بایت‌ها نیست)</li>
 <li>هر ۴ باینری Coordinator <b>و خود SignTool.exe</b> دوباره ساخته شوند</li>
-<li><b>Installer را هم دوباره بسازید</b> — چون <code class="inline">VendorPublicKeyEmbedded.cs</code> تغییر کرده، باید کامپایل شود؛ در غیر این صورت Installer با کلید عمومی <b>قدیمی</b> کامپایل شده باقی می‌ماند و امضای Self-Integrity جدید (که با کلید خصوصی جدید ساخته می‌شود) را هرگز تأیید نخواهد کرد</li>
-<li>بعد از build نهایی Installer، فایل <code class="inline">Installer.exe.sig</code> را با کلید خصوصی <b>جدید</b> Vendor دوباره بسازید (هش SHA-256 فایل exe جدید را امضا کنید) و کنار exe نهایی قرار دهید</li>
+<li><b>Installer را هم دوباره بسازید</b> — چون <code class="inline">VendorPublicKeyEmbedded.cs</code> تغییر کرده</li>
+<li>بعد از build نهایی Installer، <code class="inline">NutriculaSignInstaller.exe</code> را روی آن اجرا کنید (<code class="inline">NutriculaSignInstaller.exe Installer.exe</code>) — این ابزار امضا را مستقیم به انتهای همان فایل اضافه می‌کند؛ نتیجه همچنان <b>یک فایل exe تنها</b> است، هیچ فایل جانبی برای توزیع لازم نیست (به راهنمای «چطور Installer را امضا کنیم» مراجعه کنید)</li>
 <li>Manifest جدید بسازید و امضا کنید</li>
 </ol>
 </div>
-<div class="callout warn">تنها کلیدی که تغییرش هم <b>SignTool.exe</b> و هم <b>Installer.exe</b> را مجبور به rebuild می‌کند — چون این کلید مستقیم داخل هر دوی این ابزارها کامپایل می‌شود (کلید خصوصی در SignTool، کلید عمومی در Installer).</div>
+<div class="callout warn">تنها کلیدی که تغییرش هم <b>SignTool.exe</b> و هم <b>Installer.exe</b> را مجبور به rebuild/re-sign می‌کند — چون این کلید مستقیم داخل هر دوی این ابزارها کامپایل می‌شود (کلید خصوصی در SignTool/SignInstaller، کلید عمومی در Installer).</div>
 </div>
 
 <div class="key-card asymmetric">
@@ -195,7 +195,7 @@ table.summary td b{color:var(--text);}
 <tr><td>Coordinator/IPC Key</td><td><span class="file-tag secret">CoordinatorIdentityKey_Private.pem</span></td><td>DLL نازک + هر ۴ باینری Coordinator</td><td>بله</td><td>خیر</td><td>خیر</td></tr>
 </table>
 
-<div class="callout warn"><b>بعد از rebuild کردن Installer برای تغییر کلید Vendor:</b> یادتان نرود <code class="inline">Installer.exe.sig</code> را هم با کلید خصوصی <b>جدید</b> Vendor دوباره بسازید (روی هش فایل exe نهایی <b>جدید</b>) — یک فایل <code class="inline">.sig</code> ساخته‌شده با کلید قدیمی، یا برای یک exe قدیمی، باعث می‌شود Self-Integrity Check همیشه fail شود و Installer دیگر برای Premium/Transfer قابل‌استفاده نباشد.</div>
+<div class="callout warn"><b>بعد از rebuild کردن Installer برای تغییر کلید Vendor:</b> یادتان نرود <code class="inline">NutriculaSignInstaller.exe</code> را روی exe نهایی <b>جدید</b> دوباره اجرا کنید — یک Installer.exe که هرگز امضا نشده (یا با کلید vendor قدیمی امضا شده) باعث می‌شود Self-Integrity Check همیشه fail شود و Installer دیگر برای Premium/Transfer قابل‌استفاده نباشد.</div>
 
 <div class="callout info"><b>یادآوری از توصیهٔ بالا:</b> صرف‌نظر از این جدول، ساده‌ترین و امن‌ترین روش این است که بعد از هر تغییر کلید، همهٔ ۹ builder + Installer را یک‌بار اجرا کنید.</div>
 

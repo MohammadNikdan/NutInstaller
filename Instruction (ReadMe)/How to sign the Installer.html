@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>راهنمای کامل امضای Installer</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Vazirmatn:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap');
+:root{
+  --bg:#0d1117; --bg-card:#161d27; --border:#26303c; --border-soft:#1c242e;
+  --text:#e6edf3; --text-dim:#8b98a5; --text-faint:#5c6773;
+  --accent:#5fb3a3; --accent-soft:#5fb3a333; --accent-bright:#7fd4c4;
+  --warn:#e0a458; --warn-soft:#e0a45822;
+  --danger:#e2685f; --danger-soft:#e2685f1c;
+  --mono:'JetBrains Mono',monospace; --sans:'Vazirmatn',sans-serif;
+}
+*{box-sizing:border-box;margin:0;padding:0;}
+body{font-family:var(--sans);background:var(--bg);color:var(--text);line-height:1.85;font-size:16px;}
+.main{max-width:960px;margin:0 auto;padding:56px 32px;}
+.hero-eyebrow{font-family:var(--mono);color:var(--accent);font-size:13px;letter-spacing:.1em;text-transform:uppercase;margin-bottom:14px;font-weight:600;}
+h1{font-size:30px;font-weight:800;margin-bottom:14px;letter-spacing:-.01em;}
+h2{font-size:22px;font-weight:700;margin:8px 0 6px;}
+h3{font-size:17px;font-weight:700;margin:20px 0 8px;}
+.hero p{color:var(--text-dim);font-size:16px;margin-bottom:24px;max-width:760px;}
+.section-desc{color:var(--text-dim);font-size:14.5px;margin-bottom:12px;}
+.callout{border-radius:10px;padding:16px 20px;margin:18px 0;font-size:14.5px;border:1px solid;}
+.callout.info{background:var(--accent-soft);border-color:#5fb3a355;color:#a8d9cd;}
+.callout.warn{background:var(--warn-soft);border-color:#e0a45855;color:#f0c896;}
+.callout.danger{background:var(--danger-soft);border-color:#e2685f55;color:#f0a49c;}
+.callout b{color:inherit;}
+hr{border:none;border-top:1px solid var(--border);margin:40px 0;}
+code.inline{font-family:var(--mono);background:var(--bg);padding:2px 7px;border-radius:5px;font-size:13px;color:var(--accent-bright);border:1px solid var(--border-soft);}
+pre{background:#0a0e14;border:1px solid var(--border);border-radius:10px;padding:16px 18px;overflow-x:auto;margin:12px 0;font-size:12.5px;font-family:var(--mono);color:#c9d1d9;line-height:1.7;direction:ltr;text-align:left;}
+pre .c1{color:var(--accent-bright);}
+pre .c3{color:var(--text-faint);}
+
+.step-list{counter-reset:step;margin:20px 0;}
+.step{display:flex;gap:16px;margin-bottom:20px;position:relative;}
+.step:not(:last-child)::after{content:"";position:absolute;right:19px;top:42px;bottom:-20px;width:2px;background:var(--border);}
+.step-num{counter-increment:step;flex-shrink:0;width:40px;height:40px;border-radius:50%;background:var(--accent-soft);color:var(--accent-bright);display:flex;align-items:center;justify-content:center;font-family:var(--mono);font-weight:700;font-size:16px;z-index:1;}
+.step-num::before{content:counter(step);}
+.step-body{flex:1;padding-top:6px;}
+.step-body h3{margin-top:0;}
+.step-body p{color:var(--text-dim);font-size:14.5px;margin-top:4px;}
+
+table.args{width:100%;border-collapse:collapse;margin:14px 0;font-size:13px;}
+table.args th{text-align:right;font-family:var(--mono);font-size:11px;letter-spacing:.04em;color:var(--text-faint);text-transform:uppercase;padding:8px 10px;border-bottom:1px solid var(--border);}
+table.args td{padding:9px 10px;border-bottom:1px solid var(--border-soft);color:var(--text-dim);vertical-align:top;}
+table.args td.n{font-family:var(--mono);color:var(--accent-bright);}
+table.args td b{color:var(--text);}
+</style>
+</head>
+<body>
+<div class="main">
+
+<div class="hero-eyebrow">راهنمای کامل، قدم‌به‌قدم — برای کسی که هیچی از این موضوع نمی‌داند</div>
+<h1>چطور Installer.exe را امضا کنیم</h1>
+<p>این صفحه توضیح می‌دهد <code class="inline">NutriculaSignInstaller.exe</code> دقیقاً چه کاری می‌کند، چرا اصلاً لازم است، چطور اجرایش کنید، و نتیجه چه شکلی است — با یک مثال کامل از ابتدا تا انتها. برخلاف <code class="inline">NutriculaSignTool.exe</code> (که یک فایل <code class="inline">manifest.txt</code> جداگانه می‌سازد)، این ابزار <b>خود فایل Installer.exe را مستقیماً تغییر می‌دهد</b> — در پایان همچنان فقط <b>یک فایل</b> برای توزیع به مشتری دارید.</p>
+
+<div class="callout info"><b>چرا اصلاً به این نیاز داریم؟</b> بدون این امضا، اگر کسی <code class="inline">Installer.exe</code> را با یک ابزار hex-editor دستکاری کند (مثلاً چک اجباری machine_id را حذف کند)، هیچ‌چیز این دستکاری را تشخیص نمی‌دهد. با این امضا، خود Installer در همان لحظهٔ اجرا شدن، یکپارچگی بایت‌های خودش را چک می‌کند — اگر حتی یک بایت دستکاری شده باشد، Installer از انجام Signup/Transfer امتناع می‌کند.</div>
+
+<h2 style="margin-top:36px;">این ابزار دقیقاً چه کاری می‌کند؟</h2>
+<p class="section-desc">یک امضای دیجیتال کوچک (۷۲ بایت) را مستقیم به <b>انتهای</b> همان فایل <code class="inline">Installer.exe</code> اضافه می‌کند — نه یک فایل جداگانه. این ۷۲ بایت اضافه هیچ تأثیری روی اجرای عادی برنامه ندارد (این موضوع مستقیماً تست شده: یک برنامهٔ واقعی بعد از اضافه‌شدن این بایت‌ها دقیقاً مثل قبل اجرا شد) — چون ویندوز و دات‌نت هرگز بایت‌های اضافهٔ انتهای فایل را نمی‌خوانند، فقط تا جایی که برنامهٔ واقعی نیاز دارد را می‌خوانند.</p>
+
+<div class="callout warn"><b>نکتهٔ مهم:</b> این ابزار فایل exe را مستقیماً (in place) تغییر می‌دهد. اگر روی یک فایل که قبلاً امضا شده دوباره اجرایش کنید، امضای قدیمی را برمی‌دارد و امضای تازه می‌گذارد (نه اینکه امضا روی امضا انباشته شود) — پس اجرای چندبارهٔ آن روی یک فایل کاملاً بی‌خطر است.</div>
+
+<hr>
+
+<h2>پیش‌نیاز</h2>
+<p class="section-desc">این ابزار باید یک‌بار build شود (دقیقاً مثل SignTool) — با <code class="inline">Builders\build_SignInstaller.bat</code>. خروجی در <code class="inline">Builders\Builds\NutriculaSignInstaller.exe</code> قرار می‌گیرد.</p>
+
+<div class="step-list">
+
+<div class="step">
+<div class="step-num"></div>
+<div class="step-body">
+<h3>مطمئن شوید Installer.exe کامل و نهایی build شده است</h3>
+<p>این ابزار باید <b>آخرین قدم</b> ساخت Installer باشد — بعد از این‌که مطمئن شدید هیچ تغییر دیگری در کد Installer نمی‌خواهید بدهید. اگر بعداً حتی یک حرف از کد Installer را عوض کنید و دوباره build بگیرید، باید این مرحلهٔ امضا را هم دوباره تکرار کنید.</p>
+</div>
+</div>
+
+<div class="step">
+<div class="step-num"></div>
+<div class="step-body">
+<h3>NutriculaSignInstaller.exe را روی فایل Installer.exe نهایی اجرا کنید</h3>
+<p>از خط فرمان (Command Prompt یا PowerShell)، دقیقاً همین دستور را بزنید:</p>
+<pre><span class="c3">REM جایگزین کنید مسیر واقعی Installer.exe نهایی خودتان را</span>
+NutriculaSignInstaller.exe <span class="c1">"C:\path\to\Installer.exe"</span></pre>
+<p>همین. هیچ آرگومان دیگری لازم نیست.</p>
+</div>
+</div>
+
+<div class="step">
+<div class="step-num"></div>
+<div class="step-body">
+<h3>پیام موفقیت را ببینید</h3>
+<p>اگر همه‌چیز درست پیش برود، دقیقاً همین را می‌بینید:</p>
+<pre>OK: C:\path\to\Installer.exe signed successfully (trailer appended, 72 bytes added).
+This is now the FINAL file to distribute to customers - nothing else needed.</pre>
+<p><b>همین فایل — دقیقاً همان <code class="inline">Installer.exe</code> که الان امضا شد، نه یک فایل جدید</b> — چیزی است که باید به مشتری بدهید. حجم فایل ۷۲ بایت بزرگ‌تر شده (این طبیعی و مورد انتظار است)، ولی اسم فایل و همه‌چیز دیگر دقیقاً همان است.</p>
+</div>
+</div>
+
+<div class="step">
+<div class="step-num"></div>
+<div class="step-body">
+<h3>فایل امضاشده را تست کنید</h3>
+<p>قبل از ارسال به مشتری واقعی، حتماً یک‌بار خودتان همین فایل امضاشده را روی یک کامپیوتر تست اجرا کنید و مطمئن شوید Signup/Transfer به‌درستی کار می‌کند. اگر فایل را دستکاری‌نشده امضا کرده باشید، هیچ فرقی با قبل احساس نمی‌کنید — فقط حالا در پس‌زمینه یک لایهٔ محافظتی اضافه دارید.</p>
+</div>
+</div>
+
+</div>
+
+<hr>
+
+<h2>یک اشتباه رایج که باید از آن پرهیز کنید</h2>
+<div class="callout danger">
+<b>هرگز این ترتیب را برعکس نکنید:</b> اول Installer.exe را کامل و نهایی بسازید، <b>بعد</b> امضا کنید. اگر بعد از امضا کردن، دوباره کد را عوض کرده و compile بگیرید، فایل exe جدید (کامپایل‌شده) اصلاً امضای قبلی را ندارد — چون این یک فایل تازه است، نه همان فایلی که امضا کرده بودید. باید دوباره <code class="inline">NutriculaSignInstaller.exe</code> را روی همین فایل <b>تازه</b> اجرا کنید.
+</div>
+
+<h2>اگر فراموش کنید این کار را انجام دهید چه می‌شود؟</h2>
+<p class="section-desc">اگر Installer.exe را بدون اجرای این ابزار به مشتری بدهید، وقتی مشتری آن را اجرا کند، چک یکپارچگی (Self-Integrity Check) هیچ امضایی پیدا نمی‌کند و <b>Signup/Transfer برای آن مشتری همیشه رد می‌شود</b> — با پیام:</p>
+<pre>This installer file appears to have been modified and cannot be used to
+activate a license. Please download a fresh, unmodified copy of the
+Nutricula installer and try again.</pre>
+<p class="section-desc">حالت رایگان (Free) تحت‌تأثیر این چک نیست و همچنان کار می‌کند — این چک فقط قبل از مصرف purchase_key/transfer_key اجرا می‌شود.</p>
+
+<hr>
+
+<h2>خلاصهٔ کل چرخهٔ ساخت — کجای این مرحله قرار می‌گیرد؟</h2>
+<table class="args">
+<tr><th>#</th><th>مرحله</th></tr>
+<tr><td class="n">۱</td><td>هر ۹ باینری C++‎ (Service/Broker/DLL ها) را build کنید</td></tr>
+<tr><td class="n">۲</td><td>با <code class="inline">NutriculaSignTool.exe</code>، یک <code class="inline">manifest.txt</code> برای این ۹ باینری بسازید و در دیتابیس ثبت کنید</td></tr>
+<tr><td class="n">۳</td><td>Installer.exe را build کنید (این ۹ باینری را به‌عنوان Embedded Resource در خودش جای می‌دهد)</td></tr>
+<tr><td class="n">۴</td><td><b>همین مرحله:</b> <code class="inline">NutriculaSignInstaller.exe</code> را روی Installer.exe نهایی اجرا کنید</td></tr>
+<tr><td class="n">۵</td><td>همین فایل (امضاشده) را به مشتری‌ها بدهید</td></tr>
+</table>
+
+</div>
+</body>
+</html>
