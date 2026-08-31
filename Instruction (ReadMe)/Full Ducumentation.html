@@ -1,0 +1,1239 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>مستندات کامل و جامع سیستم لایسنس‌دهی Nutricula</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Vazirmatn:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap');
+:root{
+  --bg:#0d1117; --bg-card:#161d27; --bg-card2:#1a222e; --border:#26303c; --border-soft:#1c242e;
+  --text:#e6edf3; --text-dim:#9aa7b4; --text-faint:#5c6773;
+  --accent:#5fb3a3; --accent-soft:#5fb3a333; --accent-bright:#7fd4c4;
+  --warn:#e0a458; --warn-soft:#e0a45822;
+  --danger:#e2685f; --danger-soft:#e2685f1c;
+  --blue:#6fa8dc; --blue-soft:#6fa8dc22;
+  --purple:#b19cd9; --purple-soft:#b19cd922;
+  --mono:'JetBrains Mono',monospace; --sans:'Vazirmatn',sans-serif;
+}
+*{box-sizing:border-box;}
+body{font-family:var(--sans);background:var(--bg);color:var(--text);line-height:2;font-size:16px;margin:0;}
+.wrap{max-width:1100px;margin:0 auto;padding:48px 28px 120px;}
+.cover{text-align:center;padding:60px 20px 80px;border-bottom:2px solid var(--border);margin-bottom:50px;}
+.cover .eyebrow{font-family:var(--mono);color:var(--accent);font-size:13px;letter-spacing:.15em;text-transform:uppercase;margin-bottom:18px;}
+.cover h1{font-size:34px;font-weight:800;margin:0 0 16px;letter-spacing:-.01em;}
+.cover .sub{color:var(--text-dim);font-size:16px;max-width:640px;margin:0 auto;}
+h1{font-size:30px;font-weight:800;margin:70px 0 24px;padding-bottom:14px;border-bottom:2px solid var(--accent);letter-spacing:-.01em;scroll-margin-top:20px;}
+h1 .num{color:var(--accent);font-family:var(--mono);margin-left:10px;}
+h2{font-size:22px;font-weight:700;margin:42px 0 16px;color:var(--accent-bright);scroll-margin-top:20px;}
+h3{font-size:18px;font-weight:700;margin:28px 0 12px;scroll-margin-top:20px;}
+h4{font-size:15.5px;font-weight:700;margin:20px 0 10px;color:var(--text-dim);text-transform:uppercase;letter-spacing:.03em;}
+p{color:var(--text);margin:12px 0;}
+.dim{color:var(--text-dim);}
+a{color:var(--accent-bright);}
+hr{border:none;border-top:1px solid var(--border);margin:50px 0;}
+code.inline{font-family:var(--mono);background:#0a0e14;padding:2px 8px;border-radius:5px;font-size:13.5px;color:var(--accent-bright);border:1px solid var(--border-soft);}
+pre{background:#0a0e14;border:1px solid var(--border);border-radius:10px;padding:16px 18px;overflow-x:auto;margin:14px 0;font-size:13px;font-family:var(--mono);color:#c9d1d9;line-height:1.7;direction:ltr;text-align:left;}
+pre .c{color:var(--text-faint);}
+
+table{width:100%;border-collapse:collapse;margin:16px 0;font-size:14px;}
+table th{text-align:right;font-family:var(--mono);font-size:11.5px;letter-spacing:.03em;color:var(--text-faint);text-transform:uppercase;padding:10px 12px;border-bottom:1px solid var(--border);background:var(--bg-card2);}
+table td{padding:11px 12px;border-bottom:1px solid var(--border-soft);color:var(--text-dim);vertical-align:top;}
+table td b, table td code{color:var(--text);}
+table tr:hover td{background:var(--bg-card);}
+
+.card{background:var(--bg-card);border:1px solid var(--border);border-radius:12px;padding:22px 26px;margin:20px 0;}
+.card h4{margin-top:0;}
+
+.callout{border-radius:10px;padding:16px 20px;margin:20px 0;font-size:15px;border:1px solid;}
+.callout.info{background:var(--accent-soft);border-color:#5fb3a355;color:#a8d9cd;}
+.callout.warn{background:var(--warn-soft);border-color:#e0a45855;color:#f0c896;}
+.callout.danger{background:var(--danger-soft);border-color:#e2685f55;color:#f0a49c;}
+.callout.blue{background:var(--blue-soft);border-color:#6fa8dc55;color:#a9c8ea;}
+.callout b{color:inherit;}
+
+.step-flow{margin:20px 0;}
+.step{display:flex;gap:16px;padding:14px 0;border-bottom:1px solid var(--border-soft);}
+.step:last-child{border-bottom:none;}
+.step-num{flex:0 0 32px;height:32px;border-radius:50%;background:var(--accent-soft);color:var(--accent-bright);display:flex;align-items:center;justify-content:center;font-family:var(--mono);font-weight:700;font-size:14px;}
+.step-body b{display:block;margin-bottom:4px;}
+.step-body{color:var(--text-dim);font-size:14.5px;}
+
+.faq{background:var(--bg-card2);border:1px solid var(--border);border-radius:10px;padding:18px 22px;margin:14px 0;}
+.faq .q{font-weight:700;color:var(--accent-bright);margin-bottom:8px;display:flex;gap:8px;}
+.faq .q .qmark{font-family:var(--mono);color:var(--accent);}
+.faq .a{color:var(--text-dim);font-size:14.5px;}
+
+.badge{display:inline-block;font-family:var(--mono);font-size:10.5px;padding:2px 10px;border-radius:20px;font-weight:700;letter-spacing:.02em;margin-left:6px;}
+.badge.win{background:var(--blue-soft);color:var(--blue);}
+.badge.vps{background:var(--purple-soft);color:var(--purple);}
+.badge.mac{background:var(--warn-soft);color:var(--warn);}
+.badge.linux{background:var(--accent-soft);color:var(--accent-bright);}
+.badge.sec{background:var(--danger-soft);color:var(--danger);}
+
+.toc{background:var(--bg-card);border:1px solid var(--border);border-radius:12px;padding:26px 30px;margin:30px 0;}
+.toc h2{margin-top:0;}
+.toc ol{margin:0;padding-right:22px;}
+.toc li{margin:8px 0;color:var(--text-dim);}
+.toc li a{color:var(--text);text-decoration:none;font-weight:600;}
+.toc li a:hover{color:var(--accent-bright);}
+.toc ol ol{margin-top:6px;padding-right:20px;font-size:14px;}
+.toc ol ol li{margin:4px 0;}
+.toc ol ol li a{font-weight:400;color:var(--text-dim);}
+
+.file-tag{font-family:var(--mono);font-size:11.5px;color:var(--text-faint);background:var(--bg);border:1px solid var(--border-soft);padding:2px 8px;border-radius:5px;}
+
+td.status{font-family:var(--mono);font-weight:700;font-size:13px;white-space:nowrap;}
+td.status.ok{color:var(--accent-bright);}
+td.status.warn{color:var(--warn);}
+td.status.danger{color:var(--danger);}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<div class="cover">
+<div class="eyebrow">مستندات فنی کامل — سیستم لایسنس‌دهی Nutricula</div>
+<h1>از نصب تا هر بایت پروتکل</h1>
+<p class="sub">این سند بر اساس آخرین کامیت مخزن نوشته شده و تمام مکانیزم‌های امنیتی، تمام مسیرهای کد سمت کلاینت (C++‎/C#‎) و سمت سرور (PHP/MySQL)، و تمام سناریوهای معمول و غیرمعمول را با جزئیات کامل پوشش می‌دهد.</p>
+</div>
+
+<div class="toc">
+<h2>فهرست مطالب</h2>
+<p class="dim" style="margin-top:-6px;">هر بخش از ۱ تا ۱۲ در انتهای خودش یک زیربخش <b>«سناریوهای امنیتی»</b> دارد که تمام حملات ممکن مرتبط با همان مکانیزم را — چه مسدود می‌شوند چه نمی‌شوند — با جدول کامل بررسی می‌کند.</p>
+<ol>
+<li><a href="#sec1">معماری کلی سیستم</a></li>
+<li><a href="#sec2">Installer — همهٔ حالت‌های نصب</a>
+  <ol>
+  <li><a href="#sec2-1">حالت رایگان (Free)</a></li>
+  <li><a href="#sec2-2">حالت خرید/ثبت‌نام (Premium Signup)</a></li>
+  <li><a href="#sec2-3">حالت انتقال (Transfer)</a></li>
+  <li><a href="#sec2-4">تشخیص پلتفرم در Installer</a></li>
+  </ol>
+</li>
+<li><a href="#sec3">Machine ID — تولید در هر پلتفرم</a>
+  <ol>
+  <li><a href="#sec3-1">ویندوز فیزیکی</a></li>
+  <li><a href="#sec3-2">ویندوز مجازی / VPS</a></li>
+  <li><a href="#sec3-3">مک (از طریق Wine)</a></li>
+  <li><a href="#sec3-4">لینوکس (از طریق Wine)</a></li>
+  <li><a href="#sec3-5">فرمول نهایی هش و Canonicalization</a></li>
+  </ol>
+</li>
+<li><a href="#sec4">Device Key — چرخهٔ کامل حیات</a></li>
+<li><a href="#sec5">معماری سمت سرور (PHP)</a>
+  <ol>
+  <li><a href="#sec5-1">nutricula_computer_based_signup.php</a></li>
+  <li><a href="#sec5-2">nutricula_computer_based_signup_transfer.php</a></li>
+  <li><a href="#sec5-3">license_check.php</a></li>
+  <li><a href="#sec5-4">license_common.php — توابع مشترک</a></li>
+  </ol>
+</li>
+<li><a href="#sec6">دیتابیس — جداول و ستون‌ها</a></li>
+<li><a href="#sec7">پروتکل رمزنگاری و انتقال</a></li>
+<li><a href="#sec8">توکن چرخشی و تشخیص کلون</a></li>
+<li><a href="#sec9">VPS IP-Binding</a></li>
+<li><a href="#sec10">لایه‌های دفاعی کلاینت (Layer 1 و 2)</a></li>
+<li><a href="#sec11">مسئلهٔ ساعت — ClockAnchor</a></li>
+<li><a href="#sec12">معماری Coordinator — Service / Broker / DLL نازک</a></li>
+<li><a href="#sec13">سناریوهای کامل — از ابتدا تا انتها</a></li>
+<li><a href="#sec14">پرسش‌های متداول نهایی و موارد لبه‌ای</a></li>
+<li><a href="#sec15">محل دقیق نصب فایل‌ها روی دیسک</a></li>
+<li><a href="#sec16">راهنمای کامل استفاده در MQL — هر تابع، دقیق و واقعی</a></li>
+<li><a href="#sec17">جدول کامل و دقیق تمام پیام‌های خطای Installer</a></li>
+<li><a href="#sec18">خلاصهٔ کامل تمام زمان‌بندی‌ها و اعداد timeout</a></li>
+<li><a href="#sec19">Anti-Debug / Anti-Tamper — چه چیزی واقعاً پیاده شده</a></li>
+</ol>
+</div>
+
+<h1 id="sec1"><span class="num">۱.</span>معماری کلی سیستم</h1>
+
+<p>سیستم لایسنس‌دهی Nutricula از سه لایهٔ کاملاً مجزا تشکیل شده که هرکدام مسئولیت مشخصی دارند:</p>
+
+<div class="card">
+<h4>لایهٔ ۱ — Installer (سمت کاربر، یک‌بار اجرا)</h4>
+<p class="dim">یک برنامهٔ C#‎‏/WinForms که کاربر یک‌بار برای فعال‌سازی (یا نصب رایگان) اجرا می‌کند. مسئول: تشخیص پلتفرم، ساخت/بارگذاری Machine ID و Device Key، برقراری اولین ارتباط با سرور (signup یا transfer)، و نصب/راه‌اندازی سرویس‌های Coordinator.</p>
+</div>
+
+<div class="card">
+<h4>لایهٔ ۲ — Coordinator (سمت کاربر، دائمی، پس‌زمینه)</h4>
+<p class="dim">شامل سه باینری C++‎: <code class="inline">NutriculaLicenseService.exe</code> (سرویس ویندوز)، <code class="inline">NutriculaLicenseBroker.exe</code> (نسخهٔ بدون‌سرویس برای Wine/مک/لینوکس)، و <code class="inline">NutriculaLicenseCheckThin.dll</code> (DLL نازکی که مستقیم داخل MT4/MT5 لود می‌شود). این لایه هر ۴ تا ۱۵ دقیقه (به‌صورت رندوم) با سرور تماس می‌گیرد، Lease تازه می‌گیرد، و وضعیت لایسنس (Tier) را از طریق Named Pipe به DLL نازک اعلام می‌کند.</p>
+</div>
+
+<div class="card">
+<h4>لایهٔ ۳ — سرور (PHP + MySQL)</h4>
+<p class="dim">چهار endpoint اصلی PHP که تمام منطق اعتبارسنجی، صدور Lease امضاشده، تشخیص کلون، و ثبت آمار را انجام می‌دهند. تنها منبع «حقیقت» (source of truth) دربارهٔ این‌که یک لایسنس معتبر است یا نه، همیشه همین سرور است — کلاینت هرگز خودش تصمیم امنیتی نمی‌گیرد، فقط چیزی که سرور امضا کرده را بازتاب می‌دهد.</p>
+</div>
+
+<h2>نمودار جریان کلی</h2>
+<pre>
+کاربر → Installer (یک‌بار) ──HTTPS/GCM──► signup.php / transfer.php ──► MySQL
+                                                                          │
+کاربر → MT4/MT5 → DLL نازک ◄─Named Pipe─► Coordinator (دائمی) ──HTTPS/GCM──► license_check.php ──► MySQL
+                                              │
+                                     فایل Lease محلی (امضاشدهٔ RSA)
+                                     + فایل ClockAnchor محلی
+                                     + فایل Device Key محلی (DPAPI/portable)
+</pre>
+
+<h2>اصول امنیتی بنیادین که در تمام سیستم رعایت می‌شود</h2>
+<div class="step-flow">
+<div class="step"><div class="step-num">۱</div><div class="step-body"><b>سرور همیشه مرجع نهایی است.</b> هیچ تصمیم امنیتی (معتبر بودن، منقضی بودن، مسدود بودن) صرفاً توسط کلاینت گرفته نمی‌شود مگر با استناد به یک Lease امضاشدهٔ RSA از سرور.</div></div>
+<div class="step"><div class="step-num">۲</div><div class="step-body"><b>هرچیزی که کلاینت ادعا می‌کند، جدا از هرچیزی که سرور مشاهده می‌کند نگه داشته می‌شود.</b> مثال بارز: IP که کلاینت ادعا می‌کند (<code class="inline">local_ip</code>) هرگز در تصمیم‌گیری امنیتی استفاده نمی‌شود؛ فقط IP واقعیِ مشاهده‌شدهٔ اتصال TCP (<code class="inline">nutricula_client_ip()</code>) معتبر است.</div></div>
+<div class="step"><div class="step-num">۳</div><div class="step-body"><b>هر چیزی که می‌تواند کلون شود (کلید دستگاه، فایل Lease)، با یک مکانیزم رفتاری (نه صرفاً رمزنگاری) هم پشتیبانی می‌شود.</b> توکن چرخشی دقیقاً برای همین ساخته شده.</div></div>
+<div class="step"><div class="step-num">۴</div><div class="step-body"><b>هیچ منبع محلی زمان (ساعت سیستم) به‌تنهایی برای تصمیم امنیتی کافی نیست.</b> ClockAnchor این را با لنگر انداختن به ساعت سرور حل می‌کند.</div></div>
+</div>
+
+<h2>سناریوهای امنیتی — معماری کلی</h2>
+<p class="dim">این جدول سطح بالاترین حملات ممکن روی کل معماری (نه یک مؤلفهٔ خاص) را پوشش می‌دهد. برای حملات دقیق‌تر روی هر مؤلفه، به انتهای همان بخش مراجعه کنید.</p>
+
+<table>
+<tr><th>حمله</th><th>کرکر چه می‌کند</th><th>پاسخ سیستم</th><th>نتیجه</th></tr>
+<tr><td>Man-in-the-Middle بین Installer/Coordinator و سرور</td><td>ترافیک را رهگیری و تلاش می‌کند بخواند یا تغییر دهد</td><td>کل بدنه با AES-256-GCM رمزنگاری شده (کلید انتقال مشترک) — رهگیرِ بدون کلید فقط بایت‌های بی‌معنی می‌بیند؛ تغییر هر بایت، تگ GCM را نامعتبر می‌کند</td><td class="status ok">مسدود</td></tr>
+<tr><td>جعل یک پاسخ کامل سرور (Lease جعلی)</td><td>یک پاسخ ساختگی با Tier=LICENSED می‌سازد و به کلاینت تزریق می‌کند</td><td>کلاینت هر پاسخ را با کلید عمومی RSA-4096 سرور تأیید می‌کند — بدون کلید خصوصی سرور، امضای معتبر ممکن نیست</td><td class="status ok">مسدود</td></tr>
+<tr><td>حمله به خود سرور (نفوذ مستقیم، SQLi، دسترسی فیزیکی به سرور)</td><td>تلاش برای دور زدن کل پروتکل با نفوذ به زیرساخت</td><td>خارج از scope این سیستم لایسنس‌دهی — امنیت سرور (patching، فایروال، دسترسی محدود دیتابیس) مسئولیت جداگانه‌ای است</td><td class="status warn">خارج از scope</td></tr>
+<tr><td>Reverse Engineering باینری‌های C++‎‏/DLL برای حذف کامل چک لایسنس</td><td>باینری را دیس‌اسمبل و منطق چک را patch می‌کند</td><td>هیچ تکنیک محلی (سمت کلاینت) نمی‌تواند reverse engineering را کاملاً غیرممکن کند — این یک واقعیت فنی بنیادین است (کد نهایتاً روی کامپیوتر مهاجم اجرا می‌شود). آنچه در این سیستم پیاده شده (ردیف بعدی همین جدول، و بخش ۱۹) سطح تلاش لازم را از «یک بایت را عوض کن» به «باید امضای RSA/ECDSA را هم جعل کنی» بالا می‌برد — نه غیرممکن، ولی به‌مراتب سخت‌تر از یک patch ساده</td><td class="status warn">به‌طور کامل مسدود نمی‌شود (محدودیت بنیادین) — ولی سطح تلاش لازم به‌طور معناداری بالا رفته (بخش ۱۹)</td></tr>
+<tr><td>اجرای MT4/MT5 در یک Sandbox/Debugger برای دستکاری حافظه در حین اجرا</td><td>مقدار <code class="inline">g_tier</code> را مستقیم در حافظه دستکاری می‌کند</td><td>یک لایهٔ Anti-Debug/Anti-Tamper واقعی پیاده شده (بخش ۱۹): چهار روش مستقل تشخیص دیباگر، و مهم‌تر — <code class="inline">Nutricula_GetLicenseTier()</code> دیگر مقدار <code class="inline">g_tier</code> را کورکورانه اعتماد نمی‌کند؛ حداکثر هر ۳ ثانیه یک‌بار امضای RSA کش‌شده را دوباره تأیید می‌کند. patch کردن فقط <code class="inline">g_tier</code> دیگر کافی نیست — مهاجم باید یک canonical+امضای واقعاً معتبر (که فقط سرور می‌تواند بسازد) هم در حافظه جایگزین کند</td><td class="status warn">تا حد زیادی مسدود می‌شود — patch سادهٔ یک متغیر دیگر کارساز نیست (بخش ۱۹)</td></tr>
+</table>
+
+<div class="callout danger"><b>صداقت دربارهٔ محدودیت بنیادین:</b> این سیستم برای دفاع در برابر «کپی‌کردن نصب یک لایسنس واقعی توسط کاربران عادی» طراحی شده، نه در برابر یک مهاجم پیشرفته با دسترسی کامل به reverse engineering و patch باینری. این تفکیک در طول کل این پروژه آگاهانه حفظ شده است.</div>
+
+
+
+<h2>پرسش‌های متداول مفهومی — معماری کلی</h2>
+<div class="faq"><div class="q"><span class="qmark">س:</span>چرا سه لایهٔ جدا (Installer/Coordinator/سرور) به‌جای یک سرویس واحد؟</div>
+<div class="a">تفکیک مسئولیت: Installer فقط یک‌بار اجرا می‌شود و نیازی به اجرای دائمی ندارد؛ Coordinator باید همیشه در پس‌زمینه باشد اما نباید مستقیم به EDD/فروشگاه دسترسی داشته باشد؛ سرور تنها نقطه‌ای است که باید همیشه در دسترس و مقیاس‌پذیر باشد. این جداسازی حملهٔ روی یک لایه را به لایه‌های دیگر تسری نمی‌دهد.</div></div>
+<div class="faq"><div class="q"><span class="qmark">س:</span>اگر سرور PHP به‌طور موقت پایین باشد (نه فایروال کاربر، بلکه واقعاً خود سرور)، چه اتفاقی برای کاربران فعلی می‌افتد؟</div>
+<div class="a">دقیقاً همان رفتار «قطع اینترنت» (بخش ۱۱): کاربرانی که Lease معتبر و به‌روز دارند تا سقف ۲۱ دقیقه بدون مشکل کار می‌کنند؛ بعد از آن به Tier آزاد تنزل می‌کنند تا سرور دوباره بالا بیاید.</div></div>
+<div class="faq"><div class="q"><span class="qmark">س:</span>آیا Installer برای اجرا در حالت Free هم نیاز به اینترنت دارد؟</div>
+<div class="a">خود فرآیند اجرای <code class="inline">Installer.exe</code> (کپی فایل‌ها، محاسبهٔ Machine ID، ساخت Device Key) کاملاً محلی است — هیچ تماس شبکه‌ای در همان لحظهٔ نصب رخ نمی‌دهد و اگر کامپیوتر کلاً بدون اینترنت باشد، نصب Free همچنان کامل موفق می‌شود. اما این به این معنی نیست که کاربر Free برای همیشه بی‌اینترنت باقی می‌ماند: بعد از نصب، Coordinator (که همین Installer آن را راه‌اندازی می‌کند) در پس‌زمینه هر ۳۰ دقیقه یک‌بار یک پینگ سبک (<code class="inline">free_checkin</code>) شامل Machine ID و Device Key Hash به سرور می‌فرستد — فقط برای آمارگیری (چند دستگاه از نسخهٔ رایگان استفاده می‌کنند)، نه برای اعتبارسنجی؛ اگر این پینگ‌ها موفق نشوند، هیچ اتفاقی برای Tier رایگان کاربر نمی‌افتد (بخش ۱۳).</div></div>
+
+
+
+<h1 id="sec2"><span class="num">۲.</span>Installer — همهٔ حالت‌های نصب</h1>
+
+<p>Installer یک برنامهٔ C#‎/WinForms است که سه حالت اصلی دارد: <b>رایگان (Free)</b>، <b>خرید/ثبت‌نام (Premium)</b>، و <b>انتقال (Transfer)</b>. تابع مشترک <code class="inline">RequestLicenseAsync()</code> در <span class="file-tag">InstallerService.cs</span> مسیر Premium و Transfer را با هم اداره می‌کند؛ مسیر Free کاملاً جداست.</p>
+
+<h2 id="sec2-1">۲.۱ حالت رایگان (Free)</h2>
+<div class="step-flow">
+<div class="step"><div class="step-num">۱</div><div class="step-body"><b>کاربر گزینهٔ Free را انتخاب می‌کند.</b> هیچ ایمیل یا کلید خریدی پرسیده نمی‌شود.</div></div>
+<div class="step"><div class="step-num">۲</div><div class="step-body"><b><code class="inline">TryEnsureDeviceIdentityAsync()</code> صدا زده می‌شود.</b> این تابع مستقیم <code class="inline">MachineIdService.GetDevicePublicKey()</code> را فراخوانی می‌کند — که خودش داخلاً <code class="inline">CreateOrLoadDeviceKey()</code> را صدا می‌زند: <b>اگر کلید دستگاه از قبل روی این کامپیوتر وجود داشته باشد، همان بارگذاری می‌شود؛ اگر نبود، یک کلید P-256 تازه ساخته می‌شود.</b> برای این نصب رایگان مشخص، Machine ID با نسخهٔ WithGuid ساخته می‌شود (بخش ۳.۱) — نه نسخهٔ اصلی.</div></div>
+<div class="step"><div class="step-num">۳</div><div class="step-body"><b>هیچ درخواست شبکه‌ای به سرور فرستاده نمی‌شود.</b> این مرحله فقط محلی است. <b>ساخت/بارگذاری موفق Device Key الزامی است</b> — اگر این مرحله fail شود، پیام موفقیت نصب هرگز نمایش داده نمی‌شود (چون در حالتی که Machine ID روی این کامپیوتر خاص قابل‌تولید نباشد، Device Key تنها شناسهٔ ممکن برای این کامپیوتر در جدول آمار رایگان‌ها خواهد بود — بخش ۱۳).</div></div>
+<div class="step"><div class="step-num">۴</div><div class="step-body"><b>Coordinator (Service/Broker) نصب و راه‌اندازی می‌شود.</b> این سرویس از همین لحظه شروع به کار می‌کند، ولی چون هیچ فایل Lease ای وجود ندارد، Tier همیشه <code class="inline">FREE</code> می‌ماند (به بخش ۱۰ مراجعه کنید). چک محلی سریع (تشخیص فوری این‌که Lease وجود ندارد) هر ۴ دقیقه انجام می‌شود، ولی ارسال واقعی پینگ <code class="inline">free_checkin</code> به سرور مستقل از این، فقط <b>هر ۳۰ دقیقه یک‌بار</b> اتفاق می‌افتد (برای آمار، نه اعتبارسنجی — بار کمتری روی سرور می‌گذارد چون این اطلاعات فقط آماری است).</div></div>
+</div>
+
+<div class="callout info"><b>نتیجهٔ کلیدی:</b> در حالت رایگان، اگر روی این کامپیوتر از قبل کلید دستگاهی وجود داشته باشد (مثلاً از یک فعال‌سازی قبلی که بعداً لغو شده)، <b>همان کلید قدیمی دوباره استفاده می‌شود</b> — هرگز جایگزین یا بازسازی نمی‌شود.</div>
+
+<h2 id="sec2-2">۲.۲ حالت خرید/ثبت‌نام (Premium Signup)</h2>
+<div class="step-flow">
+<div class="step"><div class="step-num">۱</div><div class="step-body"><b>کاربر ایمیل و کلید خرید (purchase key) را وارد می‌کند.</b></div></div>
+<div class="step"><div class="step-num">۲</div><div class="step-body"><b>پلتفرم تشخیص داده می‌شود</b> (به بخش ۲.۴ مراجعه کنید) — نتیجه یکی از چهار مقدار: <code class="inline">WINDOWS</code>، <code class="inline">WINDOWS_VM</code>، <code class="inline">MACOS_WINE</code>، <code class="inline">LINUX_WINE</code>.</div></div>
+<div class="step"><div class="step-num">۳</div><div class="step-body"><b>برای لینوکس و VPS: دیالوگ هشدار هویت نمایش داده می‌شود</b> — پیش از هر تماس شبکه‌ای. اگر کاربر لغو کند، عملیات همان‌جا (بدون مصرف purchase_key) متوقف می‌شود. برای ویندوز فیزیکی و مک، این مرحله رد می‌شود (به بخش ۵.۱ و کادر پایین مراجعه کنید).</div></div>
+<div class="step"><div class="step-num">۴</div><div class="step-body"><b>Machine ID محاسبه می‌شود</b> (بخش ۳) — کاملاً محلی، بدون تماس شبکه‌ای. برای ویندوز فیزیکی، <b>هر دو نسخه</b> (اصلی و WithGuid) همزمان ساخته می‌شوند.</div></div>
+<div class="step"><div class="step-num">۵</div><div class="step-body"><b>Device Key آماده می‌شود</b> — دقیقاً همان تابع <code class="inline">GetDevicePublicKey()</code> حالت Free: اگر از قبل وجود داشت، همان استفاده می‌شود؛ اگر نبود، تازه ساخته می‌شود.</div></div>
+<div class="step"><div class="step-num">۶</div><div class="step-body"><b>درخواست signup به سرور فرستاده می‌شود</b> — شامل ایمیل، کلید خرید، هر دو نسخهٔ machine_id، کلید عمومی دستگاه، و پروفایل پلتفرم.</div></div>
+<div class="step"><div class="step-num">۷</div><div class="step-body"><b>سرور یا Lease صادر می‌کند، رد می‌کند، یا (فقط ویندوز فیزیکی، نادر) درخواست تأیید می‌کند</b> — اگر <code class="inline">machine_requires_confirmation</code> برگردد، دیالوگ هشدار همین‌جا (بعد از پاسخ اول سرور) نمایش داده می‌شود؛ در صورت تأیید کاربر، درخواست دوم با <code class="inline">machine_id_alt_confirmed=1</code> فرستاده می‌شود (بخش ۵.۱).</div></div>
+<div class="step"><div class="step-num">۸</div><div class="step-body"><b>در صورت موفقیت، فایل Lease روی دیسک نوشته می‌شود</b> و Coordinator نصب/راه‌اندازی می‌شود.</div></div>
+</div>
+
+<div class="card">
+<h4>دیالوگ هشدار هویت — چه‌موقع نمایش داده می‌شود؟</h4>
+<table>
+<tr><th>پلتفرم</th><th>نمایش دیالوگ</th><th>زمان‌بندی</th></tr>
+<tr><td>مک</td><td>هرگز</td><td>—</td></tr>
+<tr><td>لینوکس</td><td>همیشه</td><td>پیش از هر تماس شبکه‌ای</td></tr>
+<tr><td>VPS (windows_vm)</td><td>همیشه</td><td>پیش از هر تماس شبکه‌ای</td></tr>
+<tr><td>ویندوز فیزیکی</td><td>فقط اگر لازم باشد (نادر)</td><td>فقط بعد از پاسخ اول سرور (<code class="inline">machine_requires_confirmation</code>)</td></tr>
+</table>
+<p class="dim" style="margin-top:10px;">متن دقیق پیام‌ها، دکمه‌ها، و پیام لغو — هرکدام دو نسخه (Signup/Transfer) — در بخش ۱۷ آمده است.</p>
+</div>
+
+<h2 id="sec2-3">۲.۳ حالت انتقال (Transfer)</h2>
+<p>این حالت برای وقتی است که کاربر می‌خواهد لایسنس فعلی‌اش را از یک کامپیوتر به کامپیوتر جدید منتقل کند. نیازمند <b>سه</b> چیز است: ایمیل، کلید خرید اصلی (purchase key)، و یک <b>کلید انتقال</b> (transfer key) که جداگانه از EDD خریداری/دریافت می‌شود و <b>فقط یک‌بار</b> قابل‌استفاده است (ستون <code class="inline">uq_transfer_key_hash</code> این را در سطح دیتابیس تضمین می‌کند). دقیقاً همان جریان دیالوگ هشدار هویت بخش ۲.۲ اینجا هم اجرا می‌شود، فقط با متن‌های مخصوص Transfer.</p>
+
+<div class="callout blue"><b>نکتهٔ مهم:</b> از نظر کد کلاینت، Transfer دقیقاً همان تابع <code class="inline">RequestLicenseAsync()</code> را با Premium به اشتراک می‌گذارد — یعنی Device Key اینجا هم دقیقاً همان قانون را دارد: فقط اگر روی کامپیوتر جدید کلیدی نبود، تازه ساخته می‌شود.</div>
+
+<table>
+<tr><th>ویژگی</th><th>در دیتابیس چه اتفاقی می‌افتد</th></tr>
+<tr><td><code class="inline">machine_id</code></td><td>با یکی از دو نسخهٔ machine_id کامپیوتر جدید overwrite می‌شود (بخش ۵.۲ تعیین می‌کند کدام)</td></tr>
+<tr><td><code class="inline">device_public_key_hash</code></td><td>با کلید دستگاه کامپیوتر جدید overwrite می‌شود</td></tr>
+<tr><td><code class="inline">current_refresh_token_hash</code></td><td>یک توکن کاملاً جدید تولید و ذخیره می‌شود (زنجیرهٔ توکن ریست می‌شود)</td></tr>
+<tr><td><code class="inline">token_suspicious</code></td><td>به ۰ ریست می‌شود</td></tr>
+<tr><td><code class="inline">blocked_until</code></td><td>به <code class="inline">NULL</code> ریست می‌شود — <b>حتی اگر لایسنس در حالت بلاک ۲۴ ساعته بوده باشد</b>، یک Transfer موفق آن را برمی‌دارد</td></tr>
+<tr><td><code class="inline">license_uuid</code></td><td>یک UUID کاملاً جدید تولید می‌شود (لایسنس قدیمی دیگر معتبر نیست)</td></tr>
+</table>
+
+<h2 id="sec2-4">۲.۴ تشخیص پلتفرم در Installer</h2>
+<p>تشخیص پلتفرم توسط خود DLL کتابخانهٔ <code class="inline">MachineId64.dll</code>/<code class="inline">MachineId32.dll</code> (نه Installer مستقیماً) انجام می‌شود، از طریق تابع <code class="inline">Nutricula_GetLastPlatformProfile()</code> که پس از هر فراخوانی <code class="inline">GenerateMachineId()</code> در دسترس قرار می‌گیرد. منطق تشخیص:</p>
+<table>
+<tr><th>گام</th><th>چک</th><th>نتیجه</th></tr>
+<tr><td>۱</td><td>آیا <code class="inline">wine_get_version</code> در <code class="inline">ntdll.dll</code> وجود دارد؟</td><td>اگر نه → <code class="inline">WINDOWS</code> یا <code class="inline">WINDOWS_VM</code> (ادامه به گام ۲)؛ اگر بله → زیر Wine هستیم (ادامه به گام ۳)</td></tr>
+<tr><td>۲</td><td>روی ویندوز واقعی: آیا سیگنال‌های هایپروایزر معروف (VMware/Hyper-V/QEMU/Xen در SMBIOS) دیده می‌شود؟</td><td><code class="inline">WINDOWS_VM</code> یا <code class="inline">WINDOWS</code></td></tr>
+<tr><td>۳</td><td>زیر Wine: <code class="inline">wine_get_host_version</code> در <code class="inline">ntdll.dll</code> چه سیستم‌عاملی گزارش می‌دهد؟</td><td><code class="inline">Darwin</code> → <code class="inline">MACOS_WINE</code>؛ <code class="inline">Linux</code> → <code class="inline">LINUX_WINE</code></td></tr>
+</table>
+
+<div class="faq">
+<div class="q"><span class="qmark">س:</span> اگر Installer روی یک سرور فیزیکی اختصاصی (نه VPS مجازی) نصب شود چه می‌شود؟</div>
+<div class="a">تشخیص هایپروایزر هیچ سیگنالی پیدا نمی‌کند، پس <code class="inline">WINDOWS</code> (نه <code class="inline">WINDOWS_VM</code>) تشخیص داده می‌شود. یعنی مکانیزم VPS IP-Binding (بخش ۹) برای این کاربر <b>فعال نمی‌شود</b> — این کاربر از لایهٔ حفاظتی اضافه محروم می‌ماند اما این یک شکاف امنیتی نیست، فقط از دست‌رفتن یک لایهٔ دفاعی اضافه است؛ machine_id/device_key هنوز کامل کار می‌کنند.</div>
+</div>
+<div class="faq">
+<div class="q"><span class="qmark">س:</span> آیا کاربر می‌تواند در Installer دستی بگوید «من روی VPS هستم»؟</div>
+<div class="a">خیر. هیچ فیلد دستی برای این موضوع در Installer وجود ندارد — تشخیص کاملاً خودکار و بر پایهٔ سیگنال‌های سخت‌افزاری/سیستمی است، دقیقاً برای این‌که غیرقابل‌جعل باشد (اگر کاربر خودش می‌توانست بگوید، یک کرکر هم می‌توانست ادعای دروغ بکند).</div>
+</div>
+
+
+<h2>سناریوهای امنیتی — Installer</h2>
+<table>
+<tr><th>حمله</th><th>کرکر چه می‌کند</th><th>پاسخ سیستم</th><th>نتیجه</th></tr>
+<tr><td>ثبت‌نام با ایمیل/کلید خرید جعلی</td><td>یک ترکیب دلخواه ایمیل+purchase_key وارد می‌کند</td><td>سرور با <code class="inline">nutricula_find_edd_sale()</code> این را در برابر فروش‌های واقعی EDD (فروشگاه) با <code class="inline">hash_equals</code> چک می‌کند</td><td class="status ok">مسدود</td></tr>
+<tr><td>استفادهٔ همزمان از یک purchase_key توسط دو نصب کاملاً مستقل (نه re-signup، بلکه race واقعی)</td><td>دو درخواست signup تقریباً هم‌زمان با همان purchase_key</td><td>constraint دیتابیس <code class="inline">uq_purchase_key</code> فقط اجازهٔ یک ردیف می‌دهد؛ دومی با خطای duplicate-key و reason تمیز <code class="inline">signup_conflict</code> رد می‌شود (نه crash)</td><td class="status ok">مسدود</td></tr>
+<tr><td>استفاده از یک transfer_key دوبار</td><td>همان کلید انتقال را برای دو کامپیوتر متفاوت امتحان می‌کند</td><td>UNIQUE KEY روی <code class="inline">nutricula_transfer_keys_used.transfer_key_hash</code> این را در سطح دیتابیس مسدود می‌کند</td><td class="status ok">مسدود</td></tr>
+<tr><td>جعل پلتفرم (ادعای دستی «من VPS نیستم» برای فرار از VPS IP-Binding)</td><td>سعی می‌کند مقدار <code class="inline">platform_profile</code> ارسالی را دستکاری کند</td><td>این مقدار از تشخیص خودکار DLL می‌آید، نه یک فیلد قابل‌ویرایش دستی در UI؛ اگر خام دستکاری شود، همچنان سیگنال‌های هایپروایزر واقعی (که مستقل محاسبه می‌شوند) در سرور استفاده نمی‌شوند چون سرور فقط به همان مقداری که DLL گزارش داده اعتماد می‌کند — <b>این یک نقطهٔ اعتماد بدون اثبات رمزنگاری‌شده است</b></td><td class="status warn">تا حدی — نیاز به دستکاری سطح پایین‌تر (DLL) دارد</td></tr>
+<tr><td>اجرای Installer با کلید device کلون‌شده از یک لایسنس دیگر</td><td>فایل کلید دستگاه یک نصب دیگر را کپی می‌کند، سپس با purchase_key خودش signup می‌کند</td><td>هنگام INSERT، constraint <code class="inline">uq_product_device</code> برخورد می‌کند → <code class="inline">device_already_licensed</code> (به بخش ۴ مراجعه کنید)</td><td class="status ok">مسدود</td></tr>
+<tr><td>Replay یک درخواست signup ضبط‌شده (بازپخش بستهٔ شبکه)</td><td>یک درخواست signup موفق قبلی را دوباره می‌فرستد</td><td>چون purchase_key از قبل به یک ردیف موجود گره خورده، این به شاخهٔ Re-signup می‌رود، نه INSERT جدید — و اگر machine_id مطابقت نداشته باشد (که در replay از یک نصب دیگر معمولاً همینطور است) رد می‌شود</td><td class="status ok">تا حد زیادی مسدود</td></tr>
+<tr><td>حذف/دستکاری Installer برای پرش از چک هایپروایزر و اجبار به عدم‌تشخیص VPS</td><td>باینری Installer را patch می‌کند</td><td>یک چک خودتمامیتی واقعی روی خود Installer.exe وجود دارد (بخش ۱۹.۳) — اگر حتی یک بایت از exe (نسبت به نسخهٔ امضاشده) عوض شود، Self-Integrity Check شکست می‌خورد و Premium/Transfer اصلاً اجازهٔ ادامه نمی‌دهد. محدودیت صادقانه: این چک فقط از <b>دستکاری بایت‌های فایل</b> جلوگیری می‌کند، نه از منطق سطح‌بالاتری مثل «کدام سیگنال‌ها را جمع کن» — چون platform_profile نهایتاً یک ادعای کلاینت است که سرور بدون اثبات رمزنگاری‌شده می‌پذیرد (ردیف بالا)</td><td class="status ok">دستکاری مستقیم فایل مسدود می‌شود (بخش ۱۹.۳) — ولی نقطهٔ اعتماد بدون‌اثبات ردیف بالا هنوز پابرجاست</td></tr>
+</table>
+
+
+
+<h2>پرسش‌های متداول مفهومی — Installer</h2>
+<div class="faq"><div class="q"><span class="qmark">س:</span>آیا کاربری که Free نصب کرده می‌تواند بدون نصب مجدد به Premium برود؟</div>
+<div class="a">بله — فقط کافی است Installer را دوباره در حالت Premium اجرا کند؛ همان Device Key موجود (بخش ۴) استفاده می‌شود و Coordinator موجود به‌روزرسانی می‌شود، نه نصب از صفر.</div></div>
+<div class="faq"><div class="q"><span class="qmark">س:</span>اگر EDD (فروشگاه) در لحظهٔ signup موقتاً پایین باشد چه می‌شود؟</div>
+<div class="a"><code class="inline">nutricula_find_edd_sale()</code> نمی‌تواند خرید را تأیید کند → یک خطای عمومی (نه یک reason امنیتی خاص) به کاربر نمایش داده می‌شود؛ هیچ ردیفی در دیتابیس ساخته نمی‌شود، کاربر می‌تواند دوباره تلاش کند.</div></div>
+<div class="faq"><div class="q"><span class="qmark">س:</span>آیا Transfer نیاز دارد کامپیوتر قدیمی هنوز روشن/آنلاین باشد؟</div>
+<div class="a">خیر — Transfer کاملاً از سمت کامپیوتر <b>جدید</b> انجام می‌شود؛ کامپیوتر قدیمی هیچ نقشی در این تراکنش ندارد (حتی می‌تواند خاموش یا از بین رفته باشد).</div></div>
+
+
+
+<h1 id="sec3"><span class="num">۳.</span>Machine ID — تولید در هر پلتفرم</h1>
+
+<p>Machine ID یک هش SHA-256 (۶۴ کاراکتر hex، حروف بزرگ) است که از ترکیب چند سیگنال سخت‌افزاری/سیستمی ساخته می‌شود. این کاملاً <b>محلی</b> محاسبه می‌شود — هیچ تماس شبکه‌ای لازم نیست (به‌جز یک استثنا: پرسش اختیاری از سرویس متادیتای ابری برای VPSهای واقعاً معروف، که کاملاً اختیاری و timeout-دار است).</p>
+
+<div class="callout danger"><b>یک اصل بنیادین که در طول توسعه به آن رسیدیم:</b> هیچ سیگنالی که به «ترتیب» (enumeration order) وابسته باشد نباید در Machine ID استفاده شود — چون ترتیب می‌تواند بین بوت‌ها تغییر کند و باعث تغییر بی‌دلیل Machine ID شود. به همین دلیل، MAC Address (در هر ۴ پلتفرم) کاملاً حذف شد، و انتخاب دیسک سیستم در ویندوز از «اولین دیسک» به «دیسک واقعی حاوی درایو سیستم» اصلاح شد.</div>
+
+<div class="callout blue"><b>یک اصل بنیادین دوم:</b> هر سیگنالی که «به یک نصب خاص سیستم‌عامل» (نه به خود سخت‌افزار) وابسته باشد — یعنی با نصب مجدد OS از نو ساخته می‌شود — رفتار متفاوتی در هر پلتفرم دارد، چون همیشه نمی‌شود بی‌قید‌وشرط این سیگنال را از هش خارج کرد بدون این‌که کیفیت تشخیص (uniqueness) برای بخشی از کاربران به‌شدت افت کند. به همین دلیل، **Windows فیزیکی دو نسخهٔ Machine ID دارد**، در حالی که VPS/لینوکس/مک هرکدام فقط یک نسخهٔ ثابت دارند — به بخش ۳.۱ تا ۳.۴ مراجعه کنید.</div>
+
+<h2 id="sec3-1">۳.۱ ویندوز فیزیکی <span class="badge win">WINDOWS</span> — دو نسخهٔ Machine ID</h2>
+<p>سیگنال‌ها همگی از طریق WMI (Windows Management Instrumentation) خوانده می‌شوند:</p>
+<table>
+<tr><th>سیگنال</th><th>منبع WMI</th><th>در کدام نسخه</th></tr>
+<tr><td>System UUID</td><td><code class="inline">Win32_ComputerSystemProduct.UUID</code></td><td>هردو نسخه</td></tr>
+<tr><td>System Serial</td><td><code class="inline">Win32_BIOS.SerialNumber</code></td><td>هردو نسخه</td></tr>
+<tr><td>Baseboard Serial</td><td><code class="inline">Win32_BaseBoard.SerialNumber</code></td><td>هردو نسخه</td></tr>
+<tr><td>BIOS Serial</td><td><code class="inline">Win32_BIOS.SerialNumber</code></td><td>هردو نسخه</td></tr>
+<tr><td>CPU ID</td><td><code class="inline">Win32_Processor.ProcessorId</code></td><td>هردو نسخه</td></tr>
+<tr><td>Disk Serial</td><td><code class="inline">QuerySystemDiskSerial()</code> — associator chain</td><td>هردو نسخه — دیسک فیزیکی <b>واقعاً حاوی درایو سیستم</b>، نه اولین دیسک لیست‌شده</td></tr>
+<tr><td>Manufacturer/Family/Product/SKU</td><td><code class="inline">Win32_ComputerSystemProduct</code>/<code class="inline">Win32_ComputerSystem</code></td><td>هردو نسخه — سیگنال‌های تکمیلی، به‌تنهایی برای accept کافی نیستند</td></tr>
+<tr><td>Machine GUID</td><td>رجیستری <code class="inline">HKLM\SOFTWARE\Microsoft\Cryptography\MachineGuid</code></td><td><b>فقط نسخهٔ دوم (WithGuid)</b> — به بخش زیر مراجعه کنید</td></tr>
+</table>
+
+<div class="card">
+<h4>چرا دو نسخه؟</h4>
+<p class="dim">Machine GUID در هر نصب تازهٔ ویندوز (چه روی همون درایو، چه درایو دیگر — تا وقتی دیسک فیزیکی عوض نشود) از نو تصادفی ساخته می‌شود؛ این یعنی اگر این مقدار در هش باشد، نصب مجدد ویندوز machine_id را تغییر می‌دهد، حتی وقتی همهٔ سخت‌افزار واقعی ثابت مانده. برای حل این تناقض (بین پایداری و منحصربه‌فردبودن)، Installer هردو نسخه را همزمان می‌سازد:</p>
+<table>
+<tr><th>نسخه</th><th>تابع C++‎</th><th>شامل Machine GUID؟</th><th>کاربرد</th></tr>
+<tr><td><b>اصلی (Primary)</b></td><td><code class="inline">Nutricula_GenerateMachineId</code></td><td>خیر</td><td>همیشه اولین گزینه‌ای که در Signup/Transfer امتحان می‌شود؛ در نصب مجدد ویندوز (روی همان دیسک فیزیکی) ثابت می‌ماند</td></tr>
+<tr><td><b>ثانویه (WithGuid)</b></td><td><code class="inline">Nutricula_GenerateMachineIdWithGuid</code></td><td>بله</td><td>فقط وقتی primary با یک لایسنس فعال دیگر (روی کامپیوتر دیگری) تصادم داشته باشد استفاده می‌شود — به بخش ۵.۱ مراجعه کنید. تنها نسخه‌ای که در نصب رایگان استفاده می‌شود.</td></tr>
+</table>
+</div>
+
+<h4>منطق پذیرش (Acceptance) — یکسان برای هر دو نسخه</h4>
+<p class="dim">برای این‌که Machine ID «معتبر» تلقی شود، ترکیب‌های زیر باید برقرار باشند (هرکدام کافی است) — این منطق مستقل از این‌که کدام نسخه تولید می‌شود است، فقط تعیین می‌کند آیا اصلاً می‌شود یک هش معتبر ساخت یا نه:</p>
+<pre>uuid && (board || bios || disk || systemSerial)
+systemSerial && (board || bios || disk)
+board && (bios || disk || uuid || systemSerial)
+bios && (board || uuid || systemSerial || disk)
+guid && (uuid || systemSerial || board || bios || disk || cpu)</pre>
+
+<h4>QuerySystemDiskSerial — associator chain دقیق</h4>
+<pre>Win32_LogicalDisk (حرف درایو سیستم، مثلاً C:)
+    │ AssocClass=Win32_LogicalDiskToPartition
+    ▼
+Win32_DiskPartition (پارتیشن)
+    │ AssocClass=Win32_DiskDriveToDiskPartition
+    ▼
+Win32_DiskDrive.SerialNumber (دیسک فیزیکی واقعی)</pre>
+
+<h2 id="sec3-2">۳.۲ ویندوز مجازی / VPS <span class="badge vps">WINDOWS_VM</span> — همیشه یک نسخه، همیشه با GUID</h2>
+<p>دقیقاً همان سیگنال‌های ویندوز فیزیکی، ولی با سه تفاوت مهم — و <b>هیچ نسخهٔ دومی وجود ندارد</b>:</p>
+<table>
+<tr><th>تفاوت</th><th>توضیح</th></tr>
+<tr><td>Machine GUID همیشه در هش است</td><td>برخلاف ویندوز فیزیکی، اینجا هیچ نسخهٔ «بدون GUID» وجود ندارد — نصب مجدد ویندوز روی یک VPS همیشه باعث نامعتبر شدن لایسنس می‌شود، و این از قبل به کاربر اطلاع داده می‌شود (به بخش ۵.۱ مراجعه کنید)</td></tr>
+<tr><td>منطق پذیرش سخت‌گیرانه‌تر</td><td>یک شمارندهٔ <code class="inline">strongSignals</code> نیاز به حداقل ۲ سیگنال مستقل دارد — چون UUID روی VM ها می‌تواند بین چند دستگاه یکسان باشد (طبق مستندات VMware Cloud Director، <code class="inline">CloneBiosUuidOnVmCopy</code> پیش‌فرض همین UUID را بین کلون‌ها یکسان نگه می‌دارد)</td></tr>
+<tr><td>Cloud Instance ID</td><td>یک تلاش سبک و timeout-دار (۷۰۰ میلی‌ثانیه در هر ارائه‌دهنده) برای پرسیدن از متادیتای AWS/Azure/GCP — اگر موفق شود، خودش به‌تنهایی برای accept کافی است</td></tr>
+<tr><td>VPS IP-Binding</td><td>این تنها پلتفرمی است که <b>IP خروجی مشاهده‌شده توسط سرور</b> هم داخل هش نهایی (سمت سرور، نه کلاینت) گنجانده می‌شود — به بخش ۹ مراجعه کنید</td></tr>
+</table>
+
+<h2 id="sec3-3">۳.۳ مک (از طریق Wine) <span class="badge mac">MACOS_WINE</span> — همیشه یک نسخه، هرگز تحت‌تأثیر نصب مجدد نیست</h2>
+<p>چون این DLL روی ویندوز (زیر Wine) کامپایل و اجرا می‌شود، سیگنال‌های مک از طریق اجرای دستورات shell جمع‌آوری می‌شوند (<code class="inline">ioreg</code>، <code class="inline">sysctl</code>):</p>
+<table>
+<tr><th>سیگنال</th><th>منبع</th></tr>
+<tr><td>IOPlatformUUID</td><td><code class="inline">ioreg -rd1 -c IOPlatformExpertDevice</code></td></tr>
+<tr><td>IOPlatformSerialNumber</td><td>همان دستور</td></tr>
+<tr><td>hw.model</td><td><code class="inline">sysctl hw.model</code> — فقط برای اطلاعات تکمیلی، هرگز به‌تنهایی برای accept کافی نیست (چون یک مدل بین میلیون‌ها دستگاه مشترک است)</td></tr>
+<tr><td>machdep.cpu.brand_string</td><td><code class="inline">sysctl</code> — همان محدودیت بالا</td></tr>
+</table>
+<div class="callout warn"><b>حذف‌شده:</b> MAC آدرس (از <code class="inline">ifconfig en0</code>) به‌خاطر «Private Wi-Fi Address» اپل (که پیش‌فرض از macOS Monterey فعال است و MAC را می‌چرخاند) کاملاً حذف شد.</div>
+<div class="callout info"><b>هیچ نسخهٔ دومی برای مک وجود ندارد و لازم نیست</b> — <code class="inline">IOPlatformUUID</code>/<code class="inline">IOPlatformSerialNumber</code> از EFI/فریمور اپل می‌آیند، کاملاً مستقل از سیستم‌عامل؛ نصب مجدد کامل macOS هیچ تأثیری روی این‌ها ندارد.</div>
+
+<h2 id="sec3-4">۳.۴ لینوکس (از طریق Wine) <span class="badge linux">LINUX_WINE</span> — همیشه یک نسخه، همیشه با machine-id</h2>
+<table>
+<tr><th>سیگنال</th><th>منبع</th><th>نکته</th></tr>
+<tr><td>machine-id</td><td><code class="inline">/etc/machine-id</code></td><td><b>همیشه و بدون قید و شرط در هش است</b> — حتی وقتی <code class="inline">product_uuid</code> هم در دسترس باشد. این یک نصب مجدد توزیع لینوکس (که هم device_key هم این فایل را با هم پاک/بازسازی می‌کند) را به‌طور طبیعی به یک تصادم `signup_identity_mismatch` در ثبت‌نام مجدد تبدیل می‌کند</td></tr>
+<tr><td>product_uuid</td><td><code class="inline">/sys/class/dmi/id/product_uuid</code></td><td>سیگنال قوی‌تر، ولی اغلب فقط برای root قابل‌خواندن یا در کانتینرها اصلاً وجود ندارد — به همین دلیل هرگز جایگزین machine-id نمی‌شود، فقط علاوه بر آن اضافه می‌شود</td></tr>
+<tr><td>board_vendor</td><td><code class="inline">/sys/class/dmi/id/board_vendor</code></td><td>فقط تکمیلی، هرگز برای accept کافی نیست و <b>هرگز به‌تنهایی برای منحصربه‌فرد بودن هش کافی نیست</b> — این مقدار بین هر تعداد VM روی یک هایپروایزر یکسان است</td></tr>
+</table>
+<div class="callout warn"><b>حذف‌شده:</b> LINUX_PRIMARY_MAC، که قبلاً با <code class="inline">FindFirstFileW</code>/<code class="inline">FindNextFileW</code> روی <code class="inline">/sys/class/net/*</code> «اولین» رابط شبکه را انتخاب می‌کرد — این ترتیب بین بوت‌ها تضمین‌شده نبود. کاملاً حذف شد.</div>
+
+<div class="faq">
+<div class="q"><span class="qmark">س:</span> چرا machine-id همیشه در هش است، حتی وقتی product_uuid هم موجود باشد — چرا مثل ویندوز یک نسخهٔ «بدون machine-id» هم نداریم؟</div>
+<div class="a">برای اکثر کاربران لینوکسِ non-root/non-cloud، سیگنال‌های باقی‌ماندهٔ دیگر (<code class="inline">board_vendor</code> و <code class="inline">cloud_instance_id</code>) هیچ ارزش تشخیصی ندارند — <code class="inline">board_vendor</code> بین هر تعداد کامپیوتر با یک برند مادربرد مشترک مشترک است. اگر <code class="inline">machine-id</code> بی‌قید‌وشرط از هش خارج شود، این کاربران عملاً همگی یک هش یکسان می‌گیرند — یک شکاف امنیتی واقعی، نه فقط افت کیفیت. برخلاف Machine GUID در ویندوز (که ۱۰ سیگنال قوی دیگر در کنارش هست)، اینجا این تنها سیگنال معنادار باقی‌مانده است.</div>
+</div>
+<div class="faq">
+<div class="q"><span class="qmark">س:</span> چرا machine-id به‌تنهایی کافی شد، با وجود ریسک کلون در VM؟</div>
+<div class="a">در تست مستقیم روی Wine مشخص شد که <code class="inline">product_uuid</code> اغلب اصلاً در دسترس نیست (مخصوصاً در کانتینرها یا بدون دسترسی root) — اگر machine-id به‌تنهایی کافی نبود، اکثریت کاربران واقعی هرگز Machine ID معتبر نمی‌گرفتند.</div>
+</div>
+
+<h2 id="sec3-5">۳.۵ فرمول نهایی هش و Canonicalization</h2>
+<p>پس از جمع‌آوری سیگنال‌ها، یک رشتهٔ canonical با فرمت ثابت ساخته و سپس SHA-256 می‌شود:</p>
+<pre>PROFILE=WINDOWS
+SYSTEM_UUID=...
+SYSTEM_SERIAL=...
+BASEBOARD_SERIAL=...
+...
+[MACHINE_GUID=... ← فقط در نسخهٔ WithGuid]
+→ SHA256(...) → حروف بزرگ، ۶۴ کاراکتر hex</pre>
+<div class="callout info">رشتهٔ canonical شامل هیچ شمارهٔ نسخه (VERSION) نیست — تنها تفاوت بین نسخهٔ اصلی و WithGuid برای ویندوز فیزیکی، وجود یا عدم‌وجود خط <code class="inline">MACHINE_GUID=</code> است.</div>
+
+
+
+<h2>سناریوهای امنیتی — Machine ID</h2>
+<table>
+<tr><th>حمله</th><th>کرکر چه می‌کند</th><th>پاسخ سیستم</th><th>نتیجه</th></tr>
+<tr><td>تغییر ساعت سیستم برای فرار از انقضا (مرتبط با machine_id نیست ولی معمولاً با هم اشتباه گرفته می‌شود)</td><td>ساعت ویندوز را عقب می‌برد</td><td>این اصلاً روی Machine ID اثر ندارد — مربوط به بخش ۱۱ (ClockAnchor) است</td><td class="status warn">به بخش ۱۱ مراجعه کنید</td></tr>
+<tr><td>دستکاری دستی WMI برای گزارش مقادیر جعلی سیگنال‌ها</td><td>با ابزارهایی مثل WMI Tampering، مقادیر <code class="inline">Win32_BIOS.SerialNumber</code> و غیره را جعل می‌کند</td><td>هیچ اعتبارسنجی رمزنگاری‌شده روی خود سیگنال‌های WMI وجود ندارد — اگر سیستم‌عامل این مقادیر جعلی را گزارش دهد، Machine ID بر اساس آن‌ها ساخته می‌شود</td><td class="status danger">مسدود نمی‌شود (این یک محدودیت پذیرفته‌شده است — WMI منبع اعتماد سیستم‌عامل است، نه چیزی که این پروژه بتواند تأیید کند)</td></tr>
+<tr><td>کلون کامل یک VM با هایپروایزر که UUID را بین کلون‌ها یکسان نگه می‌دارد (مثلاً VMware با <code class="inline">CloneBiosUuidOnVmCopy</code> فعال)</td><td>یک VM را کلون می‌کند؛ سیگنال‌های سخت‌افزاری روی هر دو یکسان می‌مانند</td><td>برای VPS: اگر IP جدید بگیرد (تقریباً همیشه)، VPS IP-Binding (بخش ۹) این را می‌گیرد. برای غیر-VPS: چون هیچ سیگنال IP گنجانده نشده، Machine ID عیناً یکسان می‌ماند</td><td class="status danger">برای غیر-VPS مسدود نمی‌شود — به همین دلیل توکن چرخشی (بخش ۸) به‌عنوان لایهٔ نهایی وجود دارد</td></tr>
+<tr><td>اجرای Wine روی یک محیط که <code class="inline">wine_get_host_version</code> را جعل می‌کند</td><td>یک نسخهٔ دستکاری‌شدهٔ Wine می‌سازد که سیستم‌عامل میزبان را اشتباه گزارش دهد</td><td>این تشخیص فقط برای انتخاب مسیر صحیح سیگنال‌گیری استفاده می‌شود؛ اگر جعل شود، سیگنال‌های اشتباه (مثلاً سیگنال‌های لینوکس روی مک واقعی) جمع‌آوری می‌شوند که معمولاً منجر به رد شدن در چک پذیرش می‌شود، نه پذیرش نادرست</td><td class="status ok">اثر عملی محدود — معمولاً منجر به شکست، نه سوءاستفاده</td></tr>
+<tr><td>کپی کردن فقط فایل Lease (نه کل سیستم) به یک کامپیوتر دیگر</td><td>فایل Lease امضاشده را کپی و روی کامپیوتر دیگری قرار می‌دهد</td><td>Machine ID محاسبه‌شدهٔ محلی روی کامپیوتر جدید با machine_id داخل فایل مطابقت ندارد → Layer 1 (بخش ۱۰) این را همان لحظه محلی تشخیص می‌دهد</td><td class="status ok">مسدود</td></tr>
+<tr><td>روی VPS: استفاده از یک VPN داخلی برای تغییر ظاهری سیگنال‌های شبکه (نه سیگنال‌های سخت‌افزاری)</td><td>یک VPN روی همان VPS نصب می‌کند</td><td>VPN فقط مسیر خروجی شبکه را عوض می‌کند، نه سیگنال‌های سخت‌افزاری WMI؛ اما IP مشاهده‌شده توسط سرور همان IP خروجی VPN خواهد بود، نه IP واقعی provider → این باعث تغییر machine_id مؤثر (effective) می‌شود چون VPS IP-Binding آن را می‌بیند</td><td class="status ok">مسدود (VPS IP-Binding این را می‌گیرد، دقیقاً طبق طراحی)</td></tr>
+<tr><td>یک کامپیوتر واحد سعی می‌کند با purchase_key دوم، از طریق نسخهٔ WithGuid، یک لایسنس دوم برای خودش بسازد (بعد از این‌که یک لایسنس دیگر با نسخهٔ primary همان کامپیوتر از قبل فعال است)</td><td>روی همان کامپیوتر، بعد از یک signup موفق، یک purchase_key دوم را امتحان می‌کند</td><td>سرور device_key رکورد متصادم را با device_key همین درخواست مقایسه می‌کند — چون این دقیقاً همان device_key است (همان کامپیوتر)، بلافاصله <code class="inline">device_already_licensed</code> برمی‌گردد، هرگز به دیالوگ تأیید WithGuid نمی‌رسد</td><td class="status ok">مسدود (به بخش ۵.۱ مراجعه کنید)</td></tr>
+<tr><td>دو کامپیوتر واقعاً متفاوت که به‌طور تصادفی سیگنال‌های سخت‌افزاری یکسانی دارند (primary machine_id مشترک)</td><td>هردو سعی می‌کنند با purchase_key های جداگانه فعال شوند</td><td>اولین کامپیوتر primary را می‌گیرد؛ دومین کامپیوتر device_key متفاوتی دارد، پس به‌جای رد قطعی، دیالوگ تأیید WithGuid نشان داده می‌شود و می‌تواند با نسخهٔ دوم فعال شود</td><td class="status ok">هردو کامپیوتر جداگانه لایسنس می‌گیرند — رفتار درست و مورد انتظار</td></tr>
+</table>
+
+
+
+<h2>پرسش‌های متداول مفهومی — Machine ID</h2>
+<div class="faq"><div class="q"><span class="qmark">س:</span>چرا از چند سیگنال هم‌زمان استفاده می‌شود، نه فقط «بهترین» یکی (مثلاً System UUID)؟</div>
+<div class="a">اگر فقط به یک سیگنال متکی باشیم و آن سیگنال روی یک سیستم خاص در دسترس نباشد (مثلاً برخی مادربردهای ارزان System UUID را گزارش نمی‌دهند)، آن کاربر هرگز Machine ID معتبر نمی‌گیرد. ترکیب چند سیگنال با منطق پذیرش انعطاف‌پذیر (بخش ۳.۱) این ریسک را کاهش می‌دهد.</div></div>
+<div class="faq"><div class="q"><span class="qmark">س:</span>اگر کاربر هارد دیسک را عوض کند (فقط یک قطعه، نه کل کامپیوتر)، Machine ID چه می‌شود؟</div>
+<div class="a">چون Disk Serial فقط یکی از چند سیگنال است (نه تنها سیگنال)، اگر بقیهٔ سیگنال‌ها (System UUID، Baseboard، BIOS) ثابت بمانند، Machine ID نهایی <b>معمولاً</b> همان می‌ماند — چون این سیگنال‌ها با هم هش می‌شوند، نه به‌تنهایی؛ اما هر سیگنالی داخل هش تأثیر دارد، پس اگر Disk Serial تغییر کند، هش نهایی هم تغییر می‌کند (این یک واقعیت ریاضی SHA-256 است، نه یک انتخاب طراحی).</div></div>
+<div class="faq"><div class="q"><span class="qmark">س:</span>چرا Cloud Instance ID برای VPS با Timeout کوتاه (۷۰۰ میلی‌ثانیه) بررسی می‌شود؟</div>
+<div class="a">اکثریت کاربران واقعی VPS نیستند؛ اگر این پرسش طولانی طول بکشد، هر نصب معمولی چند ثانیه بی‌دلیل معطل می‌شود. تصمیم آگاهانه بود که همین ۷۰۰ میلی‌ثانیهٔ ثابت نگه داشته شود (نه retry تدریجی) چون بار سرور و تأخیر کاربر مهم‌تر از بهبود جزئی این سیگنال بود.</div></div>
+<div class="faq"><div class="q"><span class="qmark">س:</span>چطور جلوگیری می‌شود که یک کامپیوتر واحد از طریق دو نسخهٔ machine_id (primary و WithGuid) دو لایسنس فعال همزمان بگیرد؟</div>
+<div class="a"><code class="inline">device_key</code> تعیین‌کننده است — نه صرفاً تصادم machine_id. وقتی primary یک کامپیوتر با یک لایسنس فعال دیگر تصادم دارد، سرور اول چک می‌کند device_key آن رکورد متصادم دقیقاً با device_key همین درخواست یکی است یا نه. اگر یکی بود (یعنی واقعاً همان کامپیوتر است)، بلافاصله <code class="inline">device_already_licensed</code> برمی‌گردد — هرگز دیالوگ تأیید WithGuid نشان داده نمی‌شود. فقط وقتی device_key واقعاً متفاوت باشد (یعنی این یک کامپیوتر کاملاً دیگر با تصادم تصادفی سیگنال‌هاست)، fallback به WithGuid پیشنهاد می‌شود. به بخش ۵.۱ مراجعه کنید.</div></div>
+<div class="faq"><div class="q"><span class="qmark">س:</span>در چک لایسنس معمولی (Verify)، چطور سرور می‌فهمد کدام نسخهٔ machine_id (primary یا WithGuid) برای این لایسنس ذخیره شده؟</div>
+<div class="a">چون <code class="inline">license_id</code> از قبل مشخص است (از فایل Lease محلی)، سرور نیازی به «جستجو» ندارد — کلاینت هردو نسخه (<code class="inline">machine_id</code> و <code class="inline">machine_id_alt</code>) را همزمان می‌فرستد، سرور فقط چک می‌کند آیا مقدار ذخیره‌شدهٔ همین یک رکورد با یکی از این دو مطابقت دارد یا نه.</div></div>
+
+
+
+<h1 id="sec4"><span class="num">۴.</span>Device Key — چرخهٔ کامل حیات</h1>
+
+<p>Device Key یک جفت کلید P-256 (ECDSA) است که فقط یک‌بار (مگر در شرایط خاص) روی هر کامپیوتر ساخته می‌شود. کلید خصوصی هرگز از کامپیوتر خارج نمی‌شود — فقط برای امضای Challenge استفاده می‌شود.</p>
+
+<div class="callout blue"><b>نقش دوم Device Key (۲۰۲۶):</b> علاوه بر امضای Challenge، این مقدار حالا نقش «تعیین‌کنندهٔ هویت کامپیوتر» را هم دارد — وقتی سرور باید تشخیص دهد یک تصادم machine_id واقعاً به این کامپیوتر مربوط است یا یک کامپیوتر کاملاً دیگر، Device Key پاسخ می‌دهد (بخش ۵.۱). این استفاده فقط برای اولین Signup/Transfer (نه Re-signup) است — به کادر پایین صفحه مراجعه کنید.</div>
+
+<h2>محل و نحوهٔ ذخیره‌سازی</h2>
+<table>
+<tr><th>پلتفرم</th><th>نحوهٔ محافظت</th></tr>
+<tr><td>ویندوز واقعی</td><td>DPAPI (<code class="inline">CryptProtectData</code>) — کلید به‌طور رمزنگاری‌شده به کاربر/کامپیوتر ویندوز گره می‌خورد</td></tr>
+<tr><td>Wine (مک/لینوکس)</td><td>حالت «portable» — چون DPAPI واقعی زیر Wine در دسترس نیست، از یک روش رمزنگاریِ محلی جایگزین استفاده می‌شود</td></tr>
+</table>
+
+<h2>قانون طلایی — یکسان در هر سه حالت نصب</h2>
+<div class="callout danger">
+<b>Device Key فقط و فقط اگر روی کامپیوتر وجود نداشته باشد ساخته می‌شود. در هیچ حالتی (Free، Signup، Re-signup، Transfer) به‌طور اجباری بازسازی نمی‌شود.</b>
+<p style="margin-top:8px;">این یک تصمیم آگاهانه بود که در طول توسعه چند بار بازبینی شد — نسخهٔ اولیه پیشنهاد می‌داد در هر signup کلید اجباراً عوض شود، ولی این تصمیم به دلیل ریسک واقعی (قفل‌شدن کاربران قانونی که Windows را reinstall کرده‌اند) لغو و به «فقط اگر نبود بساز» بازگردانده شد.</p>
+</div>
+
+<div class="callout warn"><b>چرا Device Key در Re-signup تعیین‌کننده نیست (برخلاف اولین Signup):</b> در Re-signup، ممکن است ویندوز کاربر بین دو تلاش عوض شده باشد — که در این صورت Device Key پاک/بازسازی می‌شود، ولی نسخهٔ اصلی machine_id (بدون Machine GUID) روی ویندوز فیزیکی ثابت می‌ماند. اگر اینجا هم Device Key الزامی بود، یک کاربر قانونی که فقط ویندوزش را عوض کرده هرگز نمی‌توانست دوباره ثبت‌نام کند. تعیین‌کنندهٔ هویت در Re-signup، ایمیل + همان purchase_key است (بخش ۵.۱) — نه Device Key.</div>
+
+
+<table>
+<tr><th>سناریو</th><th>اتفاق برای Device Key</th></tr>
+<tr><td>اولین نصب رایگان</td><td>اگر کلیدی نبود، ساخته می‌شود</td></tr>
+<tr><td>اولین Signup (خرید)</td><td>همان کلید موجود (چه از نصب رایگان قبلی، چه تازه ساخته) استفاده می‌شود</td></tr>
+<tr><td>Re-signup (همان کلید خرید، همان کامپیوتر)</td><td>همان کلید محلی — بدون تغییر</td></tr>
+<tr><td>Transfer به کامپیوتر جدید</td><td>روی کامپیوتر <b>جدید</b>، اگر کلیدی نبود ساخته می‌شود (طبیعتاً معمولاً نیست، چون کامپیوتر جدید است)</td></tr>
+<tr><td>کاربری که رایگان بوده و بعد از مدتی خرید می‌کند</td><td><b>همان کلید دورهٔ رایگان</b> — چون از قبل موجود بوده، signup آن را دوباره نمی‌سازد، فقط همان را به سرور معرفی می‌کند</td></tr>
+</table>
+
+<h2>سناریوی خاص — کاربری که رایگان بوده، بعد خرید می‌کند</h2>
+<div class="step-flow">
+<div class="step"><div class="step-num">۱</div><div class="step-body">کاربر نسخهٔ رایگان را نصب می‌کند → <code class="inline">TryEnsureDeviceIdentityAsync()</code> یک کلید تازه می‌سازد و روی دیسک ذخیره می‌کند (چون قبلاً چیزی نبود).</div></div>
+<div class="step"><div class="step-num">۲</div><div class="step-body">چند هفته بعد، همان کاربر یک لایسنس می‌خرد و Installer را دوباره در حالت Premium اجرا می‌کند.</div></div>
+<div class="step"><div class="step-num">۳</div><div class="step-body"><code class="inline">GetDevicePublicKey()</code> صدا زده می‌شود → کلید موجود (همان کلید دورهٔ رایگان) پیدا و بارگذاری می‌شود — <b>هیچ کلید جدیدی ساخته نمی‌شود</b>.</div></div>
+<div class="step"><div class="step-num">۴</div><div class="step-body">این کلید (که دیگر یک شناسهٔ ثابت این کامپیوتر است) به سرور فرستاده و در ستون <code class="inline">device_public_key_hash</code> ذخیره می‌شود.</div></div>
+</div>
+
+<h2>وقتی Device Key از بین برود (نه به‌خاطر تخلف، بلکه واقعاً گم شود)</h2>
+<p>مثلاً کاربر ویندوز را reinstall کرده یا فایل کلید حذف شده. در این حالت machine_id همچنان همان (چون سخت‌افزار واقعی است)، ولی device key دیگر وجود ندارد. اگر کاربر Re-signup کند:</p>
+<ul style="color:var(--text-dim);">
+<li>چون machine_id مطابقت دارد، سرور این را رد نمی‌کند (چک <code class="inline">signup_identity_mismatch</code> فقط machine_id را بررسی می‌کند، نه device key)</li>
+<li>سرور این وضعیت را دقیقاً مثل «ارسال یک توکن قدیمی» رفتار می‌کند — بار اول بخشیده می‌شود (توکن جدید صادر و <code class="inline">token_suspicious=1</code>)، بار دوم پشت‌سرهم قفل ۲۴ ساعته می‌خورد (به بخش ۸ مراجعه کنید)</li>
+</ul>
+
+<h2>یک مسیر آسیب‌پذیر که کشف و پذیرفته شد</h2>
+<div class="callout warn">
+اگر کسی <code class="inline">purchase_key</code> واقعی یک کاربر دیگر را بداند (که این یک secret جداگانه و هیچ‌وقت در فایل‌های کلاینت افشا نمی‌شود)، می‌تواند با جعل machine_id همان کاربر و ارائهٔ یک کلید دستگاه کاملاً جدید، از طریق Re-signup، کلید ذخیره‌شدهٔ آن کاربر را overwrite کند. این آسیب‌پذیری <b>فقط با دانستن purchase_key</b> ممکن است و طبق تصمیم صریح صاحب پروژه، «اگر purchase_key درز کند تقصیر کاربر است، نه سیستم» — پس نیازی به اصلاح اضافه نبود.
+</div>
+
+
+<h2>سناریوهای امنیتی — Device Key</h2>
+<table>
+<tr><th>حمله</th><th>کرکر چه می‌کند</th><th>پاسخ سیستم</th><th>نتیجه</th></tr>
+<tr><td>کپی کامل فایل Device Key به یک purchase_key دیگر (signup جدید)</td><td>فایل کلید دستگاه کاربر A را کپی می‌کند و با purchase_key واقعی خودش (کاربر B) signup می‌کند</td><td><code class="inline">uq_product_device</code> برخورد می‌کند → <code class="inline">device_already_licensed</code>، بدون توجه به این‌که machine_id متفاوت یا یکسان باشد (این تست شد و تأیید شد)</td><td class="status ok">مسدود</td></tr>
+<tr><td>کپی فایل Device Key + جعل machine_id همان قربانی، سپس Re-signup با purchase_key واقعی قربانی</td><td>machine_id قربانی را جعل می‌کند و سعی می‌کند device key ذخیره‌شده را overwrite کند</td><td>این آسیب‌پذیر است <b>ولی فقط اگر purchase_key واقعی قربانی را بداند</b> — این secret هیچ‌جا در فایل‌های کلاینت افشا نمی‌شود؛ طبق تصمیم صریح صاحب پروژه، این ریسک پذیرفته‌شده است (اگر purchase_key درز کند، مسئولیت کاربر است)</td><td class="status warn">مسدود نمی‌شود، ولی نیازمند دانستن یک secret جداگانه است</td></tr>
+<tr><td>حذف عمدی فایل Device Key برای اجبار به ساخت کلید جدید و دور زدن چک</td><td>فایل کلید را پاک می‌کند و دوباره اجرا می‌کند</td><td>یک کلید کاملاً جدید ساخته می‌شود؛ اگر تلاش برای Verify با license_id قدیمی شود، <code class="inline">device_key_mismatch</code> می‌گیرد (بخش ۱۰)؛ اگر Re-signup با همان purchase_key و machine_id واقعی خودش باشد، این طبق طراحی دقیقاً همان کاربر واقعی روی همان کامپیوتر تلقی می‌شود — رفتار «توکن قدیمی» (بخش ۸) اعمال می‌شود</td><td class="status ok">پوشش داده شده — نه یک سوءاستفادهٔ رایگان، بلکه یک بار «بخشش» بعد قفل</td></tr>
+<tr><td>استفاده از یک HSM/Smart Card مجازی برای اشتراک‌گذاری کلید خصوصی بین چند کامپیوتر همزمان (بدون کپی فایل)</td><td>یک روش پیشرفته برای به‌اشتراک‌گذاری واقعی کلید خصوصی (نه کپی ساده) بین چند دستگاه</td><td>از دید سرور، این دقیقاً مثل کلون کامل رفتار می‌شود (چون امضاها از نظر رمزنگاری قابل‌تشخیص از هم نیستند) — توکن چرخشی (بخش ۸) نهایتاً رقابت بین این دستگاه‌ها را می‌گیرد</td><td class="status warn">نهایتاً مسدود می‌شود، ولی نه بلافاصله</td></tr>
+<tr><td>Brute-force یا حدس زدن کلید خصوصی از روی کلید عمومی</td><td>تلاش برای شکستن ECDSA P-256</td><td>از نظر ریاضی با فناوری فعلی غیرممکن (مسئلهٔ لگاریتم گسسته منحنی بیضوی)</td><td class="status ok">مسدود (تضمین رمزنگاری)</td></tr>
+</table>
+
+
+<h2>پرسش‌های متداول مفهومی — Device Key</h2>
+<div class="faq"><div class="q"><span class="qmark">س:</span>چرا P-256 (ECDSA) به‌جای RSA برای کلید دستگاه؟</div>
+<div class="a">اندازهٔ کلید و امضای P-256 به‌مراتب کوچک‌تر از RSA با امنیت معادل است (۲۵۶ بیت در برابر ۲۰۴۸+ بیت) — برای عملیاتی که هر ۴ تا ۱۵ دقیقه تکرار می‌شود (امضای Challenge)، این تفاوت واقعی در سرعت و حجم ترافیک ایجاد می‌کند.</div></div>
+<div class="faq"><div class="q"><span class="qmark">س:</span>آیا یک کامپیوتر می‌تواند چند Device Key برای محصولات مختلف داشته باشد؟</div>
+<div class="a">در طراحی فعلی، هر کامپیوتر یک فایل Device Key دارد که برای همهٔ محصولات به‌کار می‌رود — <code class="inline">uq_product_device</code> ترکیب (محصول+کلید) را یکتا می‌کند، نه خود کلید را؛ یعنی همان کلید می‌تواند برای محصولات مختلف در ردیف‌های جدا استفاده شود.</div></div>
+<div class="faq"><div class="q"><span class="qmark">س:</span>اگر پروفایل کاربری ویندوز کاملاً پاک شود (نه فقط فایل، بلکه کل Profile)، کلید DPAPI-محافظت‌شده چه می‌شود؟</div>
+<div class="a">چون DPAPI کلید را به همان کاربر/کامپیوتر گره می‌زند، با پاک‌شدن پروفایل، کلید رمزگشایی‌پذیر نیست — این دقیقاً معادل «از بین رفتن Device Key» (سناریوی توضیح داده‌شده در بخش ۴) است؛ یک کلید جدید ساخته می‌شود.</div></div>
+
+
+
+<h1 id="sec5"><span class="num">۵.</span>معماری سمت سرور (PHP)</h1>
+
+<p>چهار فایل PHP اصلی، همگی از توابع مشترک در <span class="file-tag">license_common.php</span> استفاده می‌کنند. هر درخواست داخل یک پاکت رمزنگاری‌شدهٔ AES-256-GCM (کلید انتقال مشترک، نه رمزنگاری نامتقارن) ارسال می‌شود.</p>
+
+<h2 id="sec5-1">۵.۱ nutricula_computer_based_signup.php</h2>
+<p>دو شاخهٔ اصلی دارد، بسته به این‌که <code class="inline">purchase_key</code> ارسالی از قبل در دیتابیس وجود دارد یا نه. کلاینت (فقط برای <code class="inline">device_type=windows</code> فیزیکی) همیشه دو مقدار machine_id می‌فرستد: <code class="inline">machine_id</code> (نسخهٔ اصلی، بدون Machine GUID) و <code class="inline">machine_id_alt</code> (نسخهٔ ثانویه، با GUID) — برای بقیهٔ پلتفرم‌ها این دو مقدار یکسان‌اند (بخش ۳).</p>
+
+<h4>شاخهٔ الف — اولین بار (INSERT)</h4>
+<div class="step-flow">
+<div class="step"><div class="step-num">۱</div><div class="step-body">خرید در EDD (فروشگاه) تأیید می‌شود — ایمیل و کلید خرید باید واقعاً با هم مطابقت داشته باشند.</div></div>
+<div class="step"><div class="step-num">۲</div><div class="step-body">IP واقعی اتصال مشاهده می‌شود (<code class="inline">nutricula_client_ip()</code>، Cloudflare-aware).</div></div>
+<div class="step"><div class="step-num">۳</div><div class="step-body">اگر VPS باشد، Machine ID مؤثر (effective) هر دو نسخه با ترکیب IP محاسبه می‌شود (بخش ۹) — برای VPS این دو نسخه از قبل یکسان‌اند (بخش ۳.۲).</div></div>
+<div class="step"><div class="step-num">۴</div><div class="step-body">اگر <code class="inline">machine_id_alt_confirmed=1</code> ارسال نشده باشد (حالت عادی، اولین تلاش): آیا <code class="inline">machine_id</code> (نسخهٔ اصلی) از قبل یک لایسنس فعال دیگر (purchase_key متفاوت) دارد؟
+  <ul style="margin:8px 0 0 20px;color:var(--text-dim);">
+  <li><b>خیر</b> (رایج‌ترین حالت) → ادامه به قدم ۶ با همین نسخهٔ اصلی</li>
+  <li><b>بله</b> → device_key آن رکورد متصادم با device_key همین درخواست مقایسه می‌شود:
+    <ul style="margin:8px 0 0 20px;">
+    <li>یکی بود (واقعاً همین کامپیوتر) → رد فوری با <code class="inline">device_already_licensed</code>، بدون هیچ fallback</li>
+    <li>متفاوت بود (کامپیوتر واقعاً دیگری) → آیا <code class="inline">machine_id_alt</code> (نسخهٔ با GUID) هم لایسنس فعال دیگری دارد؟
+      <ul style="margin:8px 0 0 20px;">
+      <li>خیر → رد با <code class="inline">machine_requires_confirmation</code> (Installer دیالوگ هشدار نشان می‌دهد)</li>
+      <li>بله (و device_key آن هم متفاوت) → رد با <code class="inline">machine_already_licensed</code></li>
+      </ul>
+    </li>
+    </ul>
+  </li>
+  </ul>
+</div></div>
+<div class="step"><div class="step-num">۵</div><div class="step-body">اگر <code class="inline">machine_id_alt_confirmed=1</code> ارسال شده باشد (تلاش دوم، بعد از تأیید کاربر در دیالوگ): مستقیم با <code class="inline">machine_id_alt</code> ادامه می‌دهد — با همان چک device_key-aware برای اطمینان مجدد (وضعیت ممکن است از لحظهٔ نمایش دیالوگ تغییر کرده باشد).</div></div>
+<div class="step"><div class="step-num">۶</div><div class="step-body">ردیف جدید INSERT می‌شود با هرکدام از دو نسخه که در قدم ۴/۵ نهایی شده — اگر <code class="inline">device_public_key_hash</code> از قبل برای همین محصول وجود داشته باشد، constraint دیتابیس (<code class="inline">uq_product_device</code>) هم جداگانه جلوگیری می‌کند → <code class="inline">device_already_licensed</code>.</div></div>
+</div>
+
+<div class="callout danger"><b>چرا device_key، نه صرفاً تصادم machine_id، تعیین‌کننده است:</b> یک تصادم machine_id به‌تنهایی ثابت نمی‌کند «کامپیوتر دیگری» است — می‌تواند همان کامپیوتر باشد که دارد یک purchase_key دوم را روی خودش امتحان می‌کند (تست، اشتباه، یا تلاش عمدی برای گرفتن دو لایسنس با سوءاستفاده از fallback). device_key این ابهام را برطرف می‌کند: چون این مقدار به هر کامپیوتر منحصر است (DPAPI-محافظت‌شده، تقریباً غیرقابل جعل تصادفی)، تطابق device_key یعنی قطعاً همان کامپیوتر — که هرگز نباید اجازهٔ گرفتن یک لایسنس دوم داشته باشد، صرف‌نظر از این‌که کدام نسخهٔ machine_id استفاده شود.</div>
+
+<h4>شاخهٔ ب — Re-signup (همان purchase_key)</h4>
+<div class="step-flow">
+<div class="step"><div class="step-num">۱</div><div class="step-body">چک هویت: ایمیل، product_id، و machine_id مؤثر باید <b>با یکی از دو نسخه</b> (اصلی یا با GUID) مطابقت داشته باشند — device key عمداً چک نمی‌شود (به کادر زیر مراجعه کنید).</div></div>
+<div class="step"><div class="step-num">۲</div><div class="step-body">چک محدودیت زمانی (همان کف ۲:۵۹ که برای verify هم استفاده می‌شود).</div></div>
+<div class="step"><div class="step-num">۳</div><div class="step-body">Re-signup <b>دقیقاً مثل ارائهٔ یک توکن قدیمی</b> رفتار می‌شود — چون در signup هیچ توکنی ارسال نمی‌شود، همیشه به‌عنوان «stale» تلقی و از طریق همان تابع <code class="inline">nutricula_check_and_rotate_token()</code> با رشتهٔ خالی پردازش می‌شود.</div></div>
+</div>
+
+<div class="callout blue"><b>چرا در Re-signup از device_key استفاده نمی‌شود (برخلاف شاخهٔ INSERT بالا):</b> اینجا تعیین‌کنندهٔ هویت، <b>ایمیل + همان purchase_key</b> است، نه device_key — چون ویندوز کاربر ممکن است عوض شده باشد (که در این صورت device_key پاک/بازسازی می‌شود، ولی machine_id نسخهٔ اصلی ثابت می‌ماند). اگر اینجا هم device_key الزامی بود، یک کاربر قانونی که فقط ویندوزش را عوض کرده، هرگز نمی‌توانست دوباره ثبت‌نام کند. این دقیقاً برعکس شاخهٔ INSERT است، چون آن سؤال («این machine_id متعلق به کدام کامپیوتر است؟») با این سؤال («آیا این درخواست واقعاً صاحب همین purchase_key است؟») کاملاً متفاوت است — برای دومی، ایمیل+purchase_key از قبل کافی است.</div>
+
+
+
+<h2 id="sec5-2">۵.۲ nutricula_computer_based_signup_transfer.php</h2>
+<p>نیازمند سه اعتبارسنجی مستقل: ایمیل + purchase_key معتبر، transfer_key معتبر و استفاده‌نشده (چک در <code class="inline">nutricula_transfer_keys_used</code>)، و machine_id کامپیوتر جدید که <b>باید با machine_id قدیمی فرق داشته باشد</b> (چک <code class="inline">transfer_same_machine</code> — با هردو نسخه، اصلی و WithGuid، مقایسه می‌شود).</p>
+
+<p>برای تعیین این‌که کدام نسخه از machine_id کامپیوتر <b>جدید</b> واقعاً در رکورد نهایی ذخیره شود، دقیقاً همان جریان دو‌مرحله‌ای device_key-aware بخش ۵.۱ اجرا می‌شود — فقط این‌بار روی «آیا کامپیوتر جدید قبلاً یک لایسنس فعال دیگر دارد» به‌جای «آیا این یک ثبت‌نام اول است»:</p>
+
+<div class="step-flow">
+<div class="step"><div class="step-num">۱</div><div class="step-body">آیا <code class="inline">machine_id</code> (نسخهٔ اصلی) کامپیوتر جدید از قبل یک لایسنس فعال دیگر (purchase_key متفاوت) دارد؟ خیر → ادامه با همین نسخه.</div></div>
+<div class="step"><div class="step-num">۲</div><div class="step-body">بله → device_key آن رکورد متصادم با device_key کامپیوتر جدید مقایسه می‌شود: یکسان (همان کامپیوتر جدید) → <code class="inline">device_already_licensed</code>؛ متفاوت → آیا <code class="inline">machine_id_alt</code> هم لایسنس فعال دیگری دارد؟</div></div>
+<div class="step"><div class="step-num">۳</div><div class="step-body"><code class="inline">machine_id_alt</code> آزاد است → <code class="inline">machine_requires_confirmation</code> (دیالوگ هشدار Transfer نشان داده می‌شود). هردو نسخه اشغال‌اند → <code class="inline">machine_already_licensed</code>.</div></div>
+<div class="step"><div class="step-num">۴</div><div class="step-body">موفقیت (با هرکدام از دو نسخه که نهایی شده) → یک ردیف کاملاً جدید در <code class="inline">nutricula_licenses</code> با <code class="inline">license_uuid</code> تازه، و ثبت کامل رویداد در <code class="inline">nutricula_transfer_keys_used</code>.</div></div>
+</div>
+
+<h2 id="sec5-3">۵.۳ license_check.php — قلب سیستم</h2>
+<p>سه Stage دارد که با فیلد <code class="inline">stage</code> در درخواست انتخاب می‌شوند. برای <code class="inline">challenge</code> و <code class="inline">verify</code>، کلاینت همیشه هردو نسخهٔ machine_id را می‌فرستد — چون <code class="inline">license_id</code> از قبل مشخص است، سرور به‌سادگی چک می‌کند مقدار ذخیره‌شدهٔ همین رکورد با کدام‌یک مطابقت دارد (بخش ۳.۱).</p>
+<table>
+<tr><th>Stage</th><th>هدف</th><th>فیلدهای لازم</th></tr>
+<tr><td><code class="inline">challenge</code></td><td>یک Nonce تصادفی و یک Challenge ID صادر می‌کند که کلاینت باید با کلید دستگاه امضا کند</td><td><code class="inline">license_id</code>, <code class="inline">machine_id</code>, <code class="inline">machine_id_alt</code>, <code class="inline">device_key_hash</code></td></tr>
+<tr><td><code class="inline">verify</code></td><td>امضای Challenge را تأیید، و در صورت موفقیت یک Lease جدید امضاشده صادر می‌کند</td><td>همهٔ فیلدهای بالا + <code class="inline">challenge_id</code>, <code class="inline">signature</code>, هش‌های آرتیفکت، <code class="inline">refresh_token</code></td></tr>
+<tr><td><code class="inline">free_checkin</code></td><td>یک پینگ سبک و بدون امضا برای آمار کاربران رایگان</td><td><code class="inline">machine_id</code> (فقط نسخهٔ WithGuid، بدون machine_id_alt — بخش ۲.۱)، <code class="inline">device_key_hash</code></td></tr>
+</table>
+
+<h4>ترتیب دقیق چک‌ها در challenge/verify (هردو stage)</h4>
+<div class="step-flow">
+<div class="step"><div class="step-num">۱</div><div class="step-body">آیا این <code class="inline">license_id</code> اصلاً وجود دارد؟ نه → <code class="inline">license_not_found</code></div></div>
+<div class="step"><div class="step-num">۲</div><div class="step-body">آیا machine_id مؤثر مطابقت دارد؟ نه → <code class="inline">machine_mismatch</code></div></div>
+<div class="step"><div class="step-num">۳</div><div class="step-body">آیا device_key_hash مطابقت دارد؟ نه → <code class="inline">device_key_mismatch</code></div></div>
+<div class="step"><div class="step-num">۴</div><div class="step-body">آیا وضعیت لایسنس <code class="inline">active</code> است؟ نه → <code class="inline">license_inactive</code></div></div>
+<div class="step"><div class="step-num">۵</div><div class="step-body">آیا هنوز منقضی نشده؟ نه → <code class="inline">license_expired</code></div></div>
+<div class="step"><div class="step-num">۶</div><div class="step-body">آیا <code class="inline">blocked_until</code> در آینده است؟ بله → <code class="inline">blocked</code> (تنها بعد از این نقطه، منطق توکن چرخشی وارد می‌شود)</div></div>
+<div class="step"><div class="step-num">۷</div><div class="step-body">آیا حداقل فاصلهٔ زمانی (۲:۵۹) رعایت شده؟ نه → <code class="inline">too_early</code> (فقط در verify)</div></div>
+<div class="step"><div class="step-num">۸</div><div class="step-body">فقط در <code class="inline">verify</code>: امضای Challenge با کلید عمومی دستگاه تأیید می‌شود → نامعتبر → <code class="inline">signature_invalid</code></div></div>
+<div class="step"><div class="step-num">۹</div><div class="step-body">فقط در <code class="inline">verify</code>: هش‌های آرتیفکت (EX5/EX4/DLL/Service/Broker) در برابر <code class="inline">nutricula_build_manifests</code> چک می‌شوند → نامعتبر → <code class="inline">artifact_mismatch</code></div></div>
+<div class="step"><div class="step-num">۱۰</div><div class="step-body">توکن چرخشی بررسی می‌شود (بخش ۸)</div></div>
+<div class="step"><div class="step-num">۱۱</div><div class="step-body">موفقیت → یک <code class="inline">SELECT ... FOR UPDATE</code> تازه روی ردیف انجام می‌شود؛ Lease جدید از همین رکورد تازه‌قفل‌شده (نه رکورد اولیهٔ unlocked) ساخته، امضا، و برگردانده می‌شود؛ توکن جدید تولید می‌شود</div></div>
+</div>
+
+<div class="callout danger"><b>هر رد شدنی که به Tier آزاد (نه <code class="inline">update_required</code> و نه <code class="inline">blocked</code>) ختم می‌شود، به‌طور خودکار در جدول آمار رایگان هم ثبت می‌شود</b> — از طریق یک closure مرکزی به اسم <code class="inline">$rejectTracked</code> که همهٔ نقاط رد شدن را پوشش می‌دهد، نه فقط <code class="inline">license_not_found</code>.</div>
+
+<div class="callout blue"><b>هر فیلدی که در Lease نهایی امضا می‌شود، از همان رکورد <code class="inline">SELECT ... FOR UPDATE</code> خوانده می‌شود، نه از خواندن اولیهٔ unlocked ابتدای درخواست.</b> این شامل <code class="inline">product_id</code>, <code class="inline">status</code>, <code class="inline">license_expires_at</code> هم می‌شود — بستن کامل شکاف TOCTOU (Time-Of-Check-To-Time-Of-Use) بین لحظهٔ چک اولیه و لحظهٔ صدور واقعی Lease.</div>
+
+<h2 id="sec5-4">۵.۴ license_common.php — توابع کلیدی</h2>
+<table>
+<tr><th>تابع</th><th>وظیفه</th></tr>
+<tr><td><code class="inline">nutricula_client_ip()</code></td><td>IP واقعی اتصال را برمی‌گرداند — Cloudflare-aware، هرگز به IP ادعاشدهٔ کلاینت اعتماد نمی‌کند</td></tr>
+<tr><td><code class="inline">nutricula_effective_machine_id()</code></td><td>برای VPS، machine_id خام را با IP ترکیب و دوباره هش می‌کند؛ برای بقیه بدون تغییر برمی‌گرداند — روی هردو نسخه (اصلی و WithGuid) جداگانه فراخوانی می‌شود</td></tr>
+<tr><td><code class="inline">nutricula_find_conflicting_license()</code></td><td>می‌گیرد: product_id، یک machine_id، و purchase_key فعلی؛ برمی‌گرداند: رکورد لایسنس فعال دیگری (purchase_key متفاوت) که همین machine_id را دارد — همراه <code class="inline">device_public_key_hash</code> آن، برای چک device-key-aware بخش ۵.۱/۵.۲</td></tr>
+<tr><td><code class="inline">nutricula_check_and_rotate_token()</code></td><td>کل state machine توکن چرخشی (بخش ۸)</td></tr>
+<tr><td><code class="inline">nutricula_check_and_touch_time_lock()</code></td><td>محدودیت زمانی ۲:۵۹ را اعمال و <code class="inline">last_request_time</code> را به‌روزرسانی می‌کند</td></tr>
+<tr><td><code class="inline">nutricula_track_unlicensed_checkin()</code></td><td>upsert در جدول آمار رایگان — بر اساس machine_id <b>یا</b> device_key_hash (هرکدام کافی است، بخش ۱۳)</td></tr>
+<tr><td><code class="inline">nutricula_reject()</code></td><td>پاسخ رد شدن را با امضای RSA می‌سازد و ارسال می‌کند</td></tr>
+</table>
+
+
+<h2>سناریوهای امنیتی — سرور PHP</h2>
+<table>
+<tr><th>حمله</th><th>کرکر چه می‌کند</th><th>پاسخ سیستم</th><th>نتیجه</th></tr>
+<tr><td>SQL Injection</td><td>مقادیر مخرب SQL در فیلدهای ورودی (email، machine_id، و غیره)</td><td>همهٔ کوئری‌ها با <code class="inline">mysqli::prepare</code> و <code class="inline">bind_param</code> پارامتری‌سازی شده‌اند — هیچ concatenation مستقیم رشته در SQL وجود ندارد</td><td class="status ok">مسدود</td></tr>
+<tr><td>ارسال فیلدهای اضافه/غیرمنتظره در بدنهٔ رمزگشایی‌شده</td><td>فیلدهایی خارج از whitelist هر Stage اضافه می‌کند</td><td><code class="inline">nutricula_strict_parse_fields()</code> هر فیلد خارج از whitelist مربوط به همان Stage را رد می‌کند (throw می‌کند)</td><td class="status ok">مسدود</td></tr>
+<tr><td>Replay یک Challenge/Verify قدیمی</td><td>یک درخواست verify معتبر قبلی را دوباره می‌فرستد</td><td>هر Challenge یک‌بارمصرف است (<code class="inline">used_at</code> در <code class="inline">nutricula_license_challenges</code>) و <code class="inline">expires_at</code> کوتاه دارد؛ دومین استفاده رد می‌شود</td><td class="status ok">مسدود</td></tr>
+<tr><td>حملهٔ Timing برای حدس زدن purchase_key یا device_key_hash صحیح از روی زمان پاسخ</td><td>زمان پاسخ سرور را برای مقادیر مختلف اندازه می‌گیرد</td><td>مقایسه‌های حساس (کلید خرید، هش‌ها) با <code class="inline">hash_equals()</code> انجام می‌شوند که در برابر timing attack مقاوم است</td><td class="status ok">مسدود</td></tr>
+<tr><td>حملهٔ حجمی (Volumetric DDoS) روی endpoint</td><td>هزاران درخواست در ثانیه می‌فرستد</td><td>محدودیت نرخ IP-based (۳۰ درخواست/دقیقه) یک لایهٔ دفاعی سطح‌اپلیکیشن است، ولی مستندات صریحاً اعتراف می‌کنند که یک WAF/CDN واقعی (مثل Cloudflare) باید خط دفاعی اصلی باشد</td><td class="status warn">دفاع نسبی — نیاز به لایهٔ زیرساختی جداگانه دارد</td></tr>
+<tr><td>جعل هدر <code class="inline">CF-Connecting-IP</code> برای گزارش یک IP دلخواه</td><td>مستقیم (بدون عبور از Cloudflare) این هدر را می‌فرستد</td><td>این هدر فقط زمانی پذیرفته می‌شود که IP واقعی اتصال (<code class="inline">REMOTE_ADDR</code>) در محدودهٔ IP رنج‌های شناخته‌شدهٔ Cloudflare باشد؛ در غیر این صورت <code class="inline">REMOTE_ADDR</code> خام استفاده می‌شود</td><td class="status ok">مسدود (به شرط تنظیم صحیح <code class="inline">trusted_proxy_cidrs</code>)</td></tr>
+<tr><td>حملهٔ Race Condition روی چک هم‌زمان دو verify برای همان لایسنس</td><td>دو درخواست verify کاملاً همزمان برای یک license_id می‌فرستد</td><td><code class="inline">SELECT ... FOR UPDATE</code> قبل از صدور Lease نهایی، ردیف را قفل می‌کند — یکی منتظر می‌ماند تا دیگری تمام شود، سپس با وضعیت به‌روزشده دوباره بررسی می‌شود</td><td class="status ok">مسدود</td></tr>
+<tr><td>Downgrade Attack — اجبار سرور به استفاده از یک نسخهٔ قدیمی‌تر پروتکل با آسیب‌پذیری شناخته‌شده</td><td>فیلد <code class="inline">v</code> (نسخهٔ پروتکل) را به یک مقدار قدیمی تغییر می‌دهد</td><td>سرور فقط <code class="inline">v=3</code> را می‌پذیرد؛ نسخه‌های دیگر رد می‌شوند (خطای عمومی)</td><td class="status ok">مسدود</td></tr>
+<tr><td>تلاش برای ارسال مستقیم <code class="inline">machine_id_alt_confirmed=1</code> در همان اولین درخواست (بدون دیدن دیالوگ)، به امید دورزدن چک اولیهٔ primary</td><td>پرچم تأیید را از ابتدا، بدون تلاش قبلی، ارسال می‌کند</td><td>سرور همچنان چک device-key-aware را روی <code class="inline">machine_id_alt</code> اجرا می‌کند (بخش ۵.۱) — این پرچم فقط مسیر چک primary را رد می‌کند، هیچ چک امنیتی را دور نمی‌زند؛ اگر device_key رکورد متصادم با درخواست یکی باشد، همچنان <code class="inline">device_already_licensed</code> می‌گیرد</td><td class="status ok">مسدود — پرچم صرفاً یک میان‌بر UX است، نه یک بای‌پس امنیتی</td></tr>
+<tr><td>Race Condition روی چک تصادم machine_id — دو درخواست signup همزمان با machine_id یکسان (primary) و purchase_key متفاوت</td><td>دو کامپیوتر (یا یک اسکریپت) هم‌زمان سعی می‌کنند</td><td><code class="inline">nutricula_acquire_machine_lock()</code> (بر پایهٔ <code class="inline">GET_LOCK</code> در MySQL — یک قفل نام‌گذاری‌شده در سطح session، نه یک قفل ردیف که فقط روی رکوردهای موجود کار می‌کند) قبل از هر چک تصادمی، هر دو نسخهٔ machine_id این درخواست را قفل می‌کند؛ دومین درخواست هم‌زمان تا پایان کامل اولی (commit یا rollback) منتظر می‌ماند</td><td class="status ok">مسدود</td></tr>
+</table>
+
+
+
+<h2>پرسش‌های متداول مفهومی — سرور PHP</h2>
+<div class="faq"><div class="q"><span class="qmark">س:</span>چرا Signup/Transfer و License Check در فایل‌های جدا هستند، نه یک endpoint واحد؟</div>
+<div class="a">این دو مسیر فیلدهای ورودی، منطق اعتبارسنجی، و ریسک‌های امنیتی کاملاً متفاوتی دارند (یکی به EDD وابسته است، دیگری به امضای رمزنگاری‌شده) — ترکیب آن‌ها پیچیدگی و سطح حمله را بی‌دلیل افزایش می‌داد.</div></div>
+<div class="faq"><div class="q"><span class="qmark">س:</span>آیا یک پنل ادمین برای لغو دستی یک لایسنس وجود دارد؟</div>
+<div class="a">در کد فعلی، خیر — لغو لایسنس فقط از طریق تغییر مستقیم ستون <code class="inline">status</code> به <code class="inline">revoked</code> در دیتابیس ممکن است (دستی یا با یک اسکریپت ادمین جداگانه که در این سند مستند نشده).</div></div>
+<div class="faq"><div class="q"><span class="qmark">س:</span>چطور دو درخواست کاملاً همزمان (میکروثانیه‌ای) برای یک لایسنس مدیریت می‌شوند؟</div>
+<div class="a"><code class="inline">SELECT ... FOR UPDATE</code> ردیف را قفل می‌کند؛ MySQL/InnoDB درخواست دوم را تا پایان تراکنش اول منتظر نگه می‌دارد، سپس با وضعیت به‌روزشده ادامه می‌دهد — نه race condition، نه دادهٔ ناسازگار.</div></div>
+
+
+
+<h1 id="sec6"><span class="num">۶.</span>دیتابیس — جداول و ستون‌ها</h1>
+
+<h2><code class="inline">nutricula_licenses</code> — جدول اصلی</h2>
+<table>
+<tr><th>ستون</th><th>نوع</th><th>توضیح</th></tr>
+<tr><td><code class="inline">license_uuid</code></td><td>CHAR(36)</td><td>شناسهٔ منحصربه‌فرد لایسنس، UNIQUE</td></tr>
+<tr><td><code class="inline">purchase_key</code></td><td>VARCHAR(255)</td><td>UNIQUE — کلید خرید از EDD</td></tr>
+<tr><td><code class="inline">machine_id</code></td><td>CHAR(64)</td><td>برای VPS: مؤثر (با IP)؛ برای بقیه: خام</td></tr>
+<tr><td><code class="inline">device_public_key_hash</code></td><td>CHAR(64)</td><td>بخشی از UNIQUE KEY <code class="inline">uq_product_device</code></td></tr>
+<tr><td><code class="inline">device_type</code></td><td>ENUM</td><td><code class="inline">windows</code>/<code class="inline">windows_vm</code>/<code class="inline">macos_wine</code>/<code class="inline">linux_wine</code>/<code class="inline">unknown</code></td></tr>
+<tr><td><code class="inline">vps_bound_ip</code></td><td>VARCHAR(45)</td><td>فقط برای پشتیبانی/audit — هرگز در تصمیم امنیتی استفاده نمی‌شود</td></tr>
+<tr><td><code class="inline">current_refresh_token_hash</code></td><td>CHAR(64)</td><td>هش SHA-256 توکن فعلی</td></tr>
+<tr><td><code class="inline">token_suspicious</code></td><td>TINYINT(1)</td><td>یک توکن قدیمی «بخشیده‌شده» ولی هنوز پاک نشده</td></tr>
+<tr><td><code class="inline">blocked_until</code></td><td>BIGINT UNSIGNED</td><td>در آینده = مسدود کامل، صرف‌نظر از توکن</td></tr>
+<tr><td><code class="inline">last_request_time</code></td><td>BIGINT UNSIGNED</td><td>هر تلاش (موفق یا ناموفق) این را لمس می‌کند — مبنای <code class="inline">too_early</code></td></tr>
+<tr><td><code class="inline">last_success_time</code></td><td>BIGINT UNSIGNED</td><td>فقط موفقیت‌ها</td></tr>
+</table>
+
+<h2>سایر جداول</h2>
+<table>
+<tr><th>جدول</th><th>هدف</th></tr>
+<tr><td><code class="inline">nutricula_license_challenges</code></td><td>هر Challenge صادرشده، با <code class="inline">expires_at</code> و <code class="inline">used_at</code> برای جلوگیری از replay</td></tr>
+<tr><td><code class="inline">nutricula_license_activity</code></td><td>لاگ کامل هر درخواست (موفق یا ناموفق) با دلیل رد شدن</td></tr>
+<tr><td><code class="inline">nutricula_unlicensed_checkins</code></td><td>upsert بر اساس machine_id <b>یا</b> device_key_hash (nullable، هرکدام به‌تنهایی کافی است) — آمار کاربران رایگان با <code class="inline">first_seen_at</code>/<code class="inline">last_seen_at</code></td></tr>
+<tr><td><code class="inline">nutricula_transfer_keys_used</code></td><td>یک ردیف برای هر Transfer موفق — کلید انتقال، شناسهٔ کامپیوتر قدیم و جدید</td></tr>
+<tr><td><code class="inline">nutricula_build_manifests</code></td><td>هش‌های مورد انتظار هر نسخهٔ منتشرشده — تنها منبع حقیقت برای چک یکپارچگی آرتیفکت</td></tr>
+<tr><td><code class="inline">nutricula_rate_limits</code></td><td>محدودیت نرخ ۳۰ درخواست در دقیقه به‌ازای هر IP+endpoint</td></tr>
+</table>
+
+<h4 id="mql-check">پاسخ به سؤال شما دربارهٔ MQL — چطور بفهمم کاربر لایسنس دارد؟</h4>
+<div class="callout blue">
+از سمت MQL (کد اکسپرت)، شما هرگز مستقیم به دیتابیس دسترسی ندارید — این عمداً همین‌طور طراحی شده. تنها راه، فراخوانی توابع export‌شدهٔ DLL نازک است — راهنمای کامل و دقیق هر تابع (نام واقعی، امضا، نمونه‌کد) در <b>بخش ۱۶</b> آمده است.
+</div>
+
+<hr>
+
+<h2>سناریوهای امنیتی — دیتابیس</h2>
+<table>
+<tr><th>حمله</th><th>کرکر چه می‌کند</th><th>پاسخ سیستم</th><th>نتیجه</th></tr>
+<tr><td>دسترسی مستقیم به دیتابیس (نه از طریق endpoint)</td><td>سعی می‌کند مستقیم به MySQL وصل شود</td><td>خارج از scope این سند — امنیت دیتابیس (فایروال، اعتبارنامهٔ محدود، عدم expose به اینترنت عمومی) مسئولیت زیرساخت است</td><td class="status warn">خارج از scope</td></tr>
+<tr><td>ساخت دستی یک ردیف لایسنس معتبر بدون عبور از EDD (اگر مهاجم به دیتابیس دسترسی نوشتن پیدا کند)</td><td>مستقیم یک INSERT می‌زند</td><td>اگر مهاجم به این سطح دسترسی برسد، کل سیستم به‌خطر افتاده — هیچ لایهٔ اپلیکیشنی می‌تواند این را جبران کند</td><td class="status danger">مسدود نمی‌شود (این یک نقض کامل امنیت زیرساخت است، نه یک سناریوی واقع‌بینانه برای این سند)</td></tr>
+<tr><td>دستکاری مستقیم ستون <code class="inline">blocked_until</code> برای برداشتن قفل ۲۴ ساعته (توسط کاربر عادی، نه ادمین)</td><td>سعی می‌کند از طریق endpoint این مقدار را عوض کند</td><td>هیچ endpoint عمومی وجود ندارد که مستقیم این ستون را بنویسد — فقط از طریق منطق داخلی <code class="inline">nutricula_check_and_rotate_token()</code> یا Transfer تغییر می‌کند</td><td class="status ok">مسدود</td></tr>
+<tr><td>حذف ردیف <code class="inline">nutricula_license_challenges</code> برای پاک‌کردن ردپای Replay</td><td>سعی می‌کند رکورد استفاده‌شده را حذف کند تا دوباره قابل‌استفاده شود</td><td>هیچ endpoint عمومی دسترسی حذف به این جدول ندارد</td><td class="status ok">مسدود</td></tr>
+</table>
+
+
+<h2>پرسش‌های متداول مفهومی — دیتابیس</h2>
+<div class="faq"><div class="q"><span class="qmark">س:</span>چرا InnoDB و نه MyISAM؟</div>
+<div class="a">InnoDB از تراکنش (Transaction)، قفل ردیف (Row-level Locking)، و Foreign Key پشتیبانی می‌کند — هرسه برای <code class="inline">SELECT ... FOR UPDATE</code> و روابط <code class="inline">ON DELETE CASCADE</code> در این schema ضروری‌اند.</div></div>
+<div class="faq"><div class="q"><span class="qmark">س:</span>آیا جدول <code class="inline">nutricula_license_challenges</code> نیاز به پاک‌سازی دوره‌ای دارد؟</div>
+<div class="a">در کد فعلی، خیر — هیچ Job پاک‌سازی خودکاری مستند نشده؛ این جدول به‌مرور بزرگ می‌شود. یک بهبود عملی (خارج از scope فعلی) می‌تواند حذف دوره‌ای ردیف‌های با <code class="inline">expires_at</code> بسیار قدیمی باشد.</div></div>
+<div class="faq"><div class="q"><span class="qmark">س:</span>چرا <code class="inline">last_request_time</code> و <code class="inline">last_success_time</code> دو ستون جدا هستند؟</div>
+<div class="a">اولی مبنای محدودیت زمانی (<code class="inline">too_early</code>) است و با هر تلاش (موفق یا ناموفق) به‌روزرسانی می‌شود؛ دومی فقط برای گزارش‌گیری («آخرین باری که این کاربر واقعاً موفق شد») مفید است — ترکیب این دو در یک ستون، اطلاعات تشخیصی را از بین می‌برد.</div></div>
+
+
+
+<h1 id="sec7"><span class="num">۷.</span>پروتکل رمزنگاری و انتقال</h1>
+
+<table>
+<tr><th>لایه</th><th>الگوریتم</th><th>هدف</th></tr>
+<tr><td>انتقال (Transport)</td><td>AES-256-GCM با کلید ثابت مشترک (Transport Key)</td><td>محرمانگی کل بدنهٔ درخواست/پاسخ در برابر شنود شبکه</td></tr>
+<tr><td>امضای سرور</td><td>RSA-4096</td><td>اثبات این‌که یک Lease/Reject واقعاً از سرور آمده — کلاینت نمی‌تواند جعل کند</td></tr>
+<tr><td>اثبات مالکیت دستگاه</td><td>ECDSA P-256</td><td>اثبات این‌که کلاینت واقعاً کلید خصوصی دستگاه را دارد (امضای Challenge Nonce)</td></tr>
+<tr><td>هویت Vendor/Coordinator</td><td>ECDSA P-256 (قبلاً P-384، به‌خاطر ناسازگاری با Wine تغییر یافت)</td><td>امضای Manifest و handshake داخلی IPC</td></tr>
+</table>
+<p class="dim">همهٔ رشته‌های canonical (چیزی که واقعاً امضا می‌شود) با یک قرارداد ثابت <code class="inline">key=value</code> جدا شده با <code class="inline">|</code> ساخته می‌شوند — این «Domain Separation» جلوی ابهام در تفسیر جلوگیری می‌کند.</p>
+
+
+<h2>سناریوهای امنیتی — پروتکل رمزنگاری</h2>
+<table>
+<tr><th>حمله</th><th>کرکر چه می‌کند</th><th>پاسخ سیستم</th><th>نتیجه</th></tr>
+<tr><td>استخراج کلید انتقال (Transport Key) از داخل باینری کلاینت</td><td>باینری را دیس‌اسمبل و کلید ثابت را پیدا می‌کند</td><td>این کلید ذاتاً <b>باید</b> در باینری کلاینت وجود داشته باشد (چون رمزنگاری متقارن است) — این محرمانگی را در برابر شنود شبکهٔ عادی تضمین می‌کند، نه در برابر کسی که خود باینری را دارد</td><td class="status danger">مسدود نمی‌شود (محدودیت بنیادین رمزنگاری متقارن با کلید ثابت — طراحی آگاهانه، نه سهو)</td></tr>
+<tr><td>استخراج کلید عمومی RSA سرور و جعل یک جفت کلید جدید</td><td>سعی می‌کند کلید عمومی جاسازی‌شده در باینری را با کلید عمومی خودش جایگزین کند</td><td>این نیاز به patch کامل باینری دارد (بازمی‌گردد به محدودیت بخش ۱ — reverse engineering)؛ اگر موفق شود، کل زنجیرهٔ اعتماد امضا شکسته می‌شود</td><td class="status danger">مسدود نمی‌شود در برابر patch باینری</td></tr>
+<tr><td>حملهٔ Padding Oracle یا Nonce Reuse روی AES-GCM</td><td>سعی می‌کند از طریق تحلیل رمزی، پیام را بدون کلید بشکند</td><td>هر پیام یک Nonce تصادفی ۹۶ بیتی تازه دارد (هرگز تکرار نمی‌شود)؛ GCM با Nonce یکتا در برابر این حملات مقاوم است</td><td class="status ok">مسدود</td></tr>
+</table>
+
+
+
+<h2>پرسش‌های متداول مفهومی — پروتکل رمزنگاری</h2>
+<div class="faq"><div class="q"><span class="qmark">س:</span>چرا GCM به‌جای CBC برای رمزنگاری انتقال؟</div>
+<div class="a">GCM هم محرمانگی هم صحت (Authenticated Encryption) را در یک عملیات فراهم می‌کند — تغییر حتی یک بیت، تگ احراز هویت را نامعتبر می‌کند. CBC به‌تنهایی صحت را تضمین نمی‌کند و نیاز به یک MAC جداگانه دارد که پیچیدگی و ریسک پیاده‌سازی اشتباه را افزایش می‌دهد.</div></div>
+<div class="faq"><div class="q"><span class="qmark">س:</span>چرا الگوریتم امضای سرور (RSA-4096) با الگوریتم کلید دستگاه (P-256) متفاوت است؟</div>
+<div class="a">این دو نقش کاملاً متفاوت دارند: RSA-4096 برای امضای سرور انتخاب شد چون این عملیات نادر است (فقط سمت سرور، نه هر چند دقیقه روی هر کلاینت) و سازگاری گسترده‌تری دارد؛ P-256 برای Device/Vendor Key انتخاب شد چون این عملیات مکرر (هر verify) روی هر کلاینت انجام می‌شود و باید سبک باشد.</div></div>
+<div class="faq"><div class="q"><span class="qmark">س:</span>آیا کلید انتقال (Transport Key) هرگز چرخانده (Rotate) می‌شود؟</div>
+<div class="a">در طراحی فعلی، خیر — این یک کلید ثابت جاسازی‌شده در باینری است. چرخش آن نیاز به انتشار نسخهٔ جدید کلاینت به همهٔ کاربران دارد؛ این یک محدودیت شناخته‌شده است (بخش ۷، سناریوهای امنیتی).</div></div>
+
+
+
+<h1 id="sec8"><span class="num">۸.</span>توکن چرخشی و تشخیص کلون</h1>
+
+<p>مشکلی که این مکانیزم حل می‌کند: اگر دو کامپیوتر <b>دقیقاً</b> همان machine_id و همان device_key را داشته باشند (کلون کامل)، هیچ چک رمزنگاری‌شده‌ای نمی‌تواند تشخیص دهد کدام «اصلی» است — چون هردو کلید خصوصی یکسان را دارند. راه‌حل: نه تشخیص هویت، بلکه <b>مشاهدهٔ رفتاری تصادم</b>.</p>
+
+<h2>State Machine کامل</h2>
+<table>
+<tr><th>وضعیت فعلی</th><th>توکن ارسالی</th><th>نتیجه</th></tr>
+<tr><td><code class="inline">token_suspicious=0</code></td><td>توکن فعلی درست</td><td>موفقیت، توکن جدید صادر می‌شود</td></tr>
+<tr><td><code class="inline">token_suspicious=0</code></td><td>توکن قدیمی/خالی</td><td><b>بخشیده می‌شود</b>: موفقیت + توکن جدید + <code class="inline">token_suspicious=1</code></td></tr>
+<tr><td><code class="inline">token_suspicious=1</code></td><td>توکن فعلی درست</td><td>موفقیت + <code class="inline">token_suspicious=0</code> (پاک‌سازی کامل)</td></tr>
+<tr><td><code class="inline">token_suspicious=1</code></td><td>توکن قدیمی/خالی</td><td><b>مسدود ۲۴ ساعته</b> — <code class="inline">blocked_until=NOW+24h</code>، Tier=<code class="inline">-100</code></td></tr>
+<tr><td><code class="inline">blocked_until</code> در آینده</td><td>هر توکنی (حتی درست)</td><td>مسدود — بدون استثنا</td></tr>
+</table>
+
+<div class="callout danger"><b>در تمام مدت ۲۴ ساعت مسدودیت، هر درخواست (نه فقط اولی) پاسخ <code class="inline">blocked</code> می‌گیرد.</b> پیام نمایش‌داده‌شده در Installer: <i>«Your license has been temporarily restricted. Please try again after 24 hours. For more information, please contact Nutricula support.»</i></div>
+
+<h2>Re-signup هم همین منطق را دارد</h2>
+<p>وقتی کاربری با همان purchase_key دوباره ثبت‌نام می‌کند (روی همان کامپیوتر واقعی)، چون هیچ توکنی در درخواست signup وجود ندارد، این <b>دقیقاً</b> مثل ارائهٔ یک توکن قدیمی رفتار می‌شود — بار اول بخشیده، بار دوم پشت‌سرهم مسدود.</p>
+
+<hr>
+
+<h2>سناریوهای امنیتی — توکن چرخشی</h2>
+<table>
+<tr><th>حمله</th><th>کرکر چه می‌کند</th><th>پاسخ سیستم</th><th>نتیجه</th></tr>
+<tr><td>دو کپی از یک کلون کامل، هردو با فاصلهٔ زمانی معمول verify می‌کنند</td><td>هر دو دستگاه به‌طور مستقل، طبق زمان‌بندی خودشان، سعی می‌کنند verify کنند</td><td>هرکدام که زودتر برسد موفق و توکن را می‌چرخاند؛ دیگری با توکن قدیمی — بار اول بخشیده (<code class="inline">token_suspicious=1</code>)، بار دوم پشت‌سرهم قفل ۲۴ ساعته (تست شد و تأیید شد)</td><td class="status ok">نهایتاً مسدود (حداکثر در دور دوم رقابت)</td></tr>
+<tr><td>هردو کلون هماهنگ می‌شوند و همیشه فقط یکی verify می‌کند (نوبتی، هرگز همزمان)</td><td>یک هماهنگ‌کنندهٔ خارجی می‌سازد که فقط اجازه دهد یکی در هر لحظه verify کند</td><td>از دید سرور، این دقیقاً مثل یک کاربر واحد به‌نظر می‌رسد — هیچ تصادمی رخ نمی‌دهد چون همیشه توکن فعلی درست ارسال می‌شود</td><td class="status danger">مسدود نمی‌شود — این یک محدودیت شناخته‌شده است: مکانیزم فقط تصادم واقعی و همزمان را می‌گیرد، نه اشتراک‌گذاری هماهنگ‌شده</td></tr>
+<tr><td>تلاش برای پیش‌بینی توکن بعدی (چون رندوم بعدی از خود توکن مشتق می‌شود)</td><td>سعی می‌کند الگوی SHA-256 توکن را معکوس کند</td><td>توکن بعدی توسط سرور با <code class="inline">random_bytes(32)</code> (تصادفی رمزنگاری‌شده، نه مشتق‌شده از قبلی) تولید می‌شود — مشتق‌شدن فقط برای <b>زمان‌بندی بعدی</b> است، نه خود توکن</td><td class="status ok">مسدود</td></tr>
+<tr><td>ارسال توکن خالی مکرر برای همیشه ماندن در حالت «بخشیده‌شده»</td><td>هر بار به‌جای توکن واقعی، رشتهٔ خالی می‌فرستد</td><td>بار اول بخشیده می‌شود، ولی <code class="inline">token_suspicious</code> همان لحظه ۱ می‌شود؛ درخواست بعدی (با هر توکنی، حتی خالی) بلافاصله قفل ۲۴ ساعته می‌خورد</td><td class="status ok">مسدود از همان دومین تلاش</td></tr>
+</table>
+
+
+<h2>پرسش‌های متداول مفهومی — توکن چرخشی</h2>
+<div class="faq"><div class="q"><span class="qmark">س:</span>چرا یک توکن تصادفی، نه یک شمارندهٔ نسل (Generation Counter) ساده‌تر؟</div>
+<div class="a">با یک شمارندهٔ قابل‌پیش‌بینی (۱، ۲، ۳، ...)، یک مهاجم می‌تواند نسل بعدی را حدس بزند و سعی کند زودتر از دستگاه اصلی آن را ارسال کند. توکن تصادفی ۳۲ بایتی این حدس‌زدن را عملاً غیرممکن می‌کند.</div></div>
+<div class="faq"><div class="q"><span class="qmark">س:</span>وقتی Transfer اتفاق می‌افتد، توکن چرخشی چه می‌شود؟</div>
+<div class="a">کاملاً ریست می‌شود — یک توکن جدید تولید و <code class="inline">token_suspicious</code>/<code class="inline">blocked_until</code> پاک می‌شوند (بخش ۲.۳)؛ Transfer یک شروع کاملاً تازه محسوب می‌شود.</div></div>
+<div class="faq"><div class="q"><span class="qmark">س:</span>آیا <code class="inline">token_suspicious</code> بدون یک درخواست معتبر بعدی، به‌طور خودکار (مثلاً بعد از یک بازهٔ زمانی) پاک می‌شود؟</div>
+<div class="a">خیر — طبق طراحی فعلی، فقط با یک درخواست موفق (توکن فعلی درست) یا با رسیدن به مسدودیت ۲۴ ساعته پاک می‌شود؛ هیچ timeout خودکار جداگانه‌ای برای این پرچم وجود ندارد.</div></div>
+
+
+
+<h1 id="sec9"><span class="num">۹.</span>VPS IP-Binding</h1>
+
+<p>یک لایهٔ دفاعی اضافه، فقط برای <code class="inline">device_type=windows_vm</code>. هدف: اگر یک provider کل VPS (شامل فایل Device Key) را کلون کند و به یک IP دیگر بدهد، این کلون تشخیص داده شود — حتی اگر machine_id و device key هردو عیناً یکسان باشند.</p>
+
+<h2>فرمول</h2>
+<pre>effective_machine_id = SHA256("NUTRICULA_VPS_BIND_V1|" + raw_machine_id + "|" + canonical_ip)</pre>
+<table>
+<tr><th>مفهوم</th><th>کجا محاسبه می‌شود؟</th><th>در کجا استفاده می‌شود؟</th></tr>
+<tr><td>machine_id خام</td><td>کلاینت (بدون تغییر با این ویژگی)</td><td>در Lease امضاشده که به کلاینت برمی‌گردد — Layer 1 کلاینت به این وابسته است</td></tr>
+<tr><td>machine_id مؤثر (effective)</td><td>فقط سرور، از روی IP واقعیِ همان اتصال TCP</td><td>فقط در ستون دیتابیس ذخیره و مقایسه می‌شود؛ کلاینت هرگز آن را نمی‌بیند</td></tr>
+</table>
+
+<div class="callout danger"><b>تغییر IP در VPS = رد قطعی و فوری، نه توکن چرخشی.</b> چون این معادل «machine_id عوض شده» است (یک کامپیوتر کاملاً متفاوت از دید سرور)، نه یک رفتار مشکوک قابل‌بخشش.</div>
+
+<div class="callout blue">
+<b>محاسبهٔ machine_id مؤثر در هر سه نقطهٔ ورودی یکسان است.</b> در Signup، Transfer، و Verify، بلافاصله بعد از تعیین <code class="inline">device_type</code>، تابع <code class="inline">nutricula_effective_machine_id()</code> صدا زده می‌شود؛ همین مقدار (نه raw) در ستون <code class="inline">machine_id</code> دیتابیس ذخیره و در تمام مقایسه‌های بعدی استفاده می‌شود. اگر IP قابل‌canonicalize نباشد (برای device_type=windows_vm)، درخواست با <code class="inline">vps_ip_unavailable</code> رد می‌شود — هرگز به‌طور خاموش به raw machine_id سقوط نمی‌کند.
+</div>
+
+<p class="dim">اگر کاربر VPS اشتراکی (Shared IP) بگیرد، اثبات این‌که «این IP دقیقاً به همین VPS اختصاص دارد» بدون همکاری provider از نظر فنی ممکن نیست. سیاست پیشنهادی: فقط VPS با IP اختصاصی استفاده شود؛ اگر IP بدون تخلف کاربر تغییر کرد (مثلاً provider خودش تغییر داد)، این هزینهٔ انتخاب provider است، نه یک باگ.</p>
+
+
+<h2>سناریوهای امنیتی — VPS IP-Binding</h2>
+<table>
+<tr><th>حمله</th><th>کرکر چه می‌کند</th><th>پاسخ سیستم</th><th>نتیجه</th></tr>
+<tr><td>کلون کامل VPS به یک نمونهٔ جدید با IP متفاوت</td><td>از ابزار Clone/Snapshot خود provider استفاده می‌کند</td><td>machine_id مؤثر (که شامل IP است) دیگر مطابقت ندارد → رد قطعی فوری با <code class="inline">machine_mismatch</code>، حتی قبل از رسیدن به توکن چرخشی (تست شد)</td><td class="status ok">مسدود</td></tr>
+<tr><td>VPS با IP اشتراکی (Shared IP + Port Mapping)</td><td>یک provider ارزان با IP مشترک بین چند مشتری تهیه می‌کند</td><td>اثبات این‌که «این IP دقیقاً برای این VPS خاص است» بدون همکاری provider از نظر فنی ممکن نیست — این محدودیت صادقانه اعلام شده است؛ سیاست پیشنهادی: فقط IP اختصاصی استفاده شود</td><td class="status warn">محافظت ضعیف‌تر — وابسته به انتخاب provider توسط کاربر</td></tr>
+<tr><td>راه‌اندازی VPN داخل خود VPS برای تغییر IP خروجی</td><td>یک VPN client روی همان VPS نصب می‌کند</td><td>IP مشاهده‌شدهٔ سرور همان IP خروجی VPN خواهد بود، نه IP واقعی provider → machine_id مؤثر عوض می‌شود → رد قطعی در verify بعدی</td><td class="status ok">مسدود</td></tr>
+<tr><td>کاربر IP خروجی VPN را به‌جای IP واقعی RDP در Installer وارد می‌کند (اشتباه یا عمدی)</td><td>ادعا می‌کند فلان IP، IP واقعی VPS است</td><td>این اصلاً وارد بازی نمی‌شود — سیستم فعلی هیچ فیلد دستی IP ندارد؛ IP همیشه توسط سرور از روی اتصال TCP واقعی مشاهده می‌شود، نه از ادعای کاربر</td><td class="status ok">غیرقابل‌اجرا (سناریوی این طراحی اصلاً وجود ندارد)</td></tr>
+<tr><td>Provider خودش (بدون تخلف کاربر) IP را عوض می‌کند (نگهداری، مهاجرت زیرساخت)</td><td>—</td><td>دقیقاً مثل تخلف رفتار می‌شود — رد قطعی، نیاز به فعال‌سازی مجدد</td><td class="status warn">False Positive پذیرفته‌شده — هزینهٔ آگاهانهٔ امنیت بیشتر</td></tr>
+</table>
+
+
+
+<h2>پرسش‌های متداول مفهومی — VPS IP-Binding</h2>
+<div class="faq"><div class="q"><span class="qmark">س:</span>چرا این مکانیزم فقط برای VPS است، نه برای همهٔ کاربران؟</div>
+<div class="a">IP کاربران خانگی/آفیس به‌طور طبیعی و مکرر تغییر می‌کند (ری‌استارت مودم، سوییچ بین وای‌فای) — اعمال این قانون به آن‌ها باعث می‌شد لایسنسشان مرتباً و بدون تخلف واقعی بترکد. VPS چون معمولاً IP ثابت و اختصاصی دارد، این ریسک را ندارد.</div></div>
+<div class="faq"><div class="q"><span class="qmark">س:</span>آیا IPv6 هم پشتیبانی می‌شود؟</div>
+<div class="a">بله — <code class="inline">nutricula_canonicalize_ip()</code> از <code class="inline">inet_pton</code>/<code class="inline">inet_ntop</code> استفاده می‌کند که هم IPv4 هم IPv6 را می‌فهمد؛ IPv4-mapped IPv6 هم به فرم IPv4 خالص نرمال‌سازی می‌شود.</div></div>
+<div class="faq"><div class="q"><span class="qmark">س:</span>اگر یک کاربر واقعی VPS، اشتباهاً به‌عنوان غیر-VPS تشخیص داده شود (مثلاً یک سرور فیزیکی اختصاصی)، چه اتفاقی می‌افتد؟</div>
+<div class="a">هیچ مشکل امنیتی — فقط این لایهٔ اضافه برای آن کاربر فعال نمی‌شود؛ machine_id/device_key هنوز کامل کار می‌کنند (بخش ۲.۴).</div></div>
+
+
+
+<h1 id="sec10"><span class="num">۱۰.</span>لایه‌های دفاعی کلاینت</h1>
+
+<h2>Layer ۱ — چک محلی (بدون تماس شبکه)</h2>
+<p>پیش از اعتماد به هر فایل Lease محلی، Coordinator این را با محاسبهٔ تازهٔ محلی مقایسه می‌کند — روی ویندوز فیزیکی، هر دو نسخهٔ Machine ID (بخش ۳.۱) چک می‌شوند، نه فقط یکی، چون یک لایسنس ممکن است از طریق نسخهٔ WithGuid فعال شده باشد:</p>
+<pre>machineMatches = deviceKeyMatches &&
+    ( (lease.machineId == local.GenerateMachineId())        // نسخهٔ اصلی
+   || (lease.machineId == local.GenerateMachineIdWithGuid()) // نسخهٔ با GUID
+    )</pre>
+<div class="callout warn"><b>محدودیت صادقانه:</b> در یک کلون کامل دیسک (نه فقط کپی فایل Lease)، هم machine_id هم device key عیناً یکسانند — پس Layer ۱ این را تشخیص نمی‌دهد. Layer ۱ فقط «کپی تنهای فایل لایسنس بدون بقیهٔ دیسک» را می‌گیرد.</div>
+
+<h2>Layer ۲ — تماس شبکه‌ای واقعی (سرور-محور)</h2>
+<p>هر ۴ تا ۱۵ دقیقه (رندوم، مشتق از خود توکن فعلی — یعنی هر بار که موفقیت‌آمیز باشد، این رندوم خودکار عوض می‌شود)، یک Challenge/Verify واقعی با سرور انجام می‌شود. این تنها راهی است که کلون کامل (که Layer ۱ نمی‌گیرد) نهایتاً از طریق توکن چرخشی (بخش ۸) گرفته می‌شود.</p>
+
+<hr>
+
+<h2>سناریوهای امنیتی — Layer ۱ و ۲</h2>
+<table>
+<tr><th>حمله</th><th>کرکر چه می‌کند</th><th>پاسخ سیستم</th><th>نتیجه</th></tr>
+<tr><td>کپی فقط فایل Lease (بدون Device Key) به یک کامپیوتر دیگر</td><td>فقط فایل امضاشدهٔ Lease را کپی می‌کند</td><td>Layer ۱ فوراً می‌گیرد چون هم machine_id هم device_key_hash محلی محاسبه‌شده مطابقت ندارند</td><td class="status ok">مسدود</td></tr>
+<tr><td>کلون کامل دیسک (Lease + Device Key هردو یکسان)</td><td>یک snapshot کامل از یک نصب فعال می‌گیرد</td><td>Layer ۱ نمی‌گیرد (چون همه‌چیز محلی یکسان است)؛ Layer ۲ (تماس واقعی با سرور) نهایتاً از طریق توکن چرخشی می‌گیرد</td><td class="status warn">فقط با تأخیر (تا اولین verify بعدی، حداکثر ۱۵ دقیقه) مسدود می‌شود</td></tr>
+<tr><td>غیرفعال‌کردن کامل تماس شبکهٔ Coordinator (فایروال) روی یک کلون، برای همیشه در Layer ۱ ماندن</td><td>فایروال را طوری تنظیم می‌کند که Coordinator هرگز نتواند واقعاً به سرور برسد</td><td>سقف <code class="inline">STALE_COORDINATOR_DEGRADE_SECONDS</code> (۲۱ دقیقه) نهایتاً به Tier آزاد برمی‌گرداند — این با <code class="inline">GetTickCount64</code> اندازه‌گیری می‌شود، نه ساعت</td><td class="status ok">مسدود (با تأخیر حداکثر ۲۱ دقیقه)</td></tr>
+<tr><td>Patch مستقیم منطق مقایسهٔ Layer ۱ در باینری Coordinator</td><td>باینری را دیس‌اسمبل و شرط <code class="inline">machineMatches</code> را همیشه true می‌کند</td><td>هیچ محافظتی مستقیم روی خود Coordinator در برابر این patch خاص وجود ندارد (محدودیت بنیادین) — ولی این به‌تنهایی دیگر برای گول‌زدن DLL نازک کافی نیست، چون DLL خودش (نه با اعتماد به Coordinator) امضای RSA کش‌شده را دوباره تأیید می‌کند (بخش ۱۹). محدودیت صادقانه: اگر مهاجم Coordinator را طوری patch کند که همیشه یک canonical/signature <b>واقعی و هنوز منقضی‌نشده</b> (نه جعلی) را serve کند، DLL همچنان این را قبول می‌کند — چون امضا واقعاً معتبر است، فقط دیگر تازه نیست</td><td class="status warn">تک‌متغیر ساده کافی نیست، ولی patch کامل‌تر Coordinator (با replay یک لایسنس واقعی و هنوز معتبر) هنوز راه دارد</td></tr>
+</table>
+
+
+<h2>پرسش‌های متداول مفهومی — لایه‌های دفاعی</h2>
+<div class="faq"><div class="q"><span class="qmark">س:</span>اگر Layer ۱ نهایتاً توسط Layer ۲ هم پوشش داده می‌شود، چرا اصلاً وجود دارد؟</div>
+<div class="a">Layer ۱ سریع‌تر و بدون هزینهٔ شبکه است — برای سناریوی رایج «کپی فقط فایل Lease» (نه کل دیسک)، بلافاصله و بدون حتی یک بار تلاش شبکه‌ای بی‌فایده، مشکل را تشخیص می‌دهد؛ این هم تجربهٔ کاربر بهتر است هم بار کمتری روی سرور می‌گذارد.</div></div>
+<div class="faq"><div class="q"><span class="qmark">س:</span>آیا Layer ۱ می‌تواند نتیجهٔ اشتباه (False Positive) روی یک کاربر کاملاً قانونی بدهد؟</div>
+<div class="a">تنها در صورتی که Machine ID خودش به‌طور طبیعی تغییر کند (مثلاً تعویض یک قطعهٔ سخت‌افزاری کلیدی) — این یک اتفاق نادر ولی واقعی است؛ در این حالت، کاربر باید مثل یک نصب جدید Re-signup کند.</div></div>
+
+
+
+<h1 id="sec11"><span class="num">۱۱.</span>مسئلهٔ ساعت — ClockAnchor</h1>
+
+<p><b>مشکل:</b> ساعت سیستم ویندوز (<code class="inline">GetSystemTimeAsFileTime</code>) کاملاً قابل‌دستکاری است. اگر مستقیم برای تشخیص انقضا/زمان‌بندی استفاده شود، فریز کردن ساعت می‌تواند یک Lease را برای همیشه معتبر نگه دارد.</p>
+
+<h2>راه‌حل</h2>
+<div class="step-flow">
+<div class="step"><div class="step-num">۱</div><div class="step-body">بعد از هر پاسخ واقعی و <b>امضاشدهٔ</b> سرور (چه رد چه Lease)، زمان سرور به همراه <code class="inline">GetTickCount64()</code> (شمارندهٔ از لحظهٔ بوت، غیرقابل‌تنظیم) در یک فایل محلی ذخیره می‌شود.</div></div>
+<div class="step"><div class="step-num">۲</div><div class="step-body">برای «الان چیست»، به‌جای ساعت خام، از فرمول <code class="inline">anchor.wallClock + (اکنون.tick - anchor.tick)/1000</code> استفاده می‌شود.</div></div>
+<div class="step"><div class="step-num">۳</div><div class="step-body">اگر ساعت واقعی جلوتر از این تخمین بود، از ساعت واقعی استفاده می‌شود (دقیق‌تر)؛ اگر عقب‌تر بود (دستکاری)، تخمین tick-based غالب می‌شود.</div></div>
+<div class="step"><div class="step-num">۴</div><div class="step-body"><b>مورد ریبوت:</b> چون tick بعد از ریبوت صفر می‌شود، سیستم tick جدید را <b>به anchor قدیمی اضافه می‌کند</b> (نه این‌که نادیده بگیرد) — این تضمین می‌کند حتی با ترکیب «ریبوت + بازگرداندن ساعت»، زمان هرگز فریز نمی‌شود، فقط از یک نقطهٔ پایین‌تر دوباره شروع به پیشرفت می‌کند.</div></div>
+</div>
+
+<h2>سقف نهایی — Stale Coordinator Degrade</h2>
+<p>اگر برای مدت طولانی (۲۱ دقیقه) هیچ پاسخ تازهٔ <code class="inline">TIER_LICENSED</code> از Coordinator دریافت نشود (مثلاً به‌خاطر قطع اینترنت فقط برای این برنامه)، DLL نازک خودکار به Tier آزاد برمی‌گردد — این چک هم با <code class="inline">GetTickCount64</code> (نه ساعت) انجام می‌شود.</p>
+<div class="callout blue"><b>این ۲۱ دقیقه فقط زمانی وارد بازی می‌شود که:</b> machine_id درست + device key درست + لایسنس واقعاً منقضی نشده + ولی ارتباط شبکه بلاک شده باشد. در هر سناریوی دیگر (machine_id/device key غلط، یا لایسنس واقعاً منقضی)، تشخیص در همان بازهٔ عادی ۴-۱۵ دقیقه (یا حتی سریع‌تر، در همان چرخهٔ Layer ۱) اتفاق می‌افتد.</div>
+
+<hr>
+
+<h2>سناریوهای امنیتی — ClockAnchor</h2>
+<table>
+<tr><th>حمله</th><th>کرکر چه می‌کند</th><th>پاسخ سیستم</th><th>نتیجه</th></tr>
+<tr><td>فریز کامل ساعت سیستم</td><td>ساعت را در تنظیمات ویندوز روی یک لحظهٔ ثابت نگه می‌دارد</td><td>محاسبه از روی <code class="inline">GetTickCount64</code> (مستقل از ساعت) ادامه می‌یابد؛ ساعت فریزشده نادیده گرفته می‌شود</td><td class="status ok">مسدود</td></tr>
+<tr><td>عقب بردن ساعت (بدون ریبوت)</td><td>ساعت را به یک تاریخ گذشته تغییر می‌دهد</td><td>مقدار tick-based (که هرگز عقب نمی‌رود) بر ساعت دستکاری‌شده غالب می‌شود</td><td class="status ok">مسدود (تست شد مستقیم روی Wine)</td></tr>
+<tr><td>ریبوت + عقب بردن ساعت با هم</td><td>هم کامپیوتر را ریستارت می‌کند هم ساعت را برمی‌گرداند</td><td>شمارندهٔ تازهٔ tick (از صفر) به آخرین anchor معتبر <b>اضافه</b> می‌شود (نه نادیده گرفته)، پس زمان همچنان با گذشت واقعی زمان از لحظهٔ ریبوت جلو می‌رود (تست مستقیم: ۱۰ دقیقهٔ واقعی = ۶۰۰ ثانیه پیشرفت صحیح)</td><td class="status ok">مسدود</td></tr>
+<tr><td>ریبوت مکرر هر ۲۰ دقیقه (بدون تغییر دیگری)</td><td>هر ۲۰ دقیقه کامپیوتر را ریستارت می‌کند</td><td>برنامهٔ زمانی روی دیسک (نه حافظه) ذخیره شده — ریبوت آن را ریست نمی‌کند؛ اگر ارتباط شبکه هم بلاک باشد، ریبوت حتی سریع‌تر به Tier آزاد منجر می‌شود (چون تایمرهای حافظه‌ای هم صفر می‌شوند)</td><td class="status ok">این ترفند هیچ فایده‌ای برای کرکر ندارد</td></tr>
+<tr><td>دستکاری مستقیم فایل <code class="inline">.clockanchor</code> روی دیسک</td><td>فایل متنی anchor را با یک ابزار ویرایش متن دستی تغییر می‌دهد</td><td>این فایل رمزنگاری/امضا نشده (طراحی آگاهانه — فقط دفاع در عمق، نه یک secret)؛ یک مهاجم که این فایل خاص را پیدا و فرمتش را بفهمد می‌تواند مقدار را دستکاری کند</td><td class="status danger">مسدود نمی‌شود در برابر یک مهاجم که مستقیم این فایل را هدف بگیرد — ولی سطح سختی به‌مراتب بالاتر از «تغییر ساعت از تنظیمات» است</td></tr>
+<tr><td>دستکاری سطح Kernel برای جعل خود <code class="inline">GetTickCount64</code></td><td>یک درایور/hook سطح پایین می‌سازد که این API را جعل کند</td><td>هیچ دفاعی در این سطح از این طراحی محافظت نمی‌کند — این فراتر از چیزی است که یک برنامهٔ کاربری سطح User می‌تواند تضمین کند</td><td class="status danger">مسدود نمی‌شود (محدودیت بنیادین پذیرفته‌شده، صادقانه اعلام شده)</td></tr>
+</table>
+
+
+<h2>پرسش‌های متداول مفهومی — ClockAnchor</h2>
+<div class="faq"><div class="q"><span class="qmark">س:</span>چرا از NTP مستقیم استفاده نشد، به‌جای لنگر انداختن به پاسخ‌های سرور؟</div>
+<div class="a">NTP خودش به شبکه و DNS وابسته است و به‌همان اندازه قابل‌بلاک‌شدن یا جعل (با یک سرور NTP جعلی محلی) است؛ استفاده از پاسخ‌های <b>امضاشدهٔ</b> سرور، که هرحال باید برای عملیات اصلی لایسنس هم برقرار شوند، هیچ زیرساخت اضافه‌ای نمی‌طلبد و رمزنگاری‌شده تضمین می‌شود.</div></div>
+<div class="faq"><div class="q"><span class="qmark">س:</span>آیا این مکانیزم عملکرد (Performance) قابل‌توجهی می‌گیرد؟</div>
+<div class="a">خیر — فقط یک فایل متنی کوچک (چند بایت) که هر بار پاسخ سرور می‌آید نوشته می‌شود؛ هزینهٔ I/O دیسک برای این عملیات ناچیز است، به‌خصوص چون این فقط هر ۴ تا ۱۵ دقیقه اتفاق می‌افتد.</div></div>
+<div class="faq"><div class="q"><span class="qmark">س:</span>در همان اولین اجرا، قبل از این‌که هیچ anchor ای وجود داشته باشد، چه اتفاقی می‌افتد؟</div>
+<div class="a">تابع <code class="inline">EstimatedNow()</code> به ساعت خام سیستم برمی‌گردد — این دقیقاً همان سطح اعتمادی است که هر نصب جدید بدون این ویژگی هم داشت؛ محافظت فقط از اولین تماس واقعی موفق با سرور به بعد فعال می‌شود.</div></div>
+<div class="faq"><div class="q"><span class="qmark">س:</span>اگر دقیقاً همان لحظه‌ای که چرخهٔ verify باید انجام شود، اینترنت به‌طور موقت (نه دائمی) قطع باشد، لایسنس معتبر چه می‌شود؟</div>
+<div class="a">لایسنس محلیِ از قبل معتبر حفظ می‌شود (به بخش ۱۲ مراجعه کنید) تا وقتی یا شبکه دوباره وصل شود، یا لایسنس واقعاً (طبق ClockAnchor) منقضی شود — یک قطعی چندثانیه‌ای به‌تنهایی لایسنس معتبر را خراب نمی‌کند.</div></div>
+
+
+
+<h1 id="sec12"><span class="num">۱۲.</span>معماری Coordinator</h1>
+
+<table>
+<tr><th>باینری</th><th>نقش</th></tr>
+<tr><td><code class="inline">NutriculaLicenseService.exe</code></td><td>سرویس ویندوز (Windows Service) — برای ویندوز واقعی</td></tr>
+<tr><td><code class="inline">NutriculaLicenseBroker.exe</code></td><td>نسخهٔ بدون‌سرویس — برای Wine (مک/لینوکس) که سرویس ویندوزی درست کار نمی‌کند</td></tr>
+<tr><td><code class="inline">NutriculaLicenseCheckThin.dll</code></td><td>DLL نازکی که مستقیم داخل MT4/MT5 لود می‌شود؛ فقط از طریق Named Pipe با Service/Broker صحبت می‌کند، خودش هیچ تماس شبکه‌ای مستقیم ندارد</td></tr>
+</table>
+<p class="dim">هر دو Service و Broker از یک هستهٔ کد مشترک (<code class="inline">CoordinatorCore.cpp</code>) استفاده می‌کنند — تنها تفاوت نحوهٔ راه‌اندازی (Service Control Manager در برابر یک پروسهٔ معمولی) است. این طراحی تضمین می‌کند منطق امنیتی دقیقاً یک‌بار نوشته و در هر دو حالت یکسان اجرا شود.</p>
+
+<div class="callout blue">
+<b>در طول یک قطعی موقت شبکه، آخرین وضعیت معتبر شناخته‌شده حفظ می‌شود.</b> وقتی چرخهٔ verify due می‌شود، مقدار پیش‌فرض <code class="inline">finalStable</code>/<code class="inline">finalCanonical</code>/<code class="inline">finalSignatureB64</code> از فایل Lease محلیِ از قبل معتبر گرفته می‌شود (اگر <code class="inline">hasLease &amp;&amp; !licenseCurrentlyExpired</code>) — نه از یک مقدار خالی. یک رد واقعی یا Lease تازه از سرور همچنان می‌تواند این مقدار پیش‌فرض را در طول حلقهٔ تلاش‌ها override کند؛ فقط «سکوت کامل شبکه» (تمام ۱۰ تلاش بدون هیچ پاسخ واقعی) به‌معنای «فرض بدترین حالت» نیست، بلکه یعنی «همان چیزی که از قبل تأیید شده را نگه دار». اگر لایسنس محلی واقعاً (طبق ClockAnchor) منقضی شده باشد، پیش‌فرض به‌درستی <code class="inline">TIER_FAILED</code> است.
+</div>
+
+
+<h2>ارتباط Coordinator با MachineId DLL</h2>
+<p class="dim">Coordinator (Service/Broker) هیچ منطق تولید Machine ID یا امضای رمزنگاری‌شده را خودش پیاده نمی‌کند — همهٔ این عملیات در <code class="inline">MachineId64.dll</code>/<code class="inline">MachineId32.dll</code> است (بخش ۳). یک لایهٔ واسط به اسم <code class="inline">MachineIdBridge</code> این دو را به هم وصل می‌کند: در زمان اجرا، DLL را با <code class="inline">LoadLibraryW</code> بارگذاری و توابع لازم را با <code class="inline">GetProcAddress</code> پیدا می‌کند.</p>
+<table>
+<tr><th>تابع export‌شده</th><th>امضای دقیق</th><th>نکتهٔ حیاتی</th></tr>
+<tr><td><code class="inline">Nutricula_GenerateMachineId</code></td><td><code class="inline">int(char* output, int outputCapacity)</code></td><td>بافر UTF-8/ANSI است، نه Wide</td></tr>
+<tr><td><code class="inline">Nutricula_GetLicensePath</code></td><td><code class="inline">int(char* output, int outputCapacity)</code></td><td>بافر UTF-8 است؛ Bridge این را با <code class="inline">MultiByteToWideChar(CP_UTF8, ...)</code> به <code class="inline">std::wstring</code> تبدیل می‌کند — تبدیل بایت‌به‌بایت (بدون این مرحله) رشتهٔ کاملاً بی‌معنی تولید می‌کند، چون هر ۲ بایت UTF-8 به‌اشتباه یک کاراکتر UTF-16 تفسیر می‌شود</td></tr>
+<tr><td><code class="inline">Nutricula_SignChallenge</code></td><td><code class="inline">int(const char* message, int messageLength, char* signatureOutput, int signatureCapacity)</code></td><td>پیام یک بافر بایت خام با طول صریح است (نه یک C-string که به <code class="inline">\0</code> متکی باشد)؛ مقدار برگشتی طول واقعی امضای خام (۶۴ بایت برای ECDSA P-256) است، نه یک flag بولی — موفقیت با <code class="inline">result &gt; 0</code> سنجیده می‌شود، نه <code class="inline">result == 1</code>. خروجی بایت خام امضا است؛ Bridge آن را با <code class="inline">CryptBinaryToStringA(..., CRYPT_STRING_BASE64 | CRYPT_STRING_NOCRLF, ...)</code> به Base64 تبدیل می‌کند پیش از ارسال به سرور، که فیلد <code class="inline">signature</code> را همیشه به‌صورت Base64 انتظار دارد.</td></tr>
+</table>
+<div class="callout danger"><b>چون <code class="inline">GetProcAddress</code> فقط بر اساس نام تابع را پیدا می‌کند، نه امضا، هرگونه ناسازگاری بین این جدول و پیاده‌سازی واقعی <code class="inline">NutriculaMachineId.cpp</code> در زمان کامپایل تشخیص داده نمی‌شود</b> — کامپایلر خطایی نمی‌دهد، فقط رفتار در زمان اجرا کاملاً نادرست می‌شود (بافر اشتباه، طول اشتباه، یا تفسیر پارامترها با جابه‌جایی). به همین دلیل امضای دقیق هر تابع باید همیشه با خود هدر <code class="inline">NutriculaMachineId.h</code> تطبیق داده شود، نه با فرض یا الگوی توابع مشابه.</div>
+
+<h2>سناریوهای امنیتی — Coordinator / Service / Broker / DLL</h2>
+<table>
+<tr><th>حمله</th><th>کرکر چه می‌کند</th><th>پاسخ سیستم</th><th>نتیجه</th></tr>
+<tr><td>متوقف‌کردن کامل سرویس Coordinator</td><td>سرویس ویندوز را از Task Manager یا <code class="inline">services.msc</code> متوقف می‌کند</td><td>DLL نازک دیگر پاسخی از Named Pipe دریافت نمی‌کند؛ سقف ۲۱ دقیقه‌ای (بخش ۱۱) نهایتاً Tier را به آزاد تنزل می‌دهد</td><td class="status ok">مسدود (با تأخیر)</td></tr>
+<tr><td>جعل یک پاسخ IPC روی Named Pipe (بدون واقعاً اجرا کردن Coordinator واقعی)</td><td>یک برنامهٔ جعلی می‌سازد که به همان نام Pipe گوش دهد و <code class="inline">TIER_LICENSED</code> جعلی برگرداند</td><td>پاسخ‌های IPC با هویت رمزنگاری‌شدهٔ Coordinator (کلید P-256 هویت Coordinator) امضا می‌شوند — یک فرستندهٔ جعلی بدون این کلید نمی‌تواند پاسخ معتبر بسازد</td><td class="status ok">مسدود</td></tr>
+<tr><td>جایگزینی مستقیم DLL نازک با یک نسخهٔ patch‌شده که همیشه <code class="inline">Tier=2</code> برمی‌گرداند</td><td>فایل DLL را با نسخهٔ دستکاری‌شده جایگزین می‌کند</td><td>هیچ مکانیزم Integrity Check از سمت MT4/MT5 روی این DLL خاص وجود ندارد (چک یکپارچگی فقط سمت سرور، روی هش‌های گزارش‌شده توسط Coordinator است، نه توسط خود DLL روی خودش)</td><td class="status danger">مسدود نمی‌شود مستقیم — اما مهم است: خود Coordinator جدا هش DLL را در هر verify گزارش می‌دهد؛ اگر این هش با نسخهٔ اصلی مطابقت نداشته باشد، سرور <code class="inline">artifact_mismatch</code> می‌دهد (پس فقط اگر Coordinator اصلی و بدون‌تغییر باشد، این مسیر دفاعی فعال است)</td></tr>
+<tr><td>اجرای چند نسخه از Coordinator هم‌زمان (برای هر VPS کلون‌شده یک نمونه)</td><td>چند Coordinator جدا اجرا می‌کند</td><td>هرکدام مستقل با سرور صحبت می‌کند، پس مستقیماً وارد سناریوی توکن چرخشی (بخش ۸) می‌شود</td><td class="status ok">مسدود از طریق مکانیزم توکن</td></tr>
+</table>
+
+
+
+<h2>پرسش‌های متداول مفهومی — Coordinator</h2>
+<div class="faq"><div class="q"><span class="qmark">س:</span>چرا Service و Broker دو باینری جدا هستند، نه یک باینری واحد که هر دو حالت را پوشش دهد؟</div>
+<div class="a">Windows Service API (نصب، شروع خودکار، Service Control Manager) روی Wine به‌طور قابل‌اعتماد کار نمی‌کند؛ Broker یک نسخهٔ ساده‌تر بدون این وابستگی است. هر دو از همان <code class="inline">CoordinatorCore.cpp</code> استفاده می‌کنند تا منطق امنیتی دقیقاً یکسان بماند.</div></div>
+<div class="faq"><div class="q"><span class="qmark">س:</span>اگر ساخت Named Pipe به‌خاطر محدودیت دسترسی (Permission) شکست بخورد چه می‌شود؟</div>
+<div class="a">DLL نازک نمی‌تواند به Coordinator وصل شود؛ رفتار آن دقیقاً مثل «Coordinator اصلاً در دسترس نیست» است — سقف ۲۱ دقیقه‌ای (بخش ۱۱) نهایتاً Tier را به آزاد می‌رساند.</div></div>
+<div class="faq"><div class="q"><span class="qmark">س:</span>اگر DLL نازک داخل MT4/MT5 لود شود اما Coordinator هرگز نصب نشده باشد، چه اتفاقی می‌افتد؟</div>
+<div class="a">DLL بلافاصله (نه بعد از ۲۱ دقیقه) هیچ پاسخی از Pipe دریافت نمی‌کند و <code class="inline">g_tier</code> در مقدار پیش‌فرض (Free) باقی می‌ماند — این دقیقاً حالت طبیعی کسی است که هرگز Installer را اجرا نکرده.</div></div>
+
+
+
+<h1 id="sec13"><span class="num">۱۳.</span>سناریوهای کامل — از ابتدا تا انتها</h1>
+
+<h2>سناریو ۱ — نصب رایگان کامپیوتر خانگی، بدون خرید هرگز</h2>
+<div class="step-flow">
+<div class="step"><div class="step-num">۱</div><div class="step-body">Installer در حالت Free اجرا می‌شود → Device Key ساخته می‌شود → Coordinator نصب می‌شود.</div></div>
+<div class="step"><div class="step-num">۲</div><div class="step-body">هیچ فایل Lease ای وجود ندارد → هیچ تلاش verify واقعی انجام نمی‌شود.</div></div>
+<div class="step"><div class="step-num">۳</div><div class="step-body">هر ۳۰ دقیقه یک پینگ <code class="inline">free_checkin</code> سبک فرستاده می‌شود (چک محلی خود Coordinator هر ۴ دقیقه بیدار می‌شود، ولی ارسال واقعی شبکه‌ای مستقل و کندتر است — بخش ۲.۱) → در جدول <code class="inline">nutricula_unlicensed_checkins</code> ثبت/به‌روزرسانی می‌شود.</div></div>
+<div class="step"><div class="step-num">۴</div><div class="step-body">Tier همیشه <code class="inline">FREE</code>.</div></div>
+</div>
+
+<h2>سناریو ۲ — VPS با IP اختصاصی، خرید و فعال‌سازی</h2>
+<div class="step-flow">
+<div class="step"><div class="step-num">۱</div><div class="step-body">Installer پلتفرم را <code class="inline">WINDOWS_VM</code> تشخیص می‌دهد.</div></div>
+<div class="step"><div class="step-num">۲</div><div class="step-body">Signup با IP واقعی سرور مشاهده می‌شود؛ machine_id مؤثر (با IP) محاسبه و ذخیره می‌شود؛ machine_id خام در Lease برمی‌گردد.</div></div>
+<div class="step"><div class="step-num">۳</div><div class="step-body">هر verify بعدی، سرور دوباره IP فعلی را با machine_id خام ترکیب می‌کند و با مقدار ذخیره‌شده مقایسه می‌کند.</div></div>
+<div class="step"><div class="step-num">۴</div><div class="step-body">اگر provider این VPS را کلون کرده و IP جدید بدهد → همان اولین verify بعدی با <code class="inline">machine_mismatch</code> رد می‌شود، نه توکن چرخشی.</div></div>
+</div>
+
+<h2>سناریو ۳ — کرکر سعی می‌کند با فریز ساعت، لایسنس منقضی‌شده را زنده نگه دارد</h2>
+<p class="dim">با ClockAnchor (بخش ۱۱)، ساعت سیستم دیگر منبع تصمیم نیست — فقط پیشرفت واقعی (اندازه‌گیری‌شده با tick) از آخرین تماس واقعی با سرور در نظر گرفته می‌شود. حتی با ریبوت مکرر همراه با دستکاری ساعت، سیستم مجبور به پیشرفت واقعی است.</p>
+
+<h2>سناریو ۴ — کاربر همان VPS را با ابزار خود provider کلون می‌کند (Device Key هم کپی می‌شود)</h2>
+<p class="dim">اگر IP جدید بگیرد (تقریباً همیشه، چون دو نمونهٔ جدا) → VPS IP-Binding بلافاصله می‌گیرد. اگر به هر شکل عجیبی همان IP را هم حفظ کند → توکن چرخشی نهایتاً (حداکثر در دور دوم) می‌گیرد.</p>
+
+<h2>سناریو ۵ — کپی‌کردن فقط فایل Lease (بدون Device Key) به کامپیوتر دیگر</h2>
+<div class="step-flow">
+<div class="step"><div class="step-num">۱</div><div class="step-body">کاربر A لایسنس معتبر روی کامپیوتر خودش دارد؛ فایل <code class="inline">NutriculaLicense.txt</code> را کپی و روی کامپیوتر B (که Nutricula هرگز رویش فعال نشده) قرار می‌دهد.</div></div>
+<div class="step"><div class="step-num">۲</div><div class="step-body">روی کامپیوتر B، Coordinator این فایل را می‌خواند؛ امضای RSA سرور معتبر است (چون فایل واقعاً از سرور آمده)، پس <code class="inline">fileValid=true</code>.</div></div>
+<div class="step"><div class="step-num">۳</div><div class="step-body">Layer ۱ (بخش ۱۰) فوراً اجرا می‌شود: <code class="inline">MachineIdBridge::GenerateMachineId()</code> روی کامپیوتر B محاسبه می‌شود — این مقدار (چون سخت‌افزار واقعاً متفاوت است) با <code class="inline">lease.machineId</code> داخل فایل کپی‌شده مطابقت ندارد.</div></div>
+<div class="step"><div class="step-num">۴</div><div class="step-body"><code class="inline">machineMatches=false</code> → این فایل دقیقاً مثل «هیچ Lease معتبری وجود ندارد» رفتار می‌شود؛ Coordinator با <code class="inline">license_id</code> واقعی داخل همین فایل (که هنوز خوانا است) یک تلاش verify واقعی می‌کند.</div></div>
+<div class="step"><div class="step-num">۵</div><div class="step-body">سرور این <code class="inline">license_id</code> را پیدا می‌کند (واقعی است) ولی machine_id ارسالی (متعلق به کامپیوتر B) با ستون ذخیره‌شده (متعلق به کامپیوتر A) مطابقت ندارد → <code class="inline">machine_mismatch</code>.</div></div>
+<div class="step"><div class="step-num">۶</div><div class="step-body"><b>نتیجه: کاملاً مسدود، بدون هیچ راه دور زدن.</b> کامپیوتر B همیشه در Tier آزاد می‌ماند.</div></div>
+</div>
+
+<h2>سناریو ۶ — جعل عمدی Machine ID + کپی Device Key (بدون کپی کل دیسک)</h2>
+<p class="dim">این پیچیده‌ترین سناریوی واقع‌بینانه است: مهاجم می‌داند Layer ۱ هم machine_id هم device_key را چک می‌کند، پس سعی می‌کند <b>هر دو</b> را دستی فراهم کند، بدون کلون کامل دیسک.</p>
+<div class="step-flow">
+<div class="step"><div class="step-num">۱</div><div class="step-body">مهاجم فایل <code class="inline">DeviceKey.bin</code> کاربر A را کپی می‌کند (این فایل قابل‌کپی‌شدن فیزیکی است، حتی اگر با DPAPI محافظت شود — DPAPI مانع <b>کپی بایت‌ها</b> نمی‌شود، فقط مانع <b>رمزگشایی روی کامپیوتر/کاربر متفاوت</b> می‌شود).</div></div>
+<div class="step"><div class="step-num">۲</div><div class="step-body"><b>نکتهٔ حیاتی:</b> اگر مقصد کپی، یک کامپیوتر/حساب کاربری ویندوز <b>متفاوت</b> از مبدأ باشد، DPAPI اصلاً اجازهٔ رمزگشایی این فایل کپی‌شده را نمی‌دهد — کلید عملاً بی‌فایده می‌شود مگر روی همان دقیقاً کامپیوتر/کاربر اصلی. <b>این یعنی «کپی فایل Device Key به یک کامپیوتر متفاوت» روی ویندوز واقعی از پایه غیرممکن است</b> (به‌جز روی Wine، که حالت portable/بدون DPAPI واقعی دارد).</div></div>
+<div class="step"><div class="step-num">۳</div><div class="step-body">فرض کنیم مهاجم روی Wine کار می‌کند (جایی که DPAPI واقعی نیست) و موفق به کپی/رمزگشایی کلید می‌شود. حالا باید machine_id را هم جعل کند — این نیازمند دستکاری مستقیم سیگنال‌های WMI/ioreg/فایل‌های <code class="inline">/sys</code> (بسته به پلتفرم) است تا خروجی دقیقاً همان مقدار کامپیوتر A را بدهد.</div></div>
+<div class="step"><div class="step-num">۴</div><div class="step-body">اگر این جعل کامل و دقیق باشد (هم machine_id هم device_key دقیقاً یکسان)، Layer ۱ <b>گمراه می‌شود</b> — چون از دید این چک محلی، این دقیقاً همان کامپیوتر A است.</div></div>
+<div class="step"><div class="step-num">۵</div><div class="step-body">Coordinator با اطمینان کاذب وارد چرخهٔ verify عادی می‌شود؛ اگر کامپیوتر A همچنان فعال و در حال verify باشد، این دقیقاً همان سناریوی <b>توکن چرخشی</b> (بخش ۸) می‌شود — هرکدام زودتر verify کند توکن را می‌چرخاند، دیگری بار اول بخشیده می‌شود، بار دوم قفل ۲۴ ساعته می‌خورد.</div></div>
+<div class="step"><div class="step-num">۶</div><div class="step-body">اگر لایسنس روی <code class="inline">device_type=windows_vm</code> باشد و مهاجم روی یک VPS دیگر (با IP متفاوت) این کار را کرده باشد، VPS IP-Binding (بخش ۹) <b>مستقل و زودتر از توکن چرخشی</b> این را می‌گیرد — رد قطعی فوری، نه بخشش موقت.</div></div>
+</div>
+<div class="callout danger"><b>جمع‌بندی صادقانه این سناریو:</b> جعل هم‌زمان و دقیق هر دو سیگنال از پایه دشوار است (نیاز به دسترسی سطح پایین سیستم و دانش فنی قابل‌توجه)، و حتی در صورت موفقیت کامل، تنها به سطح «کلون واقعی» می‌رسد — که همان محدودیت شناخته‌شدهٔ توکن چرخشی (نه یک راه فرار جدید) را دارد. هیچ نتیجهٔ جدیدی فراتر از آنچه در بخش‌های ۸/۹/۱۰ مستند شده به‌دست نمی‌آید.</div>
+
+<h1 id="sec14"><span class="num">۱۴.</span>پرسش‌های متداول نهایی و موارد لبه‌ای</h1>
+
+<div class="faq"><div class="q"><span class="qmark">س:</span>اگر فایل Lease اصلاً وجود نداشته باشد چه اتفاقی در Verify می‌افتد؟</div>
+<div class="a">هیچ اتفاقی — Coordinator اصلاً license_id ای برای تلاش ندارد، پس هیچ درخواست verify واقعی فرستاده نمی‌شود. چرخهٔ بیدارشدن محلی هر ۴ دقیقه است، ولی ارسال واقعی پینگ <code class="inline">free_checkin</code> به سرور مستقل و کندتر است — هر ۳۰ دقیقه یک‌بار (بخش ۲.۱).</div></div>
+
+<div class="faq"><div class="q"><span class="qmark">س:</span>فایل Lease هست ولی برای یک ماشین دیگر است، چه فرقی با «فایل نیست» دارد؟</div>
+<div class="a">فرق اساسی: چون این فایل دارای یک license_id واقعی است، یک درخواست شبکه‌ای واقعی هر ۴ دقیقه فرستاده می‌شود (نه فقط چک محلی) و سرور با <code class="inline">machine_mismatch</code> پاسخ می‌دهد.</div></div>
+
+<div class="faq"><div class="q"><span class="qmark">س:</span>در حالت بلاک ۲۴ ساعته، آیا فقط اولین درخواست بلاک می‌شود؟</div>
+<div class="a">خیر — تا وقتی <code class="inline">blocked_until</code> در آینده است، <b>هر</b> درخواست (حتی با توکن کاملاً درست) بلافاصله <code class="inline">blocked</code> می‌گیرد.</div></div>
+
+<div class="faq"><div class="q"><span class="qmark">س:</span>دو کامپیوتر تصادفاً machine_id یکسان دارند اما device key متفاوت — در Signup و در Verify چه فرقی دارد؟</div>
+<div class="a">در Signup با purchase_key جدید: این دقیقاً همان سناریویی است که بخش ۵.۱ به‌طور کامل پوشش می‌دهد — چون machine_id (نسخهٔ اصلی) کامپیوتر دوم با یک لایسنس فعال دیگر تصادم دارد، سرور device_key را چک می‌کند؛ چون این‌جا device_key واقعاً متفاوت است (دو کامپیوتر واقعاً متفاوت‌اند، نه یک کامپیوتر با دو تلاش)، رد قطعی نمی‌شود — به‌جای آن fallback به نسخهٔ WithGuid پیشنهاد می‌شود (دیالوگ تأیید هویت). در Verify: چون هر لایسنس با license_id خودش بررسی می‌شود (نه جستجوی سراسری machine_id)، این دو کاربر هرگز با هم برخورد نمی‌کنند.</div></div>
+
+<div class="faq"><div class="q"><span class="qmark">س:</span>دو کامپیوتر device key یکسان (کلون) دارند اما machine_id متفاوت — در Verify چه می‌شود؟</div>
+<div class="a">رد می‌شود با <code class="inline">machine_mismatch</code> — این چک زودتر از چک device key اجرا می‌شود، پس حتی اثبات رمزنگاری‌شدهٔ مالکیت کلید هم به آن نقطه نمی‌رسد.</div></div>
+
+<div class="faq"><div class="q"><span class="qmark">س:</span>کاربری که رایگان بوده، خرید کرده، Device Key اش چه شد؟</div>
+<div class="a">همان کلید دورهٔ رایگان — بدون تغییر. به بخش ۴ مراجعه کنید.</div></div>
+
+<div class="faq"><div class="q"><span class="qmark">س:</span>چرا بازهٔ verify از ۱۰-۵۰ دقیقه به ۴-۱۵ دقیقه تغییر کرد؟</div>
+<div class="a">برای کاهش پنجرهٔ زمانی که یک Lease کش‌شده بدون تماس تازهٔ سرور معتبر تلقی می‌شود — تقویت طراحی «سرور-محور»، نه صرفاً یک تغییر دلخواه.</div></div>
+
+<div class="faq"><div class="q"><span class="qmark">س:</span>Provider IP یک VPS را بدون تخلف کاربر عوض کند، چه می‌شود؟</div>
+<div class="a">دقیقاً مثل تغییر IP توسط کرکر رفتار می‌شود — رد قطعی، نیاز به فعال‌سازی مجدد. این هزینهٔ صریحاً پذیرفته‌شده برای امنیت بیشتر است (طبق تصمیم صاحب پروژه).</div></div>
+
+<div class="faq"><div class="q"><span class="qmark">س:</span>آیا امکان تشخیص قطعی و صد در صد کلون Device Key وجود دارد؟</div>
+<div class="a">خیر، از نظر ریاضی محض غیرممکن است (دو کپی از یک کلید خصوصی از نظر رمزنگاری قابل‌تشخیص نیستند). راه‌حل عملی: مشاهدهٔ رفتاری (توکن چرخشی) + IP-Binding برای VPS، نه اثبات مستقیم.</div></div>
+
+<div class="faq"><div class="q"><span class="qmark">س:</span>چطور در کد MQL بفهمم کاربر لایسنس معتبر دارد؟</div>
+<div class="a">فقط از طریق <code class="inline">Nutricula_GetLicenseTier()</code> در DLL نازک — هرگز مستقیم به دیتابیس یا سرور دسترسی ندارید. به بخش ۱۶ (<a href="#mql-check">جعبهٔ آبی</a>) مراجعه کنید.</div></div>
+
+
+<h1 id="sec15"><span class="num">۱۵.</span>محل دقیق نصب فایل‌ها روی دیسک</h1>
+<p class="dim">این بخش بر اساس بررسی مستقیم توابع واقعی مسیر‌ساز در کد (نه حدس) نوشته شده — <code class="inline">Nutricula_GetLicensePath()</code>، <code class="inline">GetDeviceKeyPath()</code>، و منطق نصب <code class="inline">InstallCoordinatorAsync()</code> در Installer.</p>
+
+<h2>جدول کامل مسیرها</h2>
+<table>
+<tr><th>فایل</th><th>ویندوز واقعی</th><th>Wine (مک/لینوکس)</th></tr>
+<tr><td>فایل Lease (<code class="inline">NutriculaLicense.txt</code>)</td><td><code class="inline">%APPDATA%\MetaQuotes\Terminal\Common\Files\NutriculaLicense.txt</code></td><td><code class="inline">$WINEHOMEDIR\.nutricula\NutriculaLicense.txt</code></td></tr>
+<tr><td>Device Key (<code class="inline">DeviceKey.bin</code>)</td><td><code class="inline">%APPDATA%\Nutricula\DeviceKey.bin</code></td><td><code class="inline">$WINEHOMEDIR\.nutricula\DeviceKey.bin</code></td></tr>
+<tr><td>ClockAnchor</td><td>کنار فایل Lease، با پسوند اضافه: <code class="inline">...\NutriculaLicense.txt.clockanchor</code></td><td>همان الگو، در همان پوشهٔ <code class="inline">.nutricula</code></td></tr>
+<tr><td>Coordinator — Service/Broker exe</td><td><code class="inline">%ProgramFiles%\Nutricula\LicenseService\</code></td><td>همان مسیر نسبی — Wine این را شفاف روی درایو <code class="inline">C:</code> داخلی خودش نگاشت می‌کند</td></tr>
+<tr><td>DLL نازک + MachineId DLL</td><td><code class="inline">&lt;پوشهٔ دادهٔ ترمینال&gt;\MQL4\Libraries\</code> یا <code class="inline">MQL5\Libraries\</code></td><td>همان — داخل همان bottle/prefix که MT4/MT5 در آن نصب شده</td></tr>
+</table>
+
+<div class="callout blue">
+<b>نکتهٔ کلیدی دربارهٔ <code class="inline">WINEHOMEDIR</code>:</b> کد Wine را با یک مسیر ثابت مثل <code class="inline">Z:\home\username</code> فرض نمی‌کند — مستقیم متغیر محیطی <code class="inline">WINEHOMEDIR</code> را می‌خواند (که خود Wine در ابتدای اجرا تنظیم می‌کند) و پیشوند NT-style <code class="inline">\??\</code> را در صورت وجود حذف می‌کند. این یعنی مسیر واقعی خانهٔ کاربر (چه در مک چه در لینوکس، چه با bottle سفارشی) همیشه درست تشخیص داده می‌شود، بدون فرض‌های سخت‌کد‌شده.
+</div>
+
+<h2>چرا فایل Lease در پوشهٔ <code class="inline">Common\Files</code> است، نه پوشهٔ اختصاصی هر ترمینال؟</h2>
+<p class="dim">MetaTrader یک پوشهٔ <code class="inline">Common\Files</code> مشترک بین <b>همهٔ</b> نصب‌های MT4/MT5 روی همان کامپیوتر دارد (نه یک پوشهٔ جدا برای هر ترمینال). این انتخاب عمدی است: اگر کاربر چند نمونهٔ MT4/MT5 روی یک کامپیوتر نصب کرده باشد (که رایج است)، همه باید به همان یک Lease مشترک این کامپیوتر دسترسی داشته باشند — نه هرکدام Lease جداگانه بخواهند.</p>
+
+<h2>سناریوهای امنیتی — محل فایل‌ها</h2>
+<table>
+<tr><th>حمله</th><th>کرکر چه می‌کند</th><th>پاسخ سیستم</th><th>نتیجه</th></tr>
+<tr><td>جابه‌جایی دستی فایل Lease به یک مسیر دیگر برای پنهان‌کردن از آنتی‌ویروس/پاک‌سازها</td><td>فایل را به مکان دیگری منتقل می‌کند</td><td>Coordinator همیشه از همان مسیر ثابت (<code class="inline">Nutricula_GetLicensePath()</code>) می‌خواند؛ اگر فایل آنجا نباشد، دقیقاً مثل «فایل وجود ندارد» رفتار می‌شود (بخش ۱۴)</td><td class="status ok">بی‌اثر — فقط باعث از کار افتادن لایسنس خود کاربر می‌شود</td></tr>
+<tr><td>ساخت یک Symbolic Link/Junction که مسیر Lease را به یک فایل دیگر (مثلاً از یک کامپیوتر دیگر، سینک‌شده با ابر) نگاشت کند</td><td>به‌جای فایل واقعی، یک لینک نمادین به یک فایل مشترک بین چند کامپیوتر می‌سازد</td><td>محتوای فایل همچنان باید امضای معتبر سرور را داشته باشد؛ اگر این فایل مشترک متعلق به یک machine_id متفاوت باشد، Layer ۱ (بخش ۱۰) رد می‌کند</td><td class="status ok">مسدود (از طریق Layer ۱، نه از طریق خود مکانیزم فایل)</td></tr>
+<tr><td>حذف پوشهٔ <code class="inline">.nutricula</code> کامل (Wine) برای ریست کامل وضعیت محلی</td><td>کل پوشه (Lease + Device Key + ClockAnchor) را پاک می‌کند</td><td>این دقیقاً معادل «نصب کاملاً تازه» است — همه‌چیز از صفر ساخته می‌شود؛ اگر بعداً Re-signup با purchase_key واقعی انجام شود، رفتار «توکن قدیمی» (بخش ۸) اعمال می‌شود، نه یک راه فرار رایگان</td><td class="status ok">بدون سوءاستفادهٔ واقعی</td></tr>
+<tr><td>محافظت‌نکردن پوشهٔ <code class="inline">%ProgramFiles%\Nutricula</code> در برابر نوشتن توسط کاربر عادی (Non-Admin)</td><td>یک کاربر بدون دسترسی Admin سعی می‌کند باینری Coordinator را جایگزین کند</td><td><code class="inline">%ProgramFiles%</code> به‌طور پیش‌فرض ویندوز فقط برای Admin قابل‌نوشتن است — این یک محافظت سطح سیستم‌عامل است، نه چیزی که این پروژه پیاده کرده باشد</td><td class="status ok">مسدود (توسط ACL پیش‌فرض ویندوز، در صورت عدم دسترسی Admin کرکر)</td></tr>
+</table>
+
+<h2>پرسش‌های متداول مفهومی — محل فایل‌ها</h2>
+<div class="faq"><div class="q"><span class="qmark">س:</span>اگر چند کاربر ویندوز (Multi-user) روی یک کامپیوتر باشند، هرکدام Lease جدا دارند؟</div>
+<div class="a">بله — چون مسیر از <code class="inline">%APPDATA%</code> ساخته می‌شود که به‌ازای هر کاربر ویندوز جداست، هر کاربر سیستم‌عامل عملاً یک نصب کاملاً مستقل (Machine ID احتمالاً همان، ولی Lease/Device Key جدا) خواهد داشت.</div></div>
+<div class="faq"><div class="q"><span class="qmark">س:</span>آیا نصب Coordinator نیاز به دسترسی Administrator دارد؟</div>
+<div class="a">برای نصب واقعی به‌عنوان Windows Service، بله (چون Service Control Manager این را می‌طلبد)؛ اگر این fail شود، Installer به حالت Broker (یک پروسهٔ معمولی، بدون نیاز به Admin) سقوط می‌کند (بخش ۱۲).</div></div>
+<div class="faq"><div class="q"><span class="qmark">س:</span>چرا DLL نازک داخل پوشهٔ <code class="inline">Libraries</code> ترمینال است، نه یک مسیر سیستمی مشترک؟</div>
+<div class="a">این یک محدودیت MQL است — توابع <code class="inline">#import</code> در MQL4/MQL5 فقط DLL هایی را می‌بینند که در همان پوشهٔ <code class="inline">MQL4\Libraries</code>/<code class="inline">MQL5\Libraries</code> ترمینال قرار داشته باشند؛ این یک انتخاب طراحی این پروژه نیست، بلکه یک الزام پلتفرم MetaTrader است.</div></div>
+
+
+<h1 id="sec16"><span class="num">۱۶.</span>راهنمای کامل استفاده در MQL — هر تابع، دقیق و واقعی</h1>
+<p class="dim">این بخش بر اساس شمارش مستقیم توابع <code class="inline">export</code>‌شدهٔ واقعی در هدرها نوشته شده — <b>نه ۷۰۰ تابع، بلکه در مجموع ۱۵ تابع export واقعی</b> بین دو DLL (۱۱ در <code class="inline">MachineId*.dll</code> که مستقیم توسط Installer استفاده می‌شود و برای MQL کاربردی ندارد، و ۴ در <code class="inline">NutriculaLicenseCheck*.dll</code> که تنها DLL مورد نیاز کد MQL است). اگر منظور شما از «۷۰۰ تابع» چیز دیگری بود (مثلاً تعداد کل خطوط کد یا توابع داخلی غیر-export)، لطفاً دقیق‌تر بگویید تا آن بخش خاص را هم مستند کنم.</p>
+
+<h2>تنها DLLای که کد MQL باید Import کند</h2>
+<table>
+<tr><th>تابع</th><th>امضا</th><th>کاربرد</th></tr>
+<tr><td><code class="inline">Nutricula_Initialize</code></td><td><code class="inline">int __cdecl()</code></td><td>باید یک‌بار در <code class="inline">OnInit()</code> صدا زده شود — کلید عمومی سرور را در حافظهٔ DLL بارگذاری می‌کند. بازگشت <code class="inline">1</code>=موفق، <code class="inline">0</code>=ناموفق (نباید ادامه داد)</td></tr>
+<tr><td><code class="inline">Nutricula_Poll</code></td><td><code class="inline">void __cdecl()</code></td><td>باید به‌طور دوره‌ای (مثلاً در <code class="inline">OnTimer()</code>) صدا زده شود — یک تماس IPC سبک با Coordinator برقرار می‌کند تا آخرین Tier را دریافت کند. فراخوانی‌های هم‌زمان از چند چارت خودکار در یک تماس ادغام می‌شوند (<code class="inline">g_pollInFlight</code>)</td></tr>
+<tr><td><code class="inline">Nutricula_GetLicenseTier</code></td><td><code class="inline">int __cdecl()</code></td><td>مقدار Tier فعلی (کش‌شده از آخرین Poll) را برمی‌گرداند — <b>این تابعی است که باید در منطق معاملاتی خود چک کنید</b></td></tr>
+<tr><td><code class="inline">Nutricula_GetLicensePending</code></td><td><code class="inline">int __cdecl()</code></td><td>نشان می‌دهد آیا یک درخواست Poll در حال انجام است — برای جلوگیری از تصمیم‌گیری بر اساس دادهٔ ناقص در حین یک تماس در حال اجرا</td></tr>
+</table>
+
+<h2>نمونه‌کد کامل و صحیح برای MQL</h2>
+<pre>#import "NutriculaLicenseCheck64.dll"
+   int Nutricula_Initialize();
+   int Nutricula_GetLicenseTier();
+   int Nutricula_GetLicensePending();
+   void Nutricula_Poll();
+#import
+
+int OnInit()
+{
+   if(Nutricula_Initialize() != 1)
+   {
+      Print("Nutricula: initialization failed");
+      return(INIT_FAILED);
+   }
+   EventSetTimer(30); // هر 30 ثانیه یک‌بار Poll انجام شود
+   return(INIT_SUCCEEDED);
+}
+
+void OnTimer()
+{
+   Nutricula_Poll();
+}
+
+void OnTick()
+{
+   int tier = Nutricula_GetLicenseTier();
+   // مقادیر ممکن: بخش بعدی همین صفحه را ببینید
+   if(tier != 2)
+   {
+      Comment("Nutricula: license not fully active (tier=" + IntegerToString(tier) + ")");
+      return;
+   }
+   // ادامهٔ منطق معاملاتی فقط وقتی tier == 2
+}</pre>
+
+<h2>جدول کامل مقادیر Tier و معنای دقیق هرکدام</h2>
+<table>
+<tr><th>مقدار</th><th>نام داخلی</th><th>معنی</th><th>باید معامله کند؟</th></tr>
+<tr><td><code class="inline">2</code></td><td><code class="inline">TIER_LICENSED</code></td><td>لایسنس کاملاً پولی و معتبر است</td><td class="status ok">بله</td></tr>
+<tr><td><code class="inline">1</code></td><td><code class="inline">TIER_FREE</code></td><td>نسخهٔ رایگان (یا هیچ‌وقت فعال نشده)</td><td class="status warn">بسته به سیاست محصول</td></tr>
+<tr><td><code class="inline">-10</code></td><td><code class="inline">TIER_FAILED</code></td><td>خطای فنی موقت (مثلاً امضا بارگذاری نشده یا کلید سرور نامعتبر)</td><td class="status danger">نه</td></tr>
+<tr><td><code class="inline">-50</code></td><td><code class="inline">TIER_UPDATE_REQUIRED</code></td><td>نسخهٔ کلاینت قدیمی است، سرور آپدیت اجباری می‌خواهد</td><td class="status danger">نه</td></tr>
+<tr><td><code class="inline">-100</code></td><td><code class="inline">TIER_BLOCKED</code></td><td>لایسنس به‌خاطر تشخیص کلون به مدت ۲۴ ساعت مسدود است (بخش ۸)</td><td class="status danger">نه</td></tr>
+</table>
+<div class="callout warn"><b>توصیهٔ عملی:</b> در کد MQL هرگز فرض نکنید Tier فقط بین ۱ و ۲ است — همیشه چک <code class="inline">if(tier == 2)</code> برای اجازهٔ معامله و رفتار محافظه‌کارانه (توقف معامله + پیام روی چارت) برای هر مقدار دیگر (شامل مقادیر منفی ناشناخته‌ای که ممکن است در آینده اضافه شوند) بنویسید — نه <code class="inline">if(tier &gt;= 1)</code> و نه <code class="inline">if(tier &lt;= -1)</code>.</div>
+
+<h2>چرا «چقدر از اعتبار باقی مانده» در دسترس نیست</h2>
+<p class="dim">تاریخ انقضای لایسنس (<code class="inline">license_expires_at</code>) داخل فایل Lease امضاشده روی دیسک کاربر است و توسط Coordinator خوانده می‌شود، اما هیچ تابع <code class="inline">export</code> فعلی این مقدار خام را به بیرون نمی‌دهد — فقط نتیجهٔ نهایی (Tier) قابل‌مشاهده است. اگر این نیاز واقعی دارید، باید یک export جدید (مثلاً <code class="inline">Nutricula_GetLicenseExpiresAt()</code>) به DLL نازک و به پروتکل IPC اضافه شود؛ این در کد فعلی وجود ندارد.</p>
+
+<hr>
+
+<h1 id="sec17"><span class="num">۱۷.</span>جدول کامل و دقیق تمام پیام‌های خطای Installer</h1>
+<p class="dim">این جدول بر اساس متن دقیق و کامل کد <code class="inline">Messages.ForRejection()</code> در <span class="file-tag">InstallerService.cs</span> است — هیچ پیامی خلاصه یا پارافریز نشده، متن انگلیسی دقیقاً همان چیزی است که کاربر می‌بیند.</p>
+
+<table>
+<tr><th>Reason Code</th><th>در کدام Stage رخ می‌دهد</th><th>متن دقیق پیام به کاربر (انگلیسی)</th></tr>
+<tr><td><code class="inline">license_inactive</code></td><td>Signup, Transfer</td><td>"This license has been deactivated. Please contact support."</td></tr>
+<tr><td><code class="inline">license_expired</code></td><td>Signup, Transfer</td><td>"This license has expired. Please renew your license to continue."</td></tr>
+<tr><td><code class="inline">too_early</code></td><td>Signup (re-signup), Transfer</td><td>"This license was checked very recently. Please wait a while and try again."</td></tr>
+<tr><td><code class="inline">blocked</code></td><td>Signup, Transfer</td><td>"Your license has been temporarily restricted. Please try again after 24 hours. For more information, please contact Nutricula support."</td></tr>
+<tr><td><code class="inline">transfer_same_machine</code></td><td>فقط Transfer</td><td>"This license is already active on this computer. No transfer is needed."</td></tr>
+<tr><td><code class="inline">device_already_licensed</code></td><td>Signup, Transfer</td><td>"This device has already been used to register another license. Please either activate your license on a different device, or contact support."</td></tr>
+<tr><td><code class="inline">machine_already_licensed</code></td><td>Signup, Transfer (فقط ویندوز فیزیکی)</td><td>"This computer's identifying information conflicts with another active license, and no fallback identifier is available either. Please contact Nutricula support for help activating your license on this computer."</td></tr>
+<tr><td><code class="inline">machine_requires_confirmation</code></td><td>Signup, Transfer (فقط ویندوز فیزیکی)</td><td>پیام خطای مستقیم ندارد — به‌جای رد شدن، دیالوگ هشدار هویت نمایش داده می‌شود (به جدول زیر مراجعه کنید)</td></tr>
+<tr><td><code class="inline">signup_conflict</code></td><td>Signup</td><td>"A temporary server error occurred. Please try again in a moment."</td></tr>
+<tr><td><code class="inline">signup_failed</code></td><td>Signup</td><td>همان متن بالا (هر سه در یک پیام مشترک ادغام شده‌اند)</td></tr>
+<tr><td><code class="inline">transfer_failed</code></td><td>Transfer</td><td>همان متن بالا</td></tr>
+<tr><td><code class="inline">signup_identity_mismatch</code></td><td>Signup</td><td>"The information you entered could not be verified. Please double-check your email and purchase key, and try again, or contact support."</td></tr>
+<tr><td><code class="inline">transfer_key_invalid</code></td><td>Transfer</td><td>"The information you entered could not be verified. Please double-check your email, purchase key, and transfer key, and try again, or contact support."</td></tr>
+<tr><td><code class="inline">transfer_key_already_used</code></td><td>Transfer</td><td>همان متن بالا (نسخهٔ Transfer)</td></tr>
+<tr><td><code class="inline">purchase_key_invalid</code></td><td>Signup, Transfer</td><td>متن مربوط به همان Stage از دو مورد بالا</td></tr>
+<tr><td><code class="inline">license_not_found</code></td><td>Signup, Transfer</td><td>متن مربوط به همان Stage از دو مورد بالا</td></tr>
+<tr><td>هر reason ناشناخته دیگر (Forward-compatibility)</td><td>هر Stage</td><td>"Your request was rejected by the Nutricula server. Please try again, or contact support if this continues."</td></tr>
+<tr><td>خطای کلی (نه یک reason خاص، مثل عدم دسترسی به شبکه)</td><td>هر Stage</td><td>"Your license could not be activated. Please make sure the email and purchase key you entered are correct. You can currently only use the free version of Nutricula." (نسخهٔ Transfer: "...could not be transferred...")</td></tr>
+</table>
+
+<div class="callout info"><b>الگوی طراحی این پیام‌ها — عمداً مبهم در ۵ مورد:</b> پنج reason (<code class="inline">signup_identity_mismatch</code>, <code class="inline">transfer_key_invalid</code>, <code class="inline">transfer_key_already_used</code>, <code class="inline">purchase_key_invalid</code>, <code class="inline">license_not_found</code>) عمداً <b>دقیقاً یک متن یکسان</b> نشان می‌دهند — تا یک مهاجم نتواند با آزمون‌وخطای پیام‌های متفاوت، بفهمد کدام بخش (ایمیل، کلید خرید، یا کلید انتقال) اشتباه بوده (جلوگیری از User Enumeration).</div>
+
+<h2>دیالوگ هشدار هویت — متن کامل و دقیق (۲۰۲۶)</h2>
+<p class="dim">شش نسخهٔ پیام اصلی (۳ پلتفرم × ۲ حالت)، دو جفت دکمه، و دو پیام لغو — همگی از <span class="file-tag">InstallerService.cs Messages</span>. به بخش ۲.۲ برای این‌که هرکدام دقیقاً کِی نمایش داده می‌شوند مراجعه کنید.</p>
+
+<table>
+<tr><th>پلتفرم</th><th>حالت</th><th>متن پیام</th></tr>
+<tr><td>ویندوز فیزیکی</td><td>Signup</td><td>"Because your device's identifying information is not complete, if you continue with this activation, your license will be lost if you replace or reinstall Windows on this computer. In other words, on this computer you will only be able to use your Nutricula license for as long as you keep using this exact Windows installation."</td></tr>
+<tr><td>ویندوز فیزیکی</td><td>Transfer</td><td>"Because your device's identifying information is not complete, if you continue with this transfer, your license will be lost if you replace or reinstall Windows on this computer. In other words, on this computer you will only be able to use your Nutricula license for as long as you keep using this exact Windows installation."</td></tr>
+<tr><td>لینوکس</td><td>Signup</td><td>"On Linux, Nutricula ties your license to this exact Linux installation. If you reinstall your Linux distribution (or switch to a different one) on this computer, your license will be lost and you will need to activate it again. In other words, you will only be able to use your Nutricula license for as long as you keep using this exact Linux installation."</td></tr>
+<tr><td>لینوکس</td><td>Transfer</td><td>"On Linux, Nutricula ties your license to this exact Linux installation. If you reinstall your Linux distribution (or switch to a different one) on this computer, your license will be lost and you will need to transfer it again. In other words, you will only be able to use your Nutricula license for as long as you keep using this exact Linux installation."</td></tr>
+<tr><td>VPS</td><td>Signup</td><td>"On a VPS, Nutricula ties your license to this exact Windows installation on this virtual machine. If this VPS is reinstalled, reimaged, or replaced, your license will be lost and you will need to activate it again. In other words, you will only be able to use your Nutricula license for as long as you keep using this exact Windows installation on this VPS."</td></tr>
+<tr><td>VPS</td><td>Transfer</td><td>"On a VPS, Nutricula ties your license to this exact Windows installation on this virtual machine. If this VPS is reinstalled, reimaged, or replaced, your license will be lost and you will need to transfer it again. In other words, you will only be able to use your Nutricula license for as long as you keep using this exact Windows installation on this VPS."</td></tr>
+</table>
+
+<table style="margin-top:16px;">
+<tr><th>دکمه</th><th>حالت</th><th>متن</th></tr>
+<tr><td>بله (ادامه بده)</td><td>Signup</td><td>"It doesn't matter. Activate my license on this computer."</td></tr>
+<tr><td>نه (متوقف کن)</td><td>Signup</td><td>"Stop the activation. I'd rather activate my license on a different computer."</td></tr>
+<tr><td>بله (ادامه بده)</td><td>Transfer</td><td>"It doesn't matter. Transfer my license to this computer."</td></tr>
+<tr><td>نه (متوقف کن)</td><td>Transfer</td><td>"Stop the transfer. I'd rather transfer my license to a different computer."</td></tr>
+</table>
+
+<table style="margin-top:16px;">
+<tr><th>حالت</th><th>متن صفحهٔ ناموفق (بعد از کلیک «نه»)</th></tr>
+<tr><td>Signup</td><td>"Activation was cancelled. Your purchase key was not used, and no license was activated on this computer. You can run this installer again on a different computer whenever you're ready."</td></tr>
+<tr><td>Transfer</td><td>"The transfer was cancelled. Your transfer key was not used, and no license was moved to this computer. You can run this installer again on a different computer whenever you're ready."</td></tr>
+</table>
+
+
+
+<h1 id="sec18"><span class="num">۱۸.</span>خلاصهٔ کامل تمام زمان‌بندی‌ها و اعداد timeout — یکجا</h1>
+<p class="dim">این اعداد در بخش‌های مختلف پراکنده بودند؛ اینجا همهٔ آن‌ها یک‌جا و با ارجاع به بخش اصلی جمع‌آوری شده‌اند.</p>
+
+<table>
+<tr><th>پارامتر</th><th>مقدار</th><th>کجا اعمال می‌شود</th><th>بخش مرجع</th></tr>
+<tr><td>بازهٔ رندوم verify کلاینت</td><td>۴:۰۰ تا ۱۵:۰۰ دقیقه (رندوم، مشتق از خود توکن فعلی)</td><td>Coordinator — فاصلهٔ بین دو تلاش verify واقعی، وقتی لایسنس معتبر است</td><td>بخش ۸، ۱۱</td></tr>
+<tr><td>کف زمانی سرور (<code class="inline">min_request_gap_seconds</code>)</td><td>۲:۵۹ دقیقه (۱۷۹ ثانیه)</td><td>سرور — رد درخواست‌های نزدیک‌به‌هم با <code class="inline">too_early</code></td><td>بخش ۵</td></tr>
+<tr><td>حاشیهٔ امنیتی بین کف کلاینت و سرور</td><td>~۶۱ ثانیه</td><td>تضمین این‌که یک کلاینت قانونی هرگز <code class="inline">too_early</code> نگیرد</td><td>بخش ۵</td></tr>
+<tr><td>بازهٔ چک محلی سریع (تشخیص فوری وضعیت Free)</td><td>ثابت ۴:۰۰ دقیقه (<code class="inline">MIN_RANDOM_OFFSET_SEC</code>)</td><td>Coordinator — چرخهٔ بیدارشدن محلی، بدون لزوم ترافیک شبکه در هر بار</td><td>بخش ۱۳</td></tr>
+<tr><td>بازهٔ واقعی ارسال شبکه‌ای <code class="inline">free_checkin</code></td><td>۳۰:۰۰ دقیقه (<code class="inline">FREE_CHECKIN_INTERVAL_SEC</code>) — مستقل از چرخهٔ چک محلی بالا</td><td>کاربران رایگان یا بدون Lease معتبر — فقط برای آمار، سرور را کمتر مزاحم می‌کند</td><td>بخش ۱۳</td></tr>
+<tr><td>سقف Stale-Coordinator Degrade</td><td>۲۱:۰۰ دقیقه</td><td>DLL نازک — اگر این‌مدت هیچ تأیید تازهٔ <code class="inline">TIER_LICENSED</code> نرسد، خودکار به Free برمی‌گردد</td><td>بخش ۱۱</td></tr>
+<tr><td>مدت اعتبار مسدودیت تشخیص کلون</td><td>۲۴ ساعت</td><td>سرور — بعد از دو ارائهٔ متوالی توکن قدیمی</td><td>بخش ۸</td></tr>
+<tr><td>Timeout بررسی Cloud Instance ID</td><td>۷۰۰ میلی‌ثانیه (به‌ازای هر ارائه‌دهنده — AWS/Azure/GCP)</td><td>محاسبهٔ Machine ID روی VPS، فقط در لحظهٔ نصب/محاسبهٔ Machine ID</td><td>بخش ۳</td></tr>
+<tr><td>مهلت اعتبار Challenge</td><td>کوتاه (چند ثانیه تا حداکثر یک دقیقه — مقدار دقیق در <code class="inline">challenge_ttl_seconds</code> کانفیگ سرور)</td><td>سرور — جلوگیری از استفادهٔ دیرهنگام یک Challenge</td><td>بخش ۵، ۷</td></tr>
+<tr><td>محدودیت نرخ عمومی سرور</td><td>۳۰ درخواست در دقیقه</td><td>هر endpoint، بر اساس IP</td><td>بخش ۵</td></tr>
+</table>
+
+<h2>نمودار زمانی یک چرخهٔ کامل (کاربر پولی، شرایط عادی)</h2>
+<pre>
+t=0:00   verify موفق → Lease جدید صادر می‌شود، توکن می‌چرخد، ClockAnchor به‌روز می‌شود
+t=0:00   Coordinator یک بازهٔ رندوم جدید بین 4:00 تا 15:00 از روی توکن جدید محاسبه می‌کند
+         (مثلاً 9:30 محاسبه شد)
+t=9:30   Coordinator دوباره تلاش verify می‌کند
+         → موفق: چرخه از t=0:00 دوباره تکرار می‌شود با بازهٔ رندوم تازه
+         → ناموفق (شبکه/فایروال): تلاش تا 10 بار با فاصلهٔ 2 ثانیه، سپس تسلیم تا چرخهٔ بعد
+</pre>
+
+<h1 id="sec19"><span class="num">۱۹.</span>Anti-Debug / Anti-Tamper — چه چیزی واقعاً پیاده شده</h1>
+
+<div class="callout danger"><b>محدودهٔ صادقانه — قبل از هر چیز:</b> هیچ تکنیک محلی (سمت کلاینت) نمی‌تواند reverse engineering را کاملاً غیرممکن کند — این یک واقعیت فنی بنیادین است، نه یک نقص طراحی این پروژه (کد نهایتاً روی کامپیوتر مهاجم اجرا می‌شود، جایی که او کنترل کامل دارد). آنچه در این بخش توضیح داده می‌شود، سطح تلاش لازم برای دور زدن سیستم را از «یک بایت را با Hex Editor عوض کن» به «باید یک زنجیرهٔ رمزنگاری‌شدهٔ کامل را هم جعل کنی» بالا می‌برد — نه بیشتر و نه کمتر.</div>
+
+<h2 id="sec19-1">۱۹.۱ Anti-Debug در DLL نازک — چهار روش مستقل</h2>
+<p>در <span class="file-tag">NutriculaLicenseCheckThin.cpp</span>، تابع <code class="inline">IsDebuggerAttached()</code> از چهار روش مستقل استفاده می‌کند — دلیل استفادهٔ هم‌زمان از چند روش این است که هرکدام به‌تنهایی قابل دور زدن است؛ نیاز به شکست دادن هر چهار روش هم‌زمان، سطح تلاش را بالا می‌برد:</p>
+<table>
+<tr><th>روش</th><th>API</th><th>نکته</th></tr>
+<tr><td>۱. استاندارد</td><td><code class="inline">IsDebuggerPresent()</code></td><td>ساده‌ترین و اولین چیزی که یک دیباگر «مخفی‌کار» غیرفعالش می‌کند</td></tr>
+<tr><td>۲. دیباگر ریموت</td><td><code class="inline">CheckRemoteDebuggerPresent()</code></td><td>برخی دیباگرهای کمک‌کرنلی که روش ۱ را جا می‌گذارند، اینجا گیر می‌افتند</td></tr>
+<tr><td>۳. سطح کرنل</td><td><code class="inline">NtQueryInformationProcess(ProcessDebugPort)</code></td><td>یک ساختار پایین‌تر از سطح کرنل می‌خواند؛ از طریق <code class="inline">GetProcAddress</code> resolve می‌شود (نه لینک مستقیم ntdll.lib)</td></tr>
+<tr><td>۴. تایمینگ</td><td>یک حلقهٔ ۱۰۰۰تایی با <code class="inline">QueryPerformanceCounter</code></td><td>Single-step یا breakpoint گذاشتن روی این دقیقاً همین بلوک کد، در زمان واقعی به‌شدت کندتر است — آستانهٔ ۵۰ میلی‌ثانیه عمداً سخاوتمندانه انتخاب شده تا هرگز روی یک کامپیوتر کند ولی قانونی False Positive ندهد</td></tr>
+</table>
+<div class="callout info">تست شد: روی یک محیط عادی (بدون دیباگر)، هر چهار چک <code class="inline">false</code> برمی‌گردانند — بدون False Positive.</div>
+
+<h2 id="sec19-2">۱۹.۲ نکتهٔ اصلی — GetLicenseTier دیگر به یک متغیر ساده اعتماد نمی‌کند</h2>
+<p>قبل از این تغییر، <code class="inline">Nutricula_GetLicenseTier()</code> فقط <code class="inline">g_tier.load()</code> را برمی‌گرداند — یعنی یک ابزار مثل Cheat Engine فقط با پیدا کردن این یک آدرس حافظه و نوشتن مقدار ۲ (LICENSED) در آن، کل سیستم را دور می‌زد. حالا:</p>
+<div class="step-flow">
+<div class="step"><div class="step-num">۱</div><div class="step-body">هر فراخوانی، اول <code class="inline">IsDebuggerAttached()</code> را چک می‌کند (اگر true بود → فوراً TIER_FREE، صرف‌نظر از هرچیز دیگر).</div></div>
+<div class="step"><div class="step-num">۲</div><div class="step-body">اگر <code class="inline">g_tier</code> ادعای LICENSED دارد، این ادعا به‌تنهایی کافی نیست — کش شدهٔ <code class="inline">canonical</code>/<code class="inline">signature</code> (که آخرین‌بار واقعاً از سرور دریافت و verify شده) دوباره با کلید عمومی RSA سرور تأیید می‌شود.</div></div>
+<div class="step"><div class="step-num">۳</div><div class="step-body">علاوه بر امضا، تاریخ انقضای استخراج‌شده از خود canonical (<code class="inline">license_expires_at</code>) هم با ساعت محلی مقایسه می‌شود — یک لایهٔ دفاعی اضافه در برابر replay یک Lease قدیمی که واقعاً امضایش معتبر است ولی منقضی شده.</div></div>
+</div>
+
+<div class="callout warn"><b>چرا این re-verification در هر فراخوانی انجام نمی‌شود (نه هر تیک MQL):</b> <code class="inline">GetLicenseTier()</code> در حلقهٔ <code class="inline">OnTick()</code> صدا زده می‌شود که می‌تواند صدها بار در ثانیه اتفاق بیفتد — تأیید امضای RSA در این فرکانس عملاً غیرممکن است. به همین دلیل نتیجهٔ واقعی حداکثر هر ۳ ثانیه یک‌بار (<code class="inline">TIER_REVERIFY_INTERVAL_MS</code>) دوباره محاسبه می‌شود؛ بین این بازه‌ها، آخرین نتیجهٔ واقعی کش می‌شود. یعنی یک مهاجم که <code class="inline">g_tier</code> را مستقیم patch کند، حداکثر تا ۳ ثانیه بعد (نه برای همیشه) این patch باطل می‌شود.</div>
+
+<h2 id="sec19-3">۱۹.۳ Anti-Tamper خود فایل Installer.exe</h2>
+<p>مستقل از DLL نازک، خود فایل <span class="file-tag">Installer.exe</span> هم یک امضای دیجیتال دارد — این امضا <b>مستقیم به انتهای همان فایل exe الحاق می‌شود</b> (نه یک فایل جداگانه)، پس Installer همچنان یک فایل تنها برای توزیع باقی می‌ماند:</p>
+<table>
+<tr><th>بخش</th><th>توضیح</th></tr>
+<tr><td>فرمت trailer</td><td>۶۴ بایت امضای خام P-256 + ۸ بایت مارکر <code class="inline">"NUTRSIG1"</code> — مستقیم به انتهای فایل exe الحاق می‌شود</td></tr>
+<tr><td>ابزار امضا</td><td><code class="inline">NutriculaSignInstaller.exe</code> — باید بعد از build نهایی Installer.exe، به‌عنوان آخرین قدم، روی آن اجرا شود</td></tr>
+<tr><td>چک زمان اجرا</td><td><code class="inline">SelfIntegrityCheck.cs</code> — خودِ Installer، در ابتدای اجرا، بایت‌های خودش (منهای ۷۲ بایت آخر) را دوباره SHA-256 می‌کند و امضا را تأیید می‌کند</td></tr>
+<tr><td>اعمال</td><td>فقط قبل از Premium/Transfer (که purchase_key/transfer_key مصرف می‌کنند) — نصب Free اصلاً به این چک وابسته نیست</td></tr>
+</table>
+<div class="callout info">چرا الحاق به انتهای فایل، نه یک PE Resource: این روش نیازی به کامپایلر resource یا تحلیل پیچیدهٔ ساختار PE (تبدیل RVA به file offset) ندارد. Windows PE loader و خواندهٔ متادیتای دات‌نت هرگز بایت‌های بعد از پایان بخش‌های تعریف‌شده را نمی‌خوانند — این تجربی روی یک exe واقعی (الحاق ۷۲ بایت دلخواه، سپس اجرای بدون مشکل) تأیید شد.</div>
+
+<h2>پرسش‌های متداول مفهومی — Anti-Debug/Anti-Tamper</h2>
+<div class="faq"><div class="q"><span class="qmark">س:</span>اگر مهاجم Coordinator را طوری patch کند که همیشه یک Lease واقعی و هنوز منقضی‌نشده را (که یک‌بار واقعاً از سرور گرفته) دوباره و دوباره serve کند، آیا این هنوز کار می‌کند؟</div>
+<div class="a">بله — این محدودیت صادقانه‌ای است که در بخش ۱۰ هم اشاره شده. re-verification در DLL نازک فقط جلوی «یک متغیر ساده را patch کن» را می‌گیرد، نه جلوی replay یک Lease واقعی و هنوز معتبر را. تنها راه بستن کامل این حفره، کوتاه‌کردن بیشتر پنجرهٔ اعتبار Lease یا افزودن یک nonce سمت سرور به هر Lease است — که هزینهٔ ترافیک شبکه و بار سرور را افزایش می‌دهد؛ تصمیم فعلی این تعادل را ترجیح داده است.</div></div>
+<div class="faq"><div class="q"><span class="qmark">س:</span>چرا Self-Integrity Check فقط Premium/Transfer را می‌گیرد، نه Free؟</div>
+<div class="a">Free هیچ purchase_key یا transfer_key ای مصرف نمی‌کند — هیچ منبع محدودی برای محافظت وجود ندارد. اضافه‌کردن این چک به مسیر Free فقط ریسک False Positive (مثلاً یک آنتی‌ویروس عجیب که فایل exe را دستکاری می‌کند) را بدون هیچ فایدهٔ امنیتی واقعی اضافه می‌کرد.</div></div>
+
+</div>
+</body>
+</html>
