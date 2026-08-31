@@ -244,6 +244,18 @@ try {
        own comment for the full reasoning) - here applied to "does the NEW
        machine already hold a different active license" instead of "brand
        new machine". */
+    // Same race-condition closing lock as signup.php - see
+    // nutricula_acquire_machine_lock's own comment.
+    $lockTargets = [$newEffectiveMachineId, $newEffectiveMachineIdAlt];
+    sort($lockTargets);
+    foreach (array_unique($lockTargets) as $lockTarget) {
+        if (!nutricula_acquire_machine_lock($conn, $lockTarget)) {
+            $conn->rollback();
+            $conn->close();
+            nutricula_reject($config, 'transfer_failed');
+        }
+    }
+
     if ($machineIdAltConfirmed) {
         $conflict = nutricula_find_conflicting_license($conn, $productId, $newEffectiveMachineIdAlt, $purchaseKey);
         if ($conflict !== null) {

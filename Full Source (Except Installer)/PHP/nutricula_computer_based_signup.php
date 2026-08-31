@@ -269,6 +269,21 @@ try {
            genuinely a different machine sharing a coincidentally-identical
            hardware-signal hash, which is the only case the fallback exists
            to handle at all. */
+        // Serialize against any other concurrent request touching either
+        // of this computer's two possible identifiers - see
+        // nutricula_acquire_machine_lock's own comment for why a plain
+        // SELECT (even FOR UPDATE) cannot close this race on its own.
+        // Fixed lock order (lexicographic) prevents a deadlock between two
+        // requests that reference the same two machine_ids.
+        $lockTargets = [$effectiveMachineId, $effectiveMachineIdAlt];
+        sort($lockTargets);
+        foreach (array_unique($lockTargets) as $lockTarget) {
+            if (!nutricula_acquire_machine_lock($conn, $lockTarget)) {
+                $conn->rollback();
+                nutricula_reject($config, 'signup_conflict');
+            }
+        }
+
         if ($machineIdAltConfirmed) {
             // The user already saw the confirmation dialog on a previous
             // attempt and explicitly chose to proceed with the WithGuid

@@ -576,6 +576,33 @@ function nutricula_is_vps_device_type(string $deviceType): bool
     quietly disable this entire binding for exactly the failure case it
     exists to be strict about. */
 /**
+ * Serializes concurrent signup/transfer attempts that reference the SAME
+ * machine_id, closing a race-condition window that a plain SELECT (even
+ * SELECT ... FOR UPDATE) cannot: FOR UPDATE only locks rows that already
+ * exist, but nutricula_find_conflicting_license() is most often checking
+ * whether NO row exists yet for this machine_id at all - two concurrent
+ * requests could both see "no conflict" and both proceed to INSERT with
+ * different purchase_keys before either commits. MySQL's GET_LOCK() is a
+ * named, session-scoped lock keyed on an arbitrary string (not a table
+ * row), so it works even when no row exists yet. Must be acquired BEFORE
+ * calling nutricula_find_conflicting_license() and held until the
+ * transaction commits or rolls back; MySQL releases it automatically when
+ * this request's database connection closes even if release is never
+ * called explicitly (each PHP request is its own connection).
+ */
+function nutricula_acquire_machine_lock(mysqli $conn, string $machineId): bool
+{
+    $lockName = 'nutricula_machine_' . strtolower($machineId);
+    $stmt = $conn->prepare('SELECT GET_LOCK(?, 5)');
+    if (!$stmt) throw new RuntimeException('DB prepare failed.');
+    $stmt->bind_param('s', $lockName);
+    $stmt->execute();
+    $result = $stmt->get_result()->fetch_row();
+    $stmt->close();
+    return isset($result[0]) && (int)$result[0] === 1;
+}
+
+/**
  * Returns the conflicting row (specifically its device_public_key_hash) if
  * the given machine_id currently has an ACTIVE, non-expired license
  * (within the same product) tied to a DIFFERENT purchase_key than
@@ -592,6 +619,9 @@ function nutricula_is_vps_device_type(string $deviceType): bool
  * genuinely different machines (DPAPI-protected, effectively impossible to
  * coincidentally collide) - see nutricula_computer_based_signup.php's own
  * comment at its call site for exactly how this is used to close that gap.
+ *
+ * ALWAYS call nutricula_acquire_machine_lock() for the SAME machine_id
+ * before calling this function - see that function's own comment for why.
  *
  * Scoped to the same product only (matching the existing uq_product_device
  * pattern) - a machine_id having an active license for a DIFFERENT product
