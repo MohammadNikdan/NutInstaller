@@ -752,7 +752,8 @@ namespace NutriculaInstaller
                     transferKeyBox != null ? transferKeyBox.Text : string.Empty,
                     cts.Token,
                     progress,
-                    AppendLog);
+                    AppendLog,
+                    ShowConfirmationDialogAsync);
 
                 ShowResult(result.OverallSuccess, result.FinalMessage, result.Mt4Count, result.Mt5Count);
             }
@@ -770,7 +771,64 @@ namespace NutriculaInstaller
             }
         }
 
+        /// <summary>
+        /// Shows a modal confirmation dialog with custom button text and
+        /// returns the user's choice - the delegate InstallerService.RunAsync
+        /// calls for the 2026 identity-warning flow (see its own comments
+        /// for exactly when this fires). A plain MessageBox cannot supply
+        /// custom button text, so this builds a minimal custom Form instead.
+        /// </summary>
+        private Task<bool> ShowConfirmationDialogAsync(string message, string yesButtonText, string noButtonText)
+        {
+            var tcs = new TaskCompletionSource<bool>();
+
+            using (var dialog = new Form())
+            {
+                dialog.Text = "Nutricula";
+                dialog.FormBorderStyle = FormBorderStyle.FixedDialog;
+                dialog.StartPosition = FormStartPosition.CenterParent;
+                dialog.MinimizeBox = false;
+                dialog.MaximizeBox = false;
+                dialog.ClientSize = new Size(460, 220);
+
+                var label = new Label
+                {
+                    Text = message,
+                    AutoSize = false,
+                    Location = new Point(20, 20),
+                    Size = new Size(420, 120),
+                    TextAlign = ContentAlignment.TopLeft
+                };
+                dialog.Controls.Add(label);
+
+                var yesButton = new Button
+                {
+                    Text = yesButtonText,
+                    Size = new Size(420, 32),
+                    Location = new Point(20, 150),
+                    DialogResult = DialogResult.Yes
+                };
+                dialog.Controls.Add(yesButton);
+
+                var noButton = new Button
+                {
+                    Text = noButtonText,
+                    Size = new Size(420, 32),
+                    Location = new Point(20, 186),
+                    DialogResult = DialogResult.No
+                };
+                dialog.Controls.Add(noButton);
+
+                dialog.AcceptButton = null; // no default - the user must deliberately click one
+                DialogResult chosen = dialog.ShowDialog(this);
+                tcs.SetResult(chosen == DialogResult.Yes);
+            }
+
+            return tcs.Task;
+        }
+
         private void ShowResult(bool success, string message, int mt4Count, int mt5Count)
+
         {
             progressBar.StopAnimating();
             runningPanel.Visible = false;

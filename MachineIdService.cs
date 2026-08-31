@@ -18,6 +18,7 @@ namespace NutriculaInstaller
         private static readonly object SyncRoot = new object();
         private static IntPtr dllHandle = IntPtr.Zero;
         private static GenerateMachineIdDelegate generateMachineId;
+        private static GenerateMachineIdDelegate generateMachineIdWithGuid;
         private static GetLastStatusDelegate getLastStatus;
         private static IsWineEnvironmentDelegate isWineEnvironment;
         private static GetLastPlatformProfileDelegate getLastPlatformProfile;
@@ -55,7 +56,34 @@ namespace NutriculaInstaller
         [DllImport("kernel32.dll", CharSet = CharSet.Ansi, ExactSpelling = true, SetLastError = true)]
         private static extern IntPtr GetProcAddress(IntPtr hModule, string lpProcName);
 
+        /// <summary>
+        /// Default/primary machine_id - excludes Machine GUID for physical
+        /// Windows (see NutriculaMachineId.cpp's Canonicalize comment for
+        /// the full reasoning). This is the identifier Premium
+        /// Signup/Transfer tries FIRST.
+        /// </summary>
         public static string GenerateComputerId()
+        {
+            return GenerateComputerIdImpl(generateMachineId);
+        }
+
+        /// <summary>
+        /// Secondary machine_id variant (2026 hardening) - includes Machine
+        /// GUID for physical Windows; byte-identical to GenerateComputerId()
+        /// on every other platform (WindowsVM/Linux always include their own
+        /// respective OS-instance-specific signal regardless; Mac is
+        /// unaffected either way) - see
+        /// Nutricula_GenerateMachineIdWithGuid's own comment in
+        /// NutriculaMachineId.cpp for the three situations this is used in
+        /// (Premium's fallback candidate, Free's sole identifier on
+        /// physical Windows, and the no-op case on every other platform).
+        /// </summary>
+        public static string GenerateComputerIdWithGuid()
+        {
+            return GenerateComputerIdImpl(generateMachineIdWithGuid);
+        }
+
+        private static string GenerateComputerIdImpl(GenerateMachineIdDelegate generator)
         {
             EnsureLoaded();
             IntPtr buffer = IntPtr.Zero;
@@ -63,7 +91,7 @@ namespace NutriculaInstaller
             {
                 buffer = Marshal.AllocHGlobal(MachineIdOutputCapacity);
                 for (int i = 0; i < MachineIdOutputCapacity; i++) Marshal.WriteByte(buffer, i, 0);
-                int result = generateMachineId(buffer, MachineIdOutputCapacity);
+                int result = generator(buffer, MachineIdOutputCapacity);
                 if (result != 1)
                 {
                     throw new MachineIdException("This computer's setup could not be completed.");
@@ -312,6 +340,7 @@ namespace NutriculaInstaller
                 if (dllHandle == IntPtr.Zero) throw new MachineIdException("A required internal component could not be loaded.");
 
                 generateMachineId = LoadDelegate<GenerateMachineIdDelegate>("Nutricula_GenerateMachineId");
+                generateMachineIdWithGuid = LoadDelegate<GenerateMachineIdDelegate>("Nutricula_GenerateMachineIdWithGuid");
                 getLastStatus = LoadDelegate<GetLastStatusDelegate>("Nutricula_GetLastStatus");
                 isWineEnvironment = LoadDelegate<IsWineEnvironmentDelegate>("Nutricula_IsWineEnvironment");
                 getLastPlatformProfile = LoadDelegate<GetLastPlatformProfileDelegate>("Nutricula_GetLastPlatformProfile");

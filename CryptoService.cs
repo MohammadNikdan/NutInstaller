@@ -14,7 +14,9 @@ namespace NutriculaInstaller
             string transferKey = null,
             string localIp = null,
             string devicePublicKey = null,
-            string platformProfile = null)
+            string platformProfile = null,
+            string machineIdAlt = null,
+            bool machineIdAltConfirmed = false)
         {
             if (string.IsNullOrEmpty(devicePublicKey))
                 throw new InvalidOperationException("Required information is missing.");
@@ -30,6 +32,16 @@ namespace NutriculaInstaller
 
             postData +=
                 "&machine_id=" + Uri.EscapeDataString(machineId ?? string.Empty);
+
+            // Secondary machine_id variant (2026 hardening) - see
+            // NutriculaMachineId.cpp's Nutricula_GenerateMachineIdWithGuid
+            // for the full reasoning. Omitted entirely for Free installs
+            // and anything that doesn't need it - the server treats an
+            // absent machine_id_alt as identical to machine_id.
+            if (!string.IsNullOrEmpty(machineIdAlt))
+                postData += "&machine_id_alt=" + Uri.EscapeDataString(machineIdAlt);
+            if (machineIdAltConfirmed)
+                postData += "&machine_id_alt_confirmed=1";
 
             if (!string.IsNullOrEmpty(localIp))
                 postData += "&local_ip=" + Uri.EscapeDataString(localIp);
