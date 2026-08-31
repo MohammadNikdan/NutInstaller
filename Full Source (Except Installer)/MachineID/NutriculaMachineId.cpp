@@ -946,54 +946,47 @@ static void AppendSignal(std::wstringstream& ss, const Signal& s) {
     ss << s.name << L"=" << (s.valid ? s.value : L"<MISSING>") << L"\n";
 }
 
-static std::wstring Canonicalize(const IdentityRecord& r) {
+static std::wstring Canonicalize(const IdentityRecord& r, bool includeMachineGuidForPhysical) {
     std::wstringstream ss;
 
     switch (r.platform) {
         case PlatformKind::WindowsPhysical: {
+            // Two variants exist for physical Windows (2026 hardening):
+            // the DEFAULT/primary variant (includeMachineGuidForPhysical=
+            // false) excludes Machine GUID, since Windows regenerates this
+            // value fresh on every clean OS reinstall - including it would
+            // make machine_id change on a reinstall even with every piece
+            // of actual hardware unchanged. The SECONDARY variant
+            // (includeMachineGuidForPhysical=true) is generated alongside
+            // the primary one and sent to the server too, so a customer
+            // whose primary-variant machine_id happens to already be tied
+            // to a different active license (extremely rare - would mean
+            // near-identical hardware signals on two different physical
+            // machines) still has a fallback identity to activate on,
+            // instead of being blocked outright. See
+            // Nutricula_GenerateMachineIdWithGuid's own comment.
             ss << L"PROFILE=WINDOWS\n";
-            // machineGuid is deliberately NOT included here (see the
-            // comment on its removal from WindowsVM below, which applies
-            // identically to physical Windows) - it still counts toward
-            // acceptance strength in HasAtLeastCoreIdentity, just not
-            // toward the hashed value itself.
             const Signal* signals[] = {
                 &r.systemUuid, &r.systemSerial, &r.baseboardSerial, &r.biosSerial,
                 &r.cpuId, &r.diskSerial,
                 &r.manufacturer, &r.family, &r.product, &r.sku
             };
             for (const Signal* s : signals) AppendSignal(ss, *s);
+            if (includeMachineGuidForPhysical) AppendSignal(ss, r.machineGuid);
             break;
         }
 
         case PlatformKind::WindowsVM: {
-            // Deliberately a DIFFERENT profile tag/version than
-            // WindowsPhysical, AND deliberately different from what this
-            // profile used to be (which folded in hostname/username/local
-            // IP - unstable and provided no real anti-cloning benefit, see
-            // the accompanying research notes). Any license activated
-            // under the OLD VM canonical format will need one-time
-            // re-activation after this change.
             ss << L"PROFILE=WINDOWS_VM\n";
-            // machineGuid (HKLM\SOFTWARE\Microsoft\Cryptography\MachineGuid)
-            // is deliberately EXCLUDED from the hashed value, even though it
-            // is still read and still counts toward acceptance strength in
-            // HasAtLeastCoreIdentity. Windows regenerates this GUID fresh on
-            // every clean OS install - it is a property of the CURRENT
-            // Windows installation, not of the underlying hardware, and is
-            // completely independent of which physical disk or partition
-            // Windows was reinstalled onto. Including its VALUE in the hash
-            // would mean any Windows reinstall - even onto the exact same
-            // drive, with every other hardware signal (System UUID, System
-            // Serial, Baseboard Serial, BIOS Serial, CPU ID, Disk Serial)
-            // completely unchanged - silently changes machine_id, forcing
-            // an unnecessary re-activation. This follows the same
-            // "no signal that can drift without the underlying hardware
-            // actually changing belongs in the hash" principle already
-            // applied to MAC addresses (see their removal notes above).
+            // Machine GUID is UNCONDITIONALLY part of the hash for VM/VPS
+            // (never a "primary/secondary" split like physical Windows
+            // above) - a VPS's Windows install being replaced/reinstalled
+            // is expected to invalidate the license (same reasoning as
+            // Linux below), and VPS IP-Binding already provides the
+            // primary anti-clone protection here regardless.
             const Signal* signals[] = {
                 &r.systemUuid, &r.systemSerial, &r.baseboardSerial, &r.biosSerial,
-                &r.cpuId, &r.diskSerial,
+                &r.cpuId, &r.diskSerial, &r.machineGuid,
                 &r.manufacturer, &r.family, &r.product, &r.sku
             };
             for (const Signal* s : signals) AppendSignal(ss, *s);
@@ -1014,27 +1007,14 @@ static std::wstring Canonicalize(const IdentityRecord& r) {
 
         case PlatformKind::WineLinux: {
             ss << L"PROFILE=LINUX_WINE\n";
-            // Unlike Windows (which has ~10 independent hardware signals
-            // remaining even after excluding its OS-instance-specific
-            // Machine GUID), Linux has only ONE other meaningfully unique
-            // signal at all: linuxProductUuid - and it is very often
-            // unavailable (root-only, or absent entirely in containers -
-            // see HasAtLeastCoreIdentity's own comment above).
-            // linuxBoardVendor is explicitly NOT unique (identical across
-            // every VM under the same hypervisor - same reasoning as its
-            // exclusion from acceptance above) and cloudInstanceId is empty
-            // on any non-cloud system. So linuxMachineId can only be safely
-            // excluded from the hash when product_uuid is ALSO genuinely
-            // available to take over as the stable signal - for the many
-            // real-world non-root, non-cloud Linux installs where
-            // product_uuid is not available at all, machine-id remains the
-            // only signal with any real uniqueness, so it stays in the
-            // hash for them (accepting that a fresh distro reinstall will
-            // change their machine_id - unavoidable there without leaving
-            // those installs with no unique signal at all).
-            if (!r.linuxProductUuid.valid) {
-                AppendSignal(ss, r.linuxMachineId);
-            }
+            // linuxMachineId is UNCONDITIONALLY part of the hash - always,
+            // no exceptions, regardless of whether product_uuid is also
+            // available. A fresh Linux distro reinstall is expected to
+            // change machine_id and therefore invalidate the license on
+            // this platform - the Installer always warns about this
+            // before Signup/Transfer proceeds (see the confirmation
+            // dialog flow), same reasoning as VPS above.
+            AppendSignal(ss, r.linuxMachineId);
             AppendSignal(ss, r.linuxProductUuid);
             // linuxPrimaryMac removed - see field declaration comment.
             AppendSignal(ss, r.linuxBoardVendor);
@@ -1483,7 +1463,18 @@ static IdentityRecord CollectIdentity(bool* wmiOk) {
 
 } // anonymous namespace
 
-NUTRICULA_API int __cdecl Nutricula_GenerateMachineId(char* output, int outputCapacity) {
+namespace {
+
+// Shared implementation for both Nutricula_GenerateMachineId (default,
+// excludes Machine GUID for physical Windows) and
+// Nutricula_GenerateMachineIdWithGuid (includes it) - see
+// Canonicalize's own comment for why this split exists only for physical
+// Windows; every other platform's canonical is completely unaffected by
+// this parameter (WindowsVM always includes Machine GUID regardless,
+// Linux always includes linuxMachineId regardless, Mac is unaffected
+// either way), so both exports return byte-identical results there.
+int GenerateMachineIdImpl(char* output, int outputCapacity, bool includeMachineGuidForPhysical)
+{
     g_lastStatus = 0;
     g_lastPlatformProfile.clear();
     if (!output || outputCapacity < 65) { g_lastStatus = 4; return -1; }
@@ -1492,11 +1483,6 @@ NUTRICULA_API int __cdecl Nutricula_GenerateMachineId(char* output, int outputCa
     IdentityRecord r;
     bool collected = false;
 
-    // REPLACED: GenerateWineHostMachineId() used to produce a random,
-    // file-persisted seed with no connection to real hardware at all - the
-    // exact "weak/generic ID" problem being fixed. Now uses real,
-    // multi-signal hardware/cloud identity collection specific to the
-    // detected host OS, matching the same rigor as the Windows WMI path.
     if (IsWine()) {
         std::string hostOs = DetectWineHostOS();
         if (hostOs == "Darwin") {
@@ -1504,9 +1490,6 @@ NUTRICULA_API int __cdecl Nutricula_GenerateMachineId(char* output, int outputCa
         } else if (hostOs == "Linux") {
             r = CollectLinuxIdentity(&collected);
         } else {
-            // Host OS could not be determined - no safe platform-specific
-            // path to fall back to; treated as insufficient identity data
-            // rather than guessing.
             g_lastStatus = 2;
             return -2;
         }
@@ -1520,7 +1503,7 @@ NUTRICULA_API int __cdecl Nutricula_GenerateMachineId(char* output, int outputCa
     if (!collected) { g_lastStatus = 2; return -2; }
     if (!HasAtLeastCoreIdentity(r)) { g_lastStatus = 1; return 0; }
 
-    std::wstring canonical = Canonicalize(r);
+    std::wstring canonical = Canonicalize(r, includeMachineGuidForPhysical);
     std::string utf8 = ToUtf8(canonical);
     if (utf8.empty()) { g_lastStatus = 3; return -2; }
 
@@ -1543,6 +1526,41 @@ NUTRICULA_API int __cdecl Nutricula_GenerateMachineId(char* output, int outputCa
     }
 
     return 1;
+}
+
+} // anonymous namespace
+
+// Default/primary machine_id - excludes Machine GUID for physical Windows
+// (see Canonicalize's comment). This is the identifier the Installer
+// tries FIRST for Signup/Transfer on physical Windows, and the one Free
+// installs on WindowsVM/Linux/Mac always use (Free on physical Windows
+// specifically uses the WithGuid variant instead - see its own comment).
+NUTRICULA_API int __cdecl Nutricula_GenerateMachineId(char* output, int outputCapacity) {
+    return GenerateMachineIdImpl(output, outputCapacity, false);
+}
+
+// Secondary machine_id variant (2026 hardening) - includes Machine GUID
+// for physical Windows. Used in three situations:
+//   1. Premium Signup/Transfer/Verify/Re-signup on physical Windows always
+//      generate and send BOTH this AND the default variant together (see
+//      InstallerService.cs/CoordinatorCore.cpp) - the server tries the
+//      default first, falling back to this one (with the user's explicit
+//      confirmation via a dialog) only if the default already collides
+//      with a different active license.
+//   2. Free installs on physical Windows use ONLY this variant (not the
+//      default) - Free's machine_id exists purely for check-in
+//      statistics, never gates activation, so there is no reason to
+//      prefer the "no GUID" stability property there; using the same
+//      variant Premium eventually falls back to keeps the two paths
+//      simpler to reason about together.
+//   3. Every platform OTHER than physical Windows: byte-identical to
+//      Nutricula_GenerateMachineId (WindowsVM/Linux always include their
+//      own respective OS-instance-specific signal regardless; Mac is
+//      unaffected either way) - callers do not need to special-case which
+//      platform they are on before deciding whether to call this or the
+//      default export.
+NUTRICULA_API int __cdecl Nutricula_GenerateMachineIdWithGuid(char* output, int outputCapacity) {
+    return GenerateMachineIdImpl(output, outputCapacity, true);
 }
 
 NUTRICULA_API int __cdecl Nutricula_GetLastStatus() {

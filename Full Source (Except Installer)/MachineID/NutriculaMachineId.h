@@ -11,6 +11,11 @@ extern "C" {
 #endif
 
 NUTRICULA_API int __cdecl Nutricula_GenerateMachineId(char* output, int outputCapacity);
+// Secondary machine_id variant (includes Machine GUID for physical
+// Windows) - see its own implementation comment in NutriculaMachineId.cpp
+// for the full explanation of when to use this vs. the default export
+// above.
+NUTRICULA_API int __cdecl Nutricula_GenerateMachineIdWithGuid(char* output, int outputCapacity);
 NUTRICULA_API int __cdecl Nutricula_GetLastStatus();
 NUTRICULA_API int __cdecl Nutricula_IsWineEnvironment();
 // Nutricula_ProtectPayloadGcm/UnprotectPayloadGcm - RESTORED, actively
