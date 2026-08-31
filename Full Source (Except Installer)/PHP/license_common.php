@@ -393,27 +393,72 @@ function nutricula_log_activity(mysqli $conn, int $licenseDbId, string $machineI
 }
 
 /**
- * Statistics only - records that this (machine_id, device_public_key_hash)
- * pair checked in without having a license. Purely additive/informational:
- * deliberately never throws, so a failure here can never interfere with the
- * actual license_not_found response the caller is about to send.
+ * Statistics only - records that this computer checked in without having a
+ * license, identified by machine_id and/or device_public_key_hash. At least
+ * one of the two must be non-empty (enforced by the caller); either one
+ * ALONE is sufficient to recognize a returning computer across check-ins -
+ * a free install's machine_id can genuinely fail to generate on some
+ * systems, in which case the device key is the only identifier available.
+ * Deliberately never throws: a failure here can never interfere with the
+ * actual response the caller is about to send.
  */
-function nutricula_track_unlicensed_checkin(mysqli $conn, string $machineId, string $deviceKeyHash): void
+function nutricula_track_unlicensed_checkin(mysqli $conn, ?string $machineId, ?string $deviceKeyHash): void
 {
+    $machineId = ($machineId !== null && $machineId !== '') ? $machineId : null;
+    $deviceKeyHash = ($deviceKeyHash !== null && $deviceKeyHash !== '') ? $deviceKeyHash : null;
+    if ($machineId === null && $deviceKeyHash === null) return; // nothing to identify this computer by
+
     try {
+        // Look for an existing row by whichever identifier is available -
+        // machine_id first (more stable across device-key resets), then
+        // device_key_hash. Either match is treated as "this same computer".
+        $existingId = null;
+        if ($machineId !== null) {
+            $stmt = $conn->prepare('SELECT id, device_public_key_hash FROM nutricula_unlicensed_checkins WHERE machine_id = ? LIMIT 1');
+            $stmt->bind_param('s', $machineId);
+            $stmt->execute();
+            $row = $stmt->get_result()->fetch_assoc();
+            $stmt->close();
+            if ($row) $existingId = (int)$row['id'];
+        }
+        if ($existingId === null && $deviceKeyHash !== null) {
+            $stmt = $conn->prepare('SELECT id FROM nutricula_unlicensed_checkins WHERE device_public_key_hash = ? LIMIT 1');
+            $stmt->bind_param('s', $deviceKeyHash);
+            $stmt->execute();
+            $row = $stmt->get_result()->fetch_assoc();
+            $stmt->close();
+            if ($row) $existingId = (int)$row['id'];
+        }
+
+        if ($existingId !== null) {
+            // Touch last_seen_at, and opportunistically fill in whichever
+            // identifier was previously missing (e.g. machine_id becomes
+            // available on a later check-in after initially failing).
+            $stmt = $conn->prepare(
+                'UPDATE nutricula_unlicensed_checkins
+                 SET last_seen_at = NOW(),
+                     machine_id = COALESCE(machine_id, ?),
+                     device_public_key_hash = COALESCE(device_public_key_hash, ?)
+                 WHERE id = ?'
+            );
+            $stmt->bind_param('ssi', $machineId, $deviceKeyHash, $existingId);
+            $stmt->execute();
+            $stmt->close();
+            return;
+        }
+
         $stmt = $conn->prepare(
             'INSERT INTO nutricula_unlicensed_checkins
              (machine_id, device_public_key_hash, first_seen_at, last_seen_at)
-             VALUES (?, ?, NOW(), NOW())
-             ON DUPLICATE KEY UPDATE last_seen_at = NOW()'
+             VALUES (?, ?, NOW(), NOW())'
         );
-        if (!$stmt) {
-            error_log('[Nutricula unlicensed tracking] prepare failed');
-            return;
-        }
         $stmt->bind_param('ss', $machineId, $deviceKeyHash);
         if (!$stmt->execute()) {
-            error_log('[Nutricula unlicensed tracking] insert/update failed');
+            // Benign race: another concurrent check-in from the same
+            // computer inserted first - not an error worth logging.
+            if ($conn->errno !== 1062) {
+                error_log('[Nutricula unlicensed tracking] insert failed: ' . $conn->error);
+            }
         }
         $stmt->close();
     } catch (Throwable $e) {

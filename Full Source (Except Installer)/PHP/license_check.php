@@ -109,15 +109,29 @@ try {
                 throw new RuntimeException('Field not valid for this stage: ' . $key);
             }
         }
-        $checkinMachineId = strtoupper(trim(nutricula_required_field($fields, 'machine_id')));
-        $checkinDeviceKeyHash = strtoupper(trim(nutricula_required_field($fields, 'device_key_hash')));
-        if (!preg_match('/\A[0-9A-F]{64}\z/', $checkinMachineId)) throw new RuntimeException('Invalid machine ID.');
-        if (!preg_match('/\A[0-9A-F]{64}\z/', $checkinDeviceKeyHash)) throw new RuntimeException('Invalid device key hash.');
+        // Both optional here (unlike verify) - a free install's machine_id
+        // can genuinely fail to generate on some systems (see
+        // NutriculaMachineId's own acceptance logic); the device key alone
+        // is then sufficient to recognize this computer across check-ins.
+        // At least one of the two must be present and validly formatted.
+        $rawMachineId = isset($fields['machine_id']) ? strtoupper(trim($fields['machine_id'])) : '';
+        $rawDeviceKeyHash = isset($fields['device_key_hash']) ? strtoupper(trim($fields['device_key_hash'])) : '';
+        $checkinMachineId = ($rawMachineId !== '') ? $rawMachineId : null;
+        $checkinDeviceKeyHash = ($rawDeviceKeyHash !== '') ? $rawDeviceKeyHash : null;
+        if ($checkinMachineId === null && $checkinDeviceKeyHash === null) {
+            throw new RuntimeException('At least one of machine_id or device_key_hash is required.');
+        }
+        if ($checkinMachineId !== null && !preg_match('/\A[0-9A-F]{64}\z/', $checkinMachineId)) {
+            throw new RuntimeException('Invalid machine ID.');
+        }
+        if ($checkinDeviceKeyHash !== null && !preg_match('/\A[0-9A-F]{64}\z/', $checkinDeviceKeyHash)) {
+            throw new RuntimeException('Invalid device key hash.');
+        }
 
         /* Same per-IP rate limit machinery already used elsewhere in this
            file (e.g. the challenge stage below) - a single install pinging
-           every ~10 minutes is completely normal and unaffected, while
-           someone scripting rapid-fire fake check-ins to inflate the
+           roughly every 30 minutes is completely normal and unaffected,
+           while someone scripting rapid-fire fake check-ins to inflate the
            free-tier count gets throttled the same way any other endpoint
            here already throttles abuse. */
         $conn = nutricula_db($config);

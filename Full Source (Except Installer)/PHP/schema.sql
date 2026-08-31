@@ -143,12 +143,21 @@ CREATE TABLE nutricula_license_activity (
    any "active in the last N days" query naturally - no cleanup needed. */
 CREATE TABLE nutricula_unlicensed_checkins (
     id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-    machine_id CHAR(64) NOT NULL,
-    device_public_key_hash CHAR(64) NOT NULL,
+    /* Both nullable, but at least one is always present (enforced in PHP,
+       not in schema) - a free install's machine_id can genuinely fail to
+       generate on some systems, in which case device_public_key_hash alone
+       is sufficient to recognize this computer across check-ins. Each gets
+       its OWN unique key (not a combined one) so that either value alone
+       can identify an existing row - MySQL does not enforce uniqueness
+       among NULLs, so many rows can share machine_id=NULL (or
+       device_public_key_hash=NULL) without conflict. */
+    machine_id CHAR(64) NULL,
+    device_public_key_hash CHAR(64) NULL,
     first_seen_at DATETIME NOT NULL,
     last_seen_at DATETIME NOT NULL,
     PRIMARY KEY (id),
-    UNIQUE KEY uq_machine_device (machine_id, device_public_key_hash),
+    UNIQUE KEY uq_checkin_machine_id (machine_id),
+    UNIQUE KEY uq_checkin_device_hash (device_public_key_hash),
     KEY idx_last_seen (last_seen_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
