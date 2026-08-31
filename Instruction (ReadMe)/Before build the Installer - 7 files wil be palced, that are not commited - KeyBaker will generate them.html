@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>فایل‌های auto-generated توسط KeyBaker</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Vazirmatn:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap');
+:root{
+  --bg:#0d1117; --bg-card:#161d27; --border:#26303c; --border-soft:#1c242e;
+  --text:#e6edf3; --text-dim:#8b98a5; --text-faint:#5c6773;
+  --accent:#5fb3a3; --accent-soft:#5fb3a333; --accent-bright:#7fd4c4;
+  --warn:#e0a458; --warn-soft:#e0a45822;
+  --danger:#e2685f; --danger-soft:#e2685f1c;
+  --mono:'JetBrains Mono',monospace; --sans:'Vazirmatn',sans-serif;
+}
+*{box-sizing:border-box;margin:0;padding:0;}
+body{font-family:var(--sans);background:var(--bg);color:var(--text);line-height:1.85;font-size:16px;}
+.main{max-width:980px;margin:0 auto;padding:56px 32px;}
+.hero-eyebrow{font-family:var(--mono);color:var(--accent);font-size:13px;letter-spacing:.1em;text-transform:uppercase;margin-bottom:14px;font-weight:600;}
+h1{font-size:30px;font-weight:800;margin-bottom:14px;letter-spacing:-.01em;}
+h2{font-size:21px;font-weight:700;margin:36px 0 12px;}
+.hero p{color:var(--text-dim);font-size:16px;margin-bottom:24px;max-width:760px;}
+.callout{border-radius:10px;padding:16px 20px;margin:18px 0;font-size:14.5px;border:1px solid;}
+.callout.info{background:var(--accent-soft);border-color:#5fb3a355;color:#a8d9cd;}
+.callout.warn{background:var(--warn-soft);border-color:#e0a45855;color:#f0c896;}
+.callout.danger{background:var(--danger-soft);border-color:#e2685f55;color:#f0a49c;}
+.callout b{color:inherit;}
+hr{border:none;border-top:1px solid var(--border);margin:40px 0;}
+code.inline{font-family:var(--mono);background:var(--bg);padding:2px 7px;border-radius:5px;font-size:13px;color:var(--accent-bright);border:1px solid var(--border-soft);}
+pre{background:#0a0e14;border:1px solid var(--border);border-radius:10px;padding:18px 20px;overflow-x:auto;margin:14px 0;font-size:13px;font-family:var(--mono);color:#c9d1d9;line-height:1.7;direction:ltr;text-align:left;}
+pre .n1{color:var(--accent-bright);}
+pre .n2{color:var(--warn);}
+
+.file-card{background:var(--bg-card);border:1px solid var(--border);border-radius:12px;padding:22px 26px;margin-bottom:18px;border-right:4px solid var(--accent);}
+.file-card .num{display:inline-block;font-family:var(--mono);font-size:12px;background:var(--accent-soft);color:var(--accent-bright);padding:2px 9px;border-radius:20px;font-weight:700;margin-left:8px;}
+.file-card h3{font-family:var(--mono);font-size:16px;color:var(--text);margin-bottom:10px;word-break:break-all;}
+.path-row{display:flex;gap:10px;margin:6px 0;font-size:13.5px;align-items:baseline;}
+.path-row .label{flex:0 0 110px;color:var(--text-faint);font-family:var(--mono);font-size:11px;text-transform:uppercase;letter-spacing:.03em;padding-top:2px;}
+.path-row .val{color:var(--text-dim);font-family:var(--mono);font-size:13px;word-break:break-all;}
+.path-row .val b{color:var(--accent-bright);}
+
+.tree{background:var(--bg-card);border:1px solid var(--border);border-radius:10px;padding:20px 24px;font-family:var(--mono);font-size:13px;color:var(--text-dim);white-space:pre;overflow-x:auto;line-height:1.75;direction:ltr;text-align:left;margin:16px 0;}
+.tree .gen{color:var(--warn);}
+.tree .src{color:var(--text-faint);}
+</style>
+</head>
+<body>
+<div class="main">
+
+<div class="hero-eyebrow">مرجع کامل — فایل‌های Auto-Generated توسط KeyBaker.exe</div>
+<h1>این ۷ فایل، عمداً از کامیت‌ها حذف شده‌اند</h1>
+<p>این ۷ فایل هرگز مستقیم در ریپو نگه‌داری نمی‌شوند — چون <code class="inline">KeyBaker.exe</code> آن‌ها را مستقیماً از روی فایل‌های خام <code class="inline">Keys/*.pem</code> و <code class="inline">Keys/TransportKey.txt</code> می‌سازد. نگه‌داشتن نسخهٔ قدیمی این فایل‌ها در ریپو ریسک دارد (ممکن است با کلید واقعی فعلی هماهنگ نباشد) و کاملاً زائد است.</p>
+
+<div class="callout danger"><b>پیش از هر build، این ۷ فایل باید سر جای خودشان (دقیقاً مسیرهایی که در ادامه آمده) وجود داشته باشند</b> — در غیر این صورت کامپایل با خطای <code class="inline">file not found</code> شکست می‌خورد. راه ساخت آن‌ها: اجرای <code class="inline">KeyBaker.exe</code> (به بخش «چطور بسازیمشان» در پایین این صفحه مراجعه کنید).</div>
+
+<hr>
+
+<h2>۱. Vendor Signing Key — نسخهٔ عمومی (C++‎)</h2>
+<div class="file-card">
+<h3>VendorSigningKey_Public_Generated.h</h3>
+<div class="path-row"><span class="label">مسیر کامل</span><span class="val">Full Source (Except Installer)/<b>Coordinator</b>/VendorSigningKey_Public_Generated.h</span></div>
+<div class="path-row"><span class="label">ساخته از</span><span class="val">Keys/VendorSigningKey_Public.pem</span></div>
+<div class="path-row"><span class="label">مصرف‌کننده</span><span class="val">Coordinator (Service/Broker) و NutriculaSignTool.exe</span></div>
+</div>
+
+<h2>۲. Vendor Signing Key — نسخهٔ خصوصی (C++‎)</h2>
+<div class="file-card">
+<h3>VendorSigningKey_Private_Generated.h</h3>
+<div class="path-row"><span class="label">مسیر کامل</span><span class="val">Full Source (Except Installer)/<b>Coordinator</b>/VendorSigningKey_Private_Generated.h</span></div>
+<div class="path-row"><span class="label">ساخته از</span><span class="val">Keys/VendorSigningKey_Private.pem</span></div>
+<div class="path-row"><span class="label">مصرف‌کننده</span><span class="val">فقط NutriculaSignTool.exe و NutriculaSignInstaller.exe (این دو تنها ابزاری هستند که کلید خصوصی Vendor را لازم دارند)</span></div>
+</div>
+
+<h2>۳. Coordinator/IPC Identity Key — نسخهٔ عمومی (C++‎)</h2>
+<div class="file-card">
+<h3>CoordinatorIdentityKey_Public_Generated.h</h3>
+<div class="path-row"><span class="label">مسیر کامل</span><span class="val">Full Source (Except Installer)/<b>Coordinator</b>/CoordinatorIdentityKey_Public_Generated.h</span></div>
+<div class="path-row"><span class="label">ساخته از</span><span class="val">Keys/CoordinatorIdentityKey_Public.pem</span></div>
+<div class="path-row"><span class="label">مصرف‌کننده</span><span class="val">هم Coordinator هم DLL نازک (احراز هویت متقابل روی Named Pipe)</span></div>
+</div>
+
+<h2>۴. Coordinator/IPC Identity Key — نسخهٔ خصوصی (C++‎)</h2>
+<div class="file-card">
+<h3>CoordinatorIdentityKey_Private_Generated.h</h3>
+<div class="path-row"><span class="label">مسیر کامل</span><span class="val">Full Source (Except Installer)/<b>Coordinator</b>/CoordinatorIdentityKey_Private_Generated.h</span></div>
+<div class="path-row"><span class="label">ساخته از</span><span class="val">Keys/CoordinatorIdentityKey_Private.pem</span></div>
+<div class="path-row"><span class="label">مصرف‌کننده</span><span class="val">Coordinator (Service/Broker) — واقعاً داخل باینری توزیعی کامپایل می‌شود</span></div>
+</div>
+
+<h2>۵. Server License Signing Key — نسخهٔ عمومی (C++‎)</h2>
+<div class="file-card">
+<h3>ServerLicenseSigningKey_Public_Generated.h</h3>
+<div class="path-row"><span class="label">مسیر کامل</span><span class="val">Full Source (Except Installer)/<b>LicenseCheck</b>/ServerLicenseSigningKey_Public_Generated.h</span></div>
+<div class="path-row"><span class="label">ساخته از</span><span class="val">Keys/ServerLicenseSigningKey_Public.pem</span></div>
+<div class="path-row"><span class="label">مصرف‌کننده</span><span class="val">DLL نازک و هر ۴ باینری Coordinator (تأیید امضای Lease دریافتی از سرور)</span></div>
+</div>
+
+<h2>۶. Transport Key (C++‎)</h2>
+<div class="file-card">
+<h3>TransportKey_Generated.h</h3>
+<div class="path-row"><span class="label">مسیر کامل</span><span class="val">Full Source (Except Installer)/<b>LicenseCheck</b>/TransportKey_Generated.h</span></div>
+<div class="path-row"><span class="label">ساخته از</span><span class="val">Keys/TransportKey.txt (نه یک PEM — یک رشتهٔ هگز ۶۴ کاراکتری خام)</span></div>
+<div class="path-row"><span class="label">مصرف‌کننده</span><span class="val">Coordinator و MachineId32/64.dll (رمزنگاری AES-256-GCM کانال ارتباطی)</span></div>
+</div>
+
+<h2>۷. Vendor Signing Key — نسخهٔ عمومی (C#‎‏، برای Installer)</h2>
+<div class="file-card">
+<h3>VendorPublicKeyEmbedded.cs</h3>
+<div class="path-row"><span class="label">مسیر کامل</span><span class="val"><b>ریشهٔ مخزن</b> (کنار InstallerService.cs، Program.cs — نه داخل «Full Source (Except Installer)»)</span></div>
+<div class="path-row"><span class="label">ساخته از</span><span class="val">Keys/VendorSigningKey_Public.pem (همان فایل شمارهٔ ۱، فقط این‌بار برای C#‎)</span></div>
+<div class="path-row"><span class="label">مصرف‌کننده</span><span class="val">SelfIntegrityCheck.cs در پروژهٔ Installer (چک خودتمامیتی Installer.exe)</span></div>
+</div>
+
+<div class="callout warn"><b>چرا کلید Vendor دو فایل خروجی جدا دارد (۱ و ۷)؟</b> چون Coordinator با C++‎ نوشته شده و Installer با C#‎ — هرکدام فرمت متفاوتی از همان کلید را لازم دارند (رشتهٔ PEM برای C++‎، آرایهٔ بایت خام X/Y برای C#‎). هردو از دقیقاً همان <code class="inline">VendorSigningKey_Public.pem</code> ساخته می‌شوند.</div>
+
+<hr>
+
+<h2>نمای کلی — همه‌چیز در یک نگاه</h2>
+<div class="tree">NutInstaller\  (ریشهٔ مخزن)
+├── InstallerService.cs, Program.cs, ...
+├── <span class="gen">VendorPublicKeyEmbedded.cs                              ← فایل ۷ (اینجا ساخته می‌شود)</span>
+└── Full Source (Except Installer)\
+    ├── Keys\
+    │   ├── VendorSigningKey_Public.pem                    <span class="src">← منبع فایل‌های ۱ و ۷</span>
+    │   ├── VendorSigningKey_Private.pem                   <span class="src">← منبع فایل ۲</span>
+    │   ├── CoordinatorIdentityKey_Public.pem               <span class="src">← منبع فایل ۳</span>
+    │   ├── CoordinatorIdentityKey_Private.pem              <span class="src">← منبع فایل ۴</span>
+    │   ├── ServerLicenseSigningKey_Public.pem              <span class="src">← منبع فایل ۵</span>
+    │   ├── TransportKey.txt                                <span class="src">← منبع فایل ۶</span>
+    │   └── KeyBaker.exe
+    ├── Coordinator\
+    │   ├── <span class="gen">VendorSigningKey_Public_Generated.h                  ← فایل ۱</span>
+    │   ├── <span class="gen">VendorSigningKey_Private_Generated.h                 ← فایل ۲</span>
+    │   ├── <span class="gen">CoordinatorIdentityKey_Public_Generated.h            ← فایل ۳</span>
+    │   └── <span class="gen">CoordinatorIdentityKey_Private_Generated.h           ← فایل ۴</span>
+    └── LicenseCheck\
+        ├── <span class="gen">ServerLicenseSigningKey_Public_Generated.h           ← فایل ۵</span>
+        └── <span class="gen">TransportKey_Generated.h                            ← فایل ۶</span></div>
+
+<hr>
+
+<h2>چطور همهٔ این ۷ فایل را یک‌جا بسازیم؟</h2>
+<p style="color:var(--text-dim);margin-bottom:12px;">فقط یک دستور — اجرای <code class="inline">KeyBaker.exe</code> با مسیر پوشهٔ <code class="inline">Keys</code>:</p>
+<pre><span class="n1">KeyBaker.exe</span> <span class="n2">"C:\path\to\Full Source (Except Installer)\Keys"</span></pre>
+<p style="color:var(--text-dim);margin:12px 0;">اگر موفق باشد، دقیقاً همین ۷ خط را می‌بینید:</p>
+<pre>OK: VendorSigningKey_Public.pem -> ../Coordinator/VendorSigningKey_Public_Generated.h
+OK: VendorSigningKey_Private.pem -> ../Coordinator/VendorSigningKey_Private_Generated.h
+OK: CoordinatorIdentityKey_Public.pem -> ../Coordinator/CoordinatorIdentityKey_Public_Generated.h
+OK: CoordinatorIdentityKey_Private.pem -> ../Coordinator/CoordinatorIdentityKey_Private_Generated.h
+OK: ServerLicenseSigningKey_Public.pem -> ../LicenseCheck/ServerLicenseSigningKey_Public_Generated.h
+OK: TransportKey.txt -> ../LicenseCheck/TransportKey_Generated.h
+OK: VendorSigningKey_Public.pem -> ../../VendorPublicKeyEmbedded.cs (Installer self-integrity check)
+
+KeyBaker: all keys baked successfully.</pre>
+
+<div class="callout info">هر ۹ فایل <code class="inline">build_*.bat</code> در پوشهٔ <code class="inline">Builders</code> از قبل، در همان اولین قدم خودشان، <code class="inline">KeyBaker.exe</code> را صدا می‌زنند — یعنی اگر همیشه از این batch fileها برای build استفاده می‌کنید، معمولاً نیازی نیست خودتان جداگانه KeyBaker را اجرا کنید. اجرای دستی آن فقط برای مواقعی لازم است که بخواهید بدون build کامل، فقط این ۷ فایل ساخته شوند (مثلاً همین سناریوی شما: بعد از clone کردن ریپو).</div>
+
+</div>
+</body>
+</html>
