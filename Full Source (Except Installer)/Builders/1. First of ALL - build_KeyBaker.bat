@@ -16,6 +16,7 @@ if not exist %GPP64% (
 
 %GPP64% -D_WIN32_WINNT=0x0601 -std=c++17 -O2 -static-libgcc -static-libstdc++ ^
     ..\Coordinator\KeyBaker.cpp ^
+    -lcrypt32 ^
     -o ..\Keys\KeyBaker.exe
 
 if %ERRORLEVEL% NEQ 0 (
