@@ -10,7 +10,7 @@ require_once __DIR__ . '/license_common.php';
    separately right after 'stage' is known, so a verify-only field (e.g.
    signature) appearing in a challenge request is still rejected. */
 const CHECK_ALLOWED_FIELDS = [
-    'v', 'stage', 'license_id', 'machine_id', 'device_key_hash', 'local_ip',
+    'v', 'stage', 'license_id', 'machine_id', 'machine_id_alt', 'device_key_hash', 'local_ip',
     'challenge_id', 'signature', 'build_id', 'ex5_hash', 'ex4_hash', 'dll32_hash', 'dll64_hash', 'service_hash', 'broker_hash',
     'refresh_token',
 ];
