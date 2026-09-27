@@ -80,19 +80,19 @@ jobs:
           $yCsv = ($y | ForEach-Object { [int]$_ }) -join ","
 
           $outPath = "VendorPublicKeyEmbedded.cs"
-          $content = @"
-// AUTO-GENERATED at build time by .github/workflows/build.yml from VendorSigningKey_Public.pem - do not edit by hand or commit.
-// Regenerated on every build; rotate the vendor key pair by replacing Keys\VendorSigningKey_Public.pem.
-namespace NutriculaInstaller
-{
-    internal static class VendorPublicKeyEmbedded
-    {
-        public static readonly byte[] X = { $xCsv };
-        public static readonly byte[] Y = { $yCsv };
-    }
-}
-"@
-          Set-Content -LiteralPath $outPath -Value $content -NoNewline -Encoding utf8
+          $lines = @(
+            "// AUTO-GENERATED at build time by .github/workflows/build.yml from VendorSigningKey_Public.pem - do not edit by hand or commit.",
+            "// Regenerated on every build; rotate the vendor key pair by replacing Keys\VendorSigningKey_Public.pem.",
+            "namespace NutriculaInstaller",
+            "{",
+            "    internal static class VendorPublicKeyEmbedded",
+            "    {",
+            "        public static readonly byte[] X = { $xCsv };",
+            "        public static readonly byte[] Y = { $yCsv };",
+            "    }",
+            "}"
+          )
+          Set-Content -LiteralPath $outPath -Value $lines -Encoding utf8
           Write-Host "Generated $outPath from $pemPath (P-256, verified 32/32-byte X/Y)."
 
       - name: Verify required installer files
