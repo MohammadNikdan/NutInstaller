@@ -19,6 +19,82 @@ jobs:
       - name: Checkout source
         uses: actions/checkout@v4
 
+      - name: Generate VendorPublicKeyEmbedded.cs from the vendor public key
+        shell: pwsh
+        run: |
+          # NutriculaInstaller.csproj compiles VendorPublicKeyEmbedded.cs
+          # (consumed by SelfIntegrityCheck.cs, the Installer's own
+          # anti-tamper check) but that file is never committed - it is
+          # regenerated fresh on every build, right here, from ONLY
+          # Keys/VendorSigningKey_Public.pem.
+          #
+          # That file is a PUBLIC key, not a secret, and is already
+          # committed for real in this repo. This step reads nothing else
+          # from Keys/ - none of the 3 real private keys or the transport
+          # key are touched, read, or needed here. No GitHub Secret is
+          # required and no private key material is ever involved in this
+          # workflow. KeyBaker.exe / KeyBaker.cpp and the *_Generated.h
+          # headers it produces (which DO need the private keys) are
+          # completely separate from this step and are left untouched.
+          #
+          # SelfIntegrityCheck.cs hard-codes BCRYPT_ECDSA_PUBLIC_P256_MAGIC
+          # and expects 32-byte X/Y - i.e. the vendor key MUST be a genuine
+          # P-256 (secp256r1/prime256v1) key. This step fails the build
+          # loudly if it is not, instead of silently baking in garbage
+          # coordinates that would only surface as a self-integrity
+          # failure at runtime on a customer's machine.
+          $pemPath = "Full Source (Except Installer)\Keys\VendorSigningKey_Public.pem"
+          if (-not (Test-Path -LiteralPath $pemPath -PathType Leaf)) {
+            Write-Error "Vendor public key not found at $pemPath"
+            exit 1
+          }
+          $pem = Get-Content -Raw -LiteralPath $pemPath
+          if ($pem -notmatch 'BEGIN PUBLIC KEY') {
+            Write-Error "$pemPath does not look like a PEM public key (no BEGIN PUBLIC KEY marker)."
+            exit 1
+          }
+
+          $ecdsa = [System.Security.Cryptography.ECDsa]::Create()
+          try {
+            $ecdsa.ImportFromPem($pem)
+          } catch {
+            Write-Error "Failed to parse $pemPath as an EC public key: $_"
+            exit 1
+          }
+
+          $parameters = $ecdsa.ExportParameters($false)
+          $curveOid = $parameters.Curve.Oid.Value
+          if ($curveOid -ne "1.2.840.10045.3.1.7") {
+            Write-Error "Vendor public key at $pemPath is not on curve P-256 (nistP256/prime256v1) - found OID $curveOid. SelfIntegrityCheck.cs only supports P-256; replace the key with a genuine P-256 key pair before building."
+            exit 1
+          }
+
+          $x = $parameters.Q.X
+          $y = $parameters.Q.Y
+          if ($x.Length -ne 32 -or $y.Length -ne 32) {
+            Write-Error "Unexpected coordinate size for vendor public key: X=$($x.Length) bytes, Y=$($y.Length) bytes (expected 32/32 for P-256)."
+            exit 1
+          }
+
+          $xCsv = ($x | ForEach-Object { [int]$_ }) -join ","
+          $yCsv = ($y | ForEach-Object { [int]$_ }) -join ","
+
+          $outPath = "VendorPublicKeyEmbedded.cs"
+          $content = @"
+// AUTO-GENERATED at build time by .github/workflows/build.yml from VendorSigningKey_Public.pem - do not edit by hand or commit.
+// Regenerated on every build; rotate the vendor key pair by replacing Keys\VendorSigningKey_Public.pem.
+namespace NutriculaInstaller
+{
+    internal static class VendorPublicKeyEmbedded
+    {
+        public static readonly byte[] X = { $xCsv };
+        public static readonly byte[] Y = { $yCsv };
+    }
+}
+"@
+          Set-Content -LiteralPath $outPath -Value $content -NoNewline -Encoding utf8
+          Write-Host "Generated $outPath from $pemPath (P-256, verified 32/32-byte X/Y)."
+
       - name: Verify required installer files
         shell: pwsh
         run: |
