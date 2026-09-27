@@ -11,6 +11,10 @@ obj/
 *.pdb
 *.tmp
 
+# Generated at build time by .github/workflows/build.yml from the vendor
+# PUBLIC key - never committed, regenerated fresh on every CI run.
+/VendorPublicKeyEmbedded.cs
+
 # OS
 Thumbs.db
 Desktop.ini
