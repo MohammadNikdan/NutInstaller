@@ -1053,7 +1053,6 @@ static bool Sha256String(const std::string& text, std::vector<unsigned char>& di
 
 static bool RandomBytes(unsigned char* output, DWORD count);
 static std::string GetEnvA(const char* name);
-static std::wstring AnsiToWide(const std::string& s);
 
 static bool IsWine() {
     // Primary, reliable check: Wine implements an internal-only export,
@@ -1083,16 +1082,40 @@ static std::string GetEnvA(const char* name) {
     return std::string(buf, n);
 }
 
-static std::wstring AnsiToWide(const std::string& s) {
-    if (s.empty()) return L"";
-    int n = MultiByteToWideChar(CP_UTF8, 0, s.data(), (int)s.size(), nullptr, 0);
-    if (n <= 0) n = MultiByteToWideChar(CP_ACP, 0, s.data(), (int)s.size(), nullptr, 0);
-    if (n <= 0) return L"";
-    std::wstring out(n, L'\0');
-    if (MultiByteToWideChar(CP_UTF8, 0, s.data(), (int)s.size(), &out[0], n) != n)
-        MultiByteToWideChar(CP_ACP, 0, s.data(), (int)s.size(), &out[0], n);
-    return out;
+// BUG FIX (found while diagnosing "unable to create or read a required
+// device identity file" reports): GetEnvA above reads the environment
+// variable through GetEnvironmentVariableA, which returns the value
+// re-encoded into the process's ANSI code page. For APPDATA (and the
+// Wine-side WINEHOMEDIR/USER/USERNAME equivalents) that value embeds the
+// Windows user name - and on any machine whose user name contains
+// characters outside that ANSI code page (Persian, Arabic, and plenty of
+// other non-English user names), the A-call silently substitutes '?' or a
+// best-fit look-alike for those characters. AnsiToWide below only sees this
+// already-corrupted string and cannot recover the original characters, so
+// GetDeviceKeyPath()/Nutricula_GetLicensePath() ended up building a path
+// that pointed at a folder that does not exist (or that this process
+// cannot access), which is exactly what surfaces as "could not create or
+// read a required device identity file". GetEnvW reads the same variable
+// through the wide (Unicode) API instead, so no character is ever lost.
+// Every call site that feeds a file path (APPDATA, WINEHOMEDIR) has been
+// switched to this function; GetEnvA/AnsiToWide are kept only for the
+// ASCII-only Wine-presence checks in IsWine(), where no user-supplied text
+// is involved.
+static std::wstring GetEnvW(const wchar_t* name) {
+    wchar_t buf[4096] = {};
+    DWORD n = GetEnvironmentVariableW(name, buf, 4096);
+    if (n == 0 || n >= 4096) return L"";
+    return std::wstring(buf, n);
 }
+
+// AnsiToWide (ANSI-code-page string -> wide string) used to live here and
+// was used to build GetDeviceKeyPath()/Nutricula_GetLicensePath()'s APPDATA
+// path and GetWineHomeDirWindowsPath()'s WINEHOMEDIR path. It was removed
+// (2026) as part of the fix described in GetEnvW's comment above: both call
+// sites now read their environment variable directly through GetEnvW, so a
+// user name with non-ASCII characters is never lossily downgraded to the
+// ANSI code page in the first place. Nothing else in this file needs an
+// ANSI-to-wide conversion.
 
 // IMPORTANT FIX, found and confirmed by direct testing: the "HOME"
 // environment variable is NEVER visible to a Windows-side process running
@@ -1110,14 +1133,17 @@ static std::wstring AnsiToWide(const std::string& s) {
 // directly usable Win32 path ("Z:\root") that CreateFileW/CreateDirectoryW
 // accept exactly like any other path.
 static std::wstring GetWineHomeDirWindowsPath() {
-    std::string raw = GetEnvA("WINEHOMEDIR");
+    // Read via the wide API (see GetEnvW's comment above) - this value is a
+    // real filesystem path and must not be round-tripped through the ANSI
+    // code page.
+    std::wstring raw = GetEnvW(L"WINEHOMEDIR");
     if (raw.empty()) return L"";
-    const std::string ntPrefix = "\\??\\";
+    const std::wstring ntPrefix = L"\\??\\";
     if (raw.compare(0, ntPrefix.size(), ntPrefix) == 0) {
         raw = raw.substr(ntPrefix.size());
     }
     if (raw.empty()) return L"";
-    return AnsiToWide(raw);
+    return raw;
 }
 
 static std::wstring GetDeviceKeyPath() {
@@ -1126,9 +1152,14 @@ static std::wstring GetDeviceKeyPath() {
         if (home.empty()) return L"";
         return home + L"\\.nutricula\\DeviceKey.bin";
     }
-    std::string appData = GetEnvA("APPDATA");
+    // Read via GetEnvW, not GetEnvA/AnsiToWide - APPDATA embeds the Windows
+    // user name, and the ANSI path silently mangles any user name that
+    // contains characters outside the system's ANSI code page (see GetEnvW's
+    // comment above for why this was breaking device-key creation for those
+    // users).
+    std::wstring appData = GetEnvW(L"APPDATA");
     if (appData.empty()) return L"";
-    return AnsiToWide(appData) + L"\\Nutricula\\DeviceKey.bin";
+    return appData + L"\\Nutricula\\DeviceKey.bin";
 }
 
 static bool RandomBytes(unsigned char* output, DWORD count) {
@@ -1661,9 +1692,12 @@ NUTRICULA_API int __cdecl Nutricula_GetLicensePath(char* output, int outputCapac
         if (home.empty()) return 0;
         path = home + L"\\.nutricula\\NutriculaLicense.txt";
     } else {
-        std::string appData = GetEnvA("APPDATA");
+        // GetEnvW, not GetEnvA/AnsiToWide - same reasoning as GetDeviceKeyPath
+        // above: APPDATA embeds the Windows user name and must be read
+        // through the wide API so non-ASCII user names are not corrupted.
+        std::wstring appData = GetEnvW(L"APPDATA");
         if (appData.empty()) return 0;
-        path = AnsiToWide(appData) + L"\\MetaQuotes\\Terminal\\Common\\Files\\NutriculaLicense.txt";
+        path = appData + L"\\MetaQuotes\\Terminal\\Common\\Files\\NutriculaLicense.txt";
     }
     std::string utf8 = ToUtf8(path);
     if (utf8.empty() || (int)utf8.size() + 1 > outputCapacity) return -1;
