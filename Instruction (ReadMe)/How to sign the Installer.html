@@ -32,6 +32,7 @@ hr{border:none;border-top:1px solid var(--border);margin:40px 0;}
 code.inline{font-family:var(--mono);background:var(--bg);padding:2px 7px;border-radius:5px;font-size:13px;color:var(--accent-bright);border:1px solid var(--border-soft);}
 pre{background:#0a0e14;border:1px solid var(--border);border-radius:10px;padding:16px 18px;overflow-x:auto;margin:12px 0;font-size:12.5px;font-family:var(--mono);color:#c9d1d9;line-height:1.7;direction:ltr;text-align:left;}
 pre .c1{color:var(--accent-bright);}
+pre .c2{color:var(--warn);}
 pre .c3{color:var(--text-faint);}
 
 .step-list{counter-reset:step;margin:20px 0;}
@@ -56,6 +57,8 @@ table.args td b{color:var(--text);}
 <div class="hero-eyebrow">راهنمای کامل، قدم‌به‌قدم — برای کسی که هیچی از این موضوع نمی‌داند</div>
 <h1>چطور Installer.exe را امضا کنیم</h1>
 <p>این صفحه توضیح می‌دهد <code class="inline">NutriculaSignInstaller.exe</code> دقیقاً چه کاری می‌کند، چرا اصلاً لازم است، چطور اجرایش کنید، و نتیجه چه شکلی است — با یک مثال کامل از ابتدا تا انتها. برخلاف <code class="inline">NutriculaSignTool.exe</code> (که یک فایل <code class="inline">manifest.txt</code> جداگانه می‌سازد)، این ابزار <b>خود فایل Installer.exe را مستقیماً تغییر می‌دهد</b> — در پایان همچنان فقط <b>یک فایل</b> برای توزیع به مشتری دارید.</p>
+
+<div class="callout warn"><b>به‌روزرسانی مهم:</b> این ابزار دیگر نیازی به تایپ مسیر فایل در خط‌فرمان ندارد. کافیست فایل Installer.exe (خروجی GitHub Actions، با نام دقیق <code class="inline">NutriculaExpertInstaller.exe</code>) را کنار خود <code class="inline">NutriculaSignInstaller.exe</code> بگذارید و فقط خودش را (بدون آرگومان) اجرا کنید. بعد از امضای موفق، ابزار خودش اسم فایل را عوض می‌کند و در آخرش <code class="inline">-Signed</code> اضافه می‌کند — تا با یک نگاه مطمئن شوید امضا انجام شده.</div>
 
 <div class="callout info"><b>چرا اصلاً به این نیاز داریم؟</b> بدون این امضا، اگر کسی <code class="inline">Installer.exe</code> را با یک ابزار hex-editor دستکاری کند (مثلاً چک اجباری machine_id را حذف کند)، هیچ‌چیز این دستکاری را تشخیص نمی‌دهد. با این امضا، خود Installer در همان لحظهٔ اجرا شدن، یکپارچگی بایت‌های خودش را چک می‌کند — اگر حتی یک بایت دستکاری شده باشد، Installer از انجام Signup/Transfer امتناع می‌کند.</div>
 
@@ -82,22 +85,35 @@ table.args td b{color:var(--text);}
 <div class="step">
 <div class="step-num"></div>
 <div class="step-body">
-<h3>NutriculaSignInstaller.exe را روی فایل Installer.exe نهایی اجرا کنید</h3>
-<p>از خط فرمان (Command Prompt یا PowerShell)، دقیقاً همین دستور را بزنید:</p>
-<pre><span class="c3">REM جایگزین کنید مسیر واقعی Installer.exe نهایی خودتان را</span>
-NutriculaSignInstaller.exe <span class="c1">"C:\path\to\Installer.exe"</span></pre>
-<p>همین. هیچ آرگومان دیگری لازم نیست.</p>
+<h3>فایل Installer.exe نهایی را کنار NutriculaSignInstaller.exe بگذارید</h3>
+<p>همان فایلی که از GitHub Actions دانلود کردید را (با همان نام اصلی‌اش، <code class="inline">NutriculaExpertInstaller.exe</code>) در همان پوشه‌ای کپی کنید که <code class="inline">NutriculaSignInstaller.exe</code> در آن است.</p>
 </div>
 </div>
 
 <div class="step">
 <div class="step-num"></div>
 <div class="step-body">
-<h3>پیام موفقیت را ببینید</h3>
-<p>اگر همه‌چیز درست پیش برود، دقیقاً همین را می‌بینید:</p>
-<pre>OK: C:\path\to\Installer.exe signed successfully (trailer appended, 72 bytes added).
+<h3>NutriculaSignInstaller.exe را <b>بدون هیچ آرگومانی</b> اجرا کنید</h3>
+<p>فقط رویش دوبار کلیک کنید، یا در همان پوشه یک Command Prompt باز کنید و بنویسید:</p>
+<pre>NutriculaSignInstaller.exe</pre>
+<p>ابزار خودش دنبال <code class="inline">NutriculaExpertInstaller.exe</code> کنار خودش می‌گردد. اگر پیدا نکرد، پیام خطا می‌دهد و اسم دقیق فایلی که باید کنارش بگذارید را می‌گوید. اگر پیدا کرد، حجم فایل را نشان می‌دهد و می‌پرسد مطمئن هستید امضا بشود یا نه.</p>
+</div>
+</div>
+
+<div class="step">
+<div class="step-num"></div>
+<div class="step-body">
+<h3>به سوال تأیید جواب بدهید و پیام موفقیت را ببینید</h3>
+<p>یک نمونهٔ کامل از یک اجرای واقعی (متن <span class="c2">زرد</span> چیزی است که شما تایپ می‌کنید):</p>
+<pre>Looking for NutriculaExpertInstaller.exe next to NutriculaSignInstaller.exe...
+Found NutriculaExpertInstaller.exe (4213248 bytes).
+Sign this file now? (y/n): <span class="c2">y</span>
+
+OK: signed successfully (trailer appended, 72 bytes added).
+Final file: C:\...\NutriculaExpertInstaller-Signed.exe
 This is now the FINAL file to distribute to customers - nothing else needed.</pre>
-<p><b>همین فایل — دقیقاً همان <code class="inline">Installer.exe</code> که الان امضا شد، نه یک فایل جدید</b> — چیزی است که باید به مشتری بدهید. حجم فایل ۷۲ بایت بزرگ‌تر شده (این طبیعی و مورد انتظار است)، ولی اسم فایل و همه‌چیز دیگر دقیقاً همان است.</p>
+<p><b>همان فایل، فقط با نام جدید <code class="inline">NutriculaExpertInstaller-Signed.exe</code></b> — چیزی است که باید به مشتری بدهید. همین تغییر نام، خودش تضمین می‌کند که هیچ‌وقت اشتباهی یک فایل امضانشده را دست مشتری ندهید؛ اگر اسم فایل <code class="inline">-Signed</code> نداشت، یعنی هنوز امضا نشده. حجم فایل هم ۷۲ بایت بزرگ‌تر شده (طبیعی و مورد انتظار است).</p>
+<p>اگر به‌جای «آره» چیز دیگری تایپ کنید (یا فقط Enter بزنید)، ابزار پیام <code class="inline">ERROR: cancelled - you answered no, nothing was signed.</code> می‌دهد و هیچ فایلی را دست نمی‌زند.</p>
 </div>
 </div>
 
@@ -130,11 +146,11 @@ Nutricula installer and try again.</pre>
 <h2>خلاصهٔ کل چرخهٔ ساخت — کجای این مرحله قرار می‌گیرد؟</h2>
 <table class="args">
 <tr><th>#</th><th>مرحله</th></tr>
-<tr><td class="n">۱</td><td>هر ۹ باینری C++‎ (Service/Broker/DLL ها) را build کنید</td></tr>
-<tr><td class="n">۲</td><td>با <code class="inline">NutriculaSignTool.exe</code>، یک <code class="inline">manifest.txt</code> برای این ۹ باینری بسازید و در دیتابیس ثبت کنید</td></tr>
-<tr><td class="n">۳</td><td>Installer.exe را build کنید (این ۹ باینری را به‌عنوان Embedded Resource در خودش جای می‌دهد)</td></tr>
-<tr><td class="n">۴</td><td><b>همین مرحله:</b> <code class="inline">NutriculaSignInstaller.exe</code> را روی Installer.exe نهایی اجرا کنید</td></tr>
-<tr><td class="n">۵</td><td>همین فایل (امضاشده) را به مشتری‌ها بدهید</td></tr>
+<tr><td class="n">۱</td><td>هر ۱۰ باینری C++‎ (Service/Broker/DLL چک لایسنس/MachineId) را build کنید</td></tr>
+<tr><td class="n">۲</td><td>با <code class="inline">NutriculaSignTool.exe</code>، یک <code class="inline">manifest.txt</code> برای این ۱۰ باینری بسازید و در دیتابیس ثبت کنید</td></tr>
+<tr><td class="n">۳</td><td>Installer.exe را (روی GitHub) build کنید — این ۱۰ باینری + <code class="inline">manifest.txt</code> (جمعاً ۱۱ فایل Assets) را به‌عنوان Embedded Resource در خودش جای می‌دهد</td></tr>
+<tr><td class="n">۴</td><td><b>همین مرحله:</b> فایل build‌شده را دانلود کنید و <code class="inline">NutriculaSignInstaller.exe</code> را بدون آرگومان کنارش اجرا کنید</td></tr>
+<tr><td class="n">۵</td><td>فایل <code class="inline">...-Signed.exe</code> که ساخته شد را به مشتری‌ها بدهید</td></tr>
 </table>
 
 </div>
