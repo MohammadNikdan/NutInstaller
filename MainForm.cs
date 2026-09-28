@@ -656,9 +656,24 @@ namespace NutriculaInstaller
             // confusing failure at the very end.
             if (!IsRunningAsAdministrator())
             {
-                helperLabel.ForeColor = UiHelpers.Error;
-                helperLabel.Text = "Administrator privileges are required for this option. " +
-                    "Please close this installer and run it again using \"Run as administrator\", then try again.";
+                // BUG FIX: this used to only set helperLabel.Text - but
+                // helperLabel is a child control of credentialsCard, which
+                // lives inside pageCredentials, and pageCredentials was never
+                // made visible on this path (ShowPage(pageCredentials) is
+                // only called further below, which this early return skips).
+                // So the message was written to a label sitting on a hidden
+                // page - nothing appeared to happen at all, exactly matching
+                // the reported symptom. A MessageBox is used here instead of
+                // trying to surface a label on the still-visible pageSelect,
+                // since it is guaranteed to be visible regardless of which
+                // page is currently shown, and needs no extra layout work.
+                MessageBox.Show(
+                    this,
+                    "Administrator privileges are required for this option. " +
+                        "Please close this installer and run it again using \"Run as administrator\", then try again.",
+                    "Administrator Privileges Required",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Warning);
                 return;
             }
 
