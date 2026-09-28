@@ -99,23 +99,9 @@ hr{border:none;border-top:1px solid var(--border);margin:40px 0;}
     <div class="step-num"></div>
     <div class="step-body">
       <h3>با NutriculaSignTool، Manifest جدید بسازید — اینجا شمارهٔ نسخهٔ جدید را وارد می‌کنید</h3>
-      <p><code class="inline">NutriculaSignTool.exe</code> را (که فقط روی کامپیوتر build امن شماست) با ۱۲ آرگومان اجرا کنید:</p>
-      <pre>NutriculaSignTool.exe ^
-    "build-2026-09-01-001" ^
-    "3.2" ^
-    "1" ^
-    "مسیر\Nutricula.ex5" ^
-    "مسیر\Nutricula.ex4" ^
-    "مسیر\NutriculaLicenseCheck32.dll" ^
-    "مسیر\NutriculaLicenseCheck64.dll" ^
-    "مسیر\NutriculaLicenseService32.exe" ^
-    "مسیر\NutriculaLicenseService64.exe" ^
-    "مسیر\NutriculaLicenseBroker32.exe" ^
-    "مسیر\NutriculaLicenseBroker64.exe" ^
-    "مسیر\manifest.txt"</pre>
-      <p><b>نکتهٔ مهم:</b> آرگومان دوم (<code class="inline">"3.2"</code>) همان شمارهٔ نسخهٔ جدید است — دقیقاً همین‌جا وارد می‌شود، نه هیچ فایل دیگری.</p>
-      <p><b>نکتهٔ مهم دوم:</b> حتی اگر Service/Broker تغییر نکرده باشند، باز هم باید مسیر فایل‌های <b>فعلی/قدیمی‌شان</b> را به ابزار بدهید — چون Manifest همیشه هر ۸ هش را با هم، در یک رکورد امضاشده، نگه می‌دارد. خودشان دوباره ساخته نمی‌شوند، فقط هش فعلی‌شان (که تغییری نکرده) در این Manifest جدید دوباره ثبت می‌شود.</p>
-      <p>ابزار در پایان ۸ مقدار هش را روی صفحه چاپ می‌کند — این‌ها را برای مرحلهٔ بعد کپی کنید.</p>
+      <p>هر ۱۰ فایل زیر را در همان پوشه‌ای بگذارید که <code class="inline">NutriculaSignTool.exe</code> در آن است — <code class="inline">Nutricula.ex5</code>، <code class="inline">Nutricula.ex4</code>، <code class="inline">NutriculaLicenseCheck32.dll</code>، <code class="inline">NutriculaLicenseCheck64.dll</code>، <code class="inline">MachineId32.dll</code>، <code class="inline">MachineId64.dll</code>، <code class="inline">NutriculaLicenseService32.exe</code>، <code class="inline">NutriculaLicenseService64.exe</code>، <code class="inline">NutriculaLicenseBroker32.exe</code>، <code class="inline">NutriculaLicenseBroker64.exe</code> — سپس فقط خود <code class="inline">NutriculaSignTool.exe</code> را (بدون هیچ آرگومانی، مثلاً با دابل‌کلیک) اجرا کنید. دیگر نیازی به تایپ یا کپی هیچ دستور چندخطی نیست.</p>
+      <p><b>نکتهٔ مهم:</b> حتی اگر Service/Broker/MachineId تغییر نکرده باشند، باز هم باید همان نسخهٔ <b>فعلی/قدیمی‌شان</b> را کنار SignTool بگذارید — چون Manifest همیشه هر ۱۰ هش را با هم، در یک رکورد امضاشده، نگه می‌دارد. خودشان دوباره ساخته نمی‌شوند، فقط هش فعلی‌شان (که تغییری نکرده) در این Manifest جدید دوباره ثبت می‌شود. اگر یکی از این ۱۰ فایل آنجا نباشد، ابزار همان اول با پیام خطا دقیقاً اسمش را می‌گوید و کاری نمی‌سازد.</p>
+      <p>ابزار اول این ۱۰ فایل را چک می‌کند، بعد <code class="inline">build_id</code>، <code class="inline">version</code> (همان شمارهٔ نسخهٔ جدید EA) و <code class="inline">protocol_version</code> را یکی‌یکی از شما می‌پرسد، و در پایان دو فایل کنار خودش می‌سازد: <code class="inline">manifest.txt</code> و <code class="inline">database_insert.sql</code> — قدم بعد را ببینید.</p>
     </div>
   </div>
 
@@ -123,15 +109,17 @@ hr{border:none;border-top:1px solid var(--border);margin:40px 0;}
     <div class="step-num"></div>
     <div class="step-body">
       <h3>در دیتابیس، ردیف جدید ثبت و شمارهٔ نسخه را در config.php بالا ببرید</h3>
-      <p><b>الف)</b> این کوئری را روی جدول <code class="inline">nutricula_build_manifests</code> اجرا کنید. (باید ردیف جدید با buildID جدید اضافه شود (نه اینکه همان ردیف قبلی ویرایش شود) و buildID قبلی هم بماند که نسخه‌های قبلی بتوانند -50 را دریافت کنند.) (مقادیر هش را از خروجی مرحلهٔ قبل جایگزین کنید):</p>
+      <p><b>الف)</b> کنار <code class="inline">manifest.txt</code> که در قدم قبل ساخته شد، یک فایل دیگر هم به نام <code class="inline">database_insert.sql</code> هست — همان فایل را باز کنید و محتوایش را عیناً روی جدول <code class="inline">nutricula_build_manifests</code> اجرا کنید (باید ردیف جدید با buildID جدید اضافه شود، نه اینکه همان ردیف قبلی ویرایش شود؛ و buildID قبلی هم بماند که نسخه‌های قبلی بتوانند -50 را دریافت کنند). چیزی شبیه این است (هش‌های واقعی شما متفاوت خواهد بود):</p>
       <pre>INSERT INTO nutricula_build_manifests
     (build_id, version, protocol_version,
      ex5_sha256, ex4_sha256, dll32_sha256, dll64_sha256,
+     machineid32_sha256, machineid64_sha256,
      service32_sha256, service64_sha256, broker32_sha256, broker64_sha256,
      created_at)
 VALUES
     ('build-2026-09-01-001', '3.2', '1',
      '&lt;ex5_sha256&gt;', '&lt;ex4_sha256&gt;', '&lt;dll32_sha256&gt;', '&lt;dll64_sha256&gt;',
+     '&lt;machineid32_sha256&gt;', '&lt;machineid64_sha256&gt;',
      '&lt;service32_sha256&gt;', '&lt;service64_sha256&gt;', '&lt;broker32_sha256&gt;', '&lt;broker64_sha256&gt;',
      NOW());</pre>
       <p><b>ب)</b> در فایل <code class="inline">license_config.php</code> روی سرور، این خط را پیدا کنید و عدد را بالا ببرید:</p>
@@ -167,7 +155,7 @@ VALUES
   <li><code class="inline">NutriculaLicenseCheck32.dll</code> و <code class="inline">64.dll</code> دوباره ساخته شدند</li>
   <li><code class="inline">Nutricula.ex4</code> و <code class="inline">ex5</code> از MetaEditor کامپایل شدند</li>
   <li>یک <code class="inline">build_id</code> جدید انتخاب شد</li>
-  <li><code class="inline">NutriculaSignTool</code> با نسخهٔ جدید اجرا و ۸ هش تولید شد</li>
+  <li><code class="inline">NutriculaSignTool</code> با نسخهٔ جدید اجرا و هر ۱۰ هش (شامل machineid32/64) تولید شد</li>
   <li>ردیف جدید در <code class="inline">nutricula_build_manifests</code> ثبت شد</li>
   <li><code class="inline">latest_version</code> در <code class="inline">license_config.php</code> بالا برده شد</li>
   <li>۵ فایل در Assets نصب‌کننده جایگزین شدند</li>
