@@ -201,7 +201,8 @@ CREATE TABLE nutricula_transfer_keys_used (
 
 /* Server-side registry of Expected artifact hashes per build (architecture
    points 44/87/119) - the ONLY source of "what should this build's EX5/
-   DLL32/DLL64/Service hash to" that license_check.php ever consults. A
+   DLL32/DLL64/MachineId32/MachineId64/Service hash to" that
+   license_check.php ever consults. A
    client (Coordinator) can report whatever hashes it wants in a verify
    request, but those reported values are only USED to look up a match here
    - they can never themselves become the expected value (point 46/122).
@@ -217,6 +218,15 @@ CREATE TABLE nutricula_build_manifests (
     ex4_sha256 CHAR(64) NOT NULL,
     dll32_sha256 CHAR(64) NOT NULL,
     dll64_sha256 CHAR(64) NOT NULL,
+    /* MachineId32.dll / MachineId64.dll - loaded by BOTH the thin License
+       Check DLL and the Coordinator itself (MachineIdBridge). Unconditional
+       and always-both-required, exactly like dll32_sha256/dll64_sha256
+       above - never an either/or match like service/broker below - since a
+       32-bit MT4 and a 64-bit MT5 could both be talking to the same
+       Coordinator instance at once, each needing its own genuine MachineId
+       DLL to be verifiable. */
+    machineid32_sha256 CHAR(64) NOT NULL,
+    machineid64_sha256 CHAR(64) NOT NULL,
     /* Both architectures of the Coordinator (Service/Broker) genuinely ship
        to customers - 32-bit Windows hosts are a real, supported case (e.g.
        Windows tablets). The Installer picks which one to actually install
