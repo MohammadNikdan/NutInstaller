@@ -37,6 +37,18 @@ inline const wchar_t* ARTIFACT_EX5_NAME = L"Nutricula.ex5";
 inline const wchar_t* ARTIFACT_EX4_NAME = L"Nutricula.ex4";
 inline const wchar_t* ARTIFACT_DLL32_NAME = L"NutriculaLicenseCheck32.dll";
 inline const wchar_t* ARTIFACT_DLL64_NAME = L"NutriculaLicenseCheck64.dll";
+// The Machine ID DLL is loaded by BOTH the thin License Check DLL
+// (NutriculaLicenseCheck32/64.dll, inside MT4/MT5) and by the Coordinator
+// itself (MachineIdBridge) - a patched MachineId DLL that silently spoofs
+// or freezes machine_id would defeat the entire anti-clone design without
+// touching any other file, so it must be covered by the same manifest
+// integrity check as everything else. Checked unconditionally (both
+// architectures, every cycle) - like DLL32/64 above, not like the
+// Service/Broker pair below - because a 32-bit MT4 and a 64-bit MT5 could
+// both be talking to this one Coordinator instance at the same time, each
+// needing its own matching MachineId DLL to be genuine.
+inline const wchar_t* ARTIFACT_MACHINEID32_NAME = L"MachineId32.dll";
+inline const wchar_t* ARTIFACT_MACHINEID64_NAME = L"MachineId64.dll";
 // The Coordinator's own file name differs between the Windows Service and
 // the Wine/fallback Broker - each binary should pass its OWN file name to
 // ManifestVerify, not a shared constant, since a Service checking a

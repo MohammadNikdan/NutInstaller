@@ -27,6 +27,13 @@ struct ManifestData
     std::string ex4Sha256;
     std::string dll32Sha256;
     std::string dll64Sha256;
+    // MachineId32.dll / MachineId64.dll - loaded by BOTH the thin License
+    // Check DLL and the Coordinator itself (MachineIdBridge). Unconditional
+    // like dll32/dll64 above (both always required, both always checked),
+    // not conditional like service/broker below - see the comment on
+    // CoordinatorProtocol::ARTIFACT_MACHINEID32_NAME for why.
+    std::string machineid32Sha256;
+    std::string machineid64Sha256;
     // Both architectures of the Coordinator genuinely ship to customers now
     // (32-bit Windows tablets are a real, supported case - see the
     // Installer's OS-bitness-based selection logic) - so each needs its
@@ -70,6 +77,7 @@ std::string HashFileSha256(const std::wstring& path);
 bool VerifyArtifactsMatchManifest(const ManifestData& manifest, const std::wstring& artifactDirectory,
     const std::wstring& ex5FileName, const std::wstring& ex4FileName,
     const std::wstring& dll32FileName, const std::wstring& dll64FileName,
+    const std::wstring& machineid32FileName, const std::wstring& machineid64FileName,
     const std::wstring& serviceFileName, const std::string& expectedServiceSha256,
     const std::wstring& brokerFileName, const std::string& expectedBrokerSha256);
 

@@ -521,6 +521,8 @@ void CoordinatorCore::WorkerLoop()
                 CoordinatorProtocol::ARTIFACT_EX4_NAME,
                 CoordinatorProtocol::ARTIFACT_DLL32_NAME,
                 CoordinatorProtocol::ARTIFACT_DLL64_NAME,
+                CoordinatorProtocol::ARTIFACT_MACHINEID32_NAME,
+                CoordinatorProtocol::ARTIFACT_MACHINEID64_NAME,
                 isService ? m_coordinatorFileName : L"", expectedServiceHash,   // only check whichever of Service/Broker this actually is
                 isService ? L"" : m_coordinatorFileName, expectedBrokerHash);
             if (!artifactsOk)
@@ -709,6 +711,8 @@ void CoordinatorCore::WorkerLoop()
                     "|ex4_hash=" + manifest.ex4Sha256 +
                     "|dll32_hash=" + manifest.dll32Sha256 +
                     "|dll64_hash=" + manifest.dll64Sha256 +
+                    "|machineid32_hash=" + manifest.machineid32Sha256 +
+                    "|machineid64_hash=" + manifest.machineid64Sha256 +
                     "|service_hash=" + expectedServiceHash +
                     "|broker_hash=" + expectedBrokerHash;
                 std::string signatureB64;
@@ -727,6 +731,8 @@ void CoordinatorCore::WorkerLoop()
                 verifyFields["ex4_hash"] = manifest.ex4Sha256;
                 verifyFields["dll32_hash"] = manifest.dll32Sha256;
                 verifyFields["dll64_hash"] = manifest.dll64Sha256;
+                verifyFields["machineid32_hash"] = manifest.machineid32Sha256;
+                verifyFields["machineid64_hash"] = manifest.machineid64Sha256;
                 verifyFields["service_hash"] = expectedServiceHash;
                 verifyFields["broker_hash"] = expectedBrokerHash;
                 verifyFields["signature"] = signatureB64;
