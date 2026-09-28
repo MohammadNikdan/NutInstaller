@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using System.Reflection;
 using System.Runtime.InteropServices;
+using System.Threading;
 
 namespace NutriculaInstaller
 {
@@ -329,14 +330,54 @@ namespace NutriculaInstaller
             try { return getLastStatus(); } catch { return -999; }
         }
 
+        // BUG FIX (found from a real report: the free install failed once
+        // with the "device identity file" error, then succeeded immediately
+        // on "Try Again" with no other change). "Try Again" re-runs
+        // RunAsync() in the SAME process (see MainForm.OnTryAgainTapped), so
+        // dllHandle stays IntPtr.Zero after a failed first attempt and the
+        // very next call to EnsureLoaded() redoes the extract-and-load from
+        // scratch - and on that second try it worked. That is the signature
+        // of a transient failure, not a permanent one: on Windows, a
+        // just-written .dll is a common target for a real-time antivirus
+        // scan or the shell's own file indexer to briefly open it
+        // exclusively right after it is created, which makes an immediate
+        // File.Move/LoadLibraryW on that same file fail with a sharing
+        // violation - and by the time the user clicks "Try Again" a moment
+        // later, that scan has finished and the same code path succeeds.
+        // Rather than depend on the user clicking "Try Again" themselves,
+        // both the extraction (inside ExtractDllToTemp) and the LoadLibraryW
+        // call below now retry a few times with a short delay before
+        // actually giving up.
         private static void EnsureLoaded()
         {
             if (dllHandle != IntPtr.Zero && generateMachineId != null && getLastStatus != null && isWineEnvironment != null && getLastPlatformProfile != null && getDevicePublicKey != null && getDeviceKeyHash != null && getLicensePath != null && signChallenge != null && gcmProtect != null && gcmUnprotect != null) return;
             lock (SyncRoot)
             {
                 if (dllHandle != IntPtr.Zero && generateMachineId != null && getLastStatus != null && isWineEnvironment != null && getLastPlatformProfile != null && getDevicePublicKey != null && getDeviceKeyHash != null && getLicensePath != null && signChallenge != null && gcmProtect != null && gcmUnprotect != null) return;
-                string dllPath = ExtractDllToTemp();
-                dllHandle = LoadLibraryW(dllPath);
+
+                string dllPath = null;
+                const int maxAttempts = 5;
+                const int retryDelayMs = 200;
+                for (int attempt = 1; attempt <= maxAttempts; attempt++)
+                {
+                    try
+                    {
+                        dllPath = ExtractDllToTemp();
+                        dllHandle = LoadLibraryW(dllPath);
+                        if (dllHandle != IntPtr.Zero) break;
+                    }
+                    catch (IOException) when (attempt < maxAttempts)
+                    {
+                        // Most likely a transient sharing violation (see the
+                        // comment above) - fall through to the retry below.
+                    }
+                    catch (UnauthorizedAccessException) when (attempt < maxAttempts)
+                    {
+                        // Same cause as IOException above - some antivirus
+                        // products surface their scan lock this way instead.
+                    }
+                    if (attempt < maxAttempts) Thread.Sleep(retryDelayMs);
+                }
                 if (dllHandle == IntPtr.Zero) throw new MachineIdException("A required internal component could not be loaded.");
 
                 generateMachineId = LoadDelegate<GenerateMachineIdDelegate>("Nutricula_GenerateMachineId");

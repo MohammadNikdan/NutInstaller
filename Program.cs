@@ -24,6 +24,32 @@ namespace NutriculaInstaller
 
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
+
+            // 2026 hardening: an unsigned or tampered installer.exe now
+            // refuses to open at all, rather than opening normally and only
+            // being blocked later at the Premium/Transfer activation step.
+            // This does not weaken anything - SelfIntegrityCheck.Verify()'s
+            // own header comment already explains that this check cannot be
+            // made unbypassable purely from inside the binary it protects
+            // (an attacker able to patch out this exact block could always
+            // patch out any other gate too), so refusing to run at all is
+            // strictly more restrictive than the previous "opens, but the
+            // license step fails" behavior, never less secure. The
+            // RequestLicenseAsync-side check in InstallerService.cs is left
+            // in place as a harmless extra safety net; with this block, it
+            // should never actually be reached in normal operation.
+            if (!SelfIntegrityVerified)
+            {
+                MessageBox.Show(
+                    (failureReason ?? "This installer file could not be verified.") +
+                        " This installer cannot be used. Please download a fresh, unmodified copy of " +
+                        "the Nutricula installer and try again.",
+                    "Nutricula",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Error);
+                return;
+            }
+
             Application.SetUnhandledExceptionMode(UnhandledExceptionMode.CatchException);
             Application.ThreadException += delegate(object sender, System.Threading.ThreadExceptionEventArgs e)
             {
