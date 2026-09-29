@@ -663,17 +663,11 @@ namespace NutriculaInstaller
                 // only called further below, which this early return skips).
                 // So the message was written to a label sitting on a hidden
                 // page - nothing appeared to happen at all, exactly matching
-                // the reported symptom. A MessageBox is used here instead of
-                // trying to surface a label on the still-visible pageSelect,
+                // the reported symptom. A dedicated dialog is shown instead
+                // of relying on a label on the still-visible pageSelect,
                 // since it is guaranteed to be visible regardless of which
                 // page is currently shown, and needs no extra layout work.
-                MessageBox.Show(
-                    this,
-                    "Administrator privileges are required for this option. " +
-                        "Please close this installer and run it again using \"Run as administrator\", then try again.",
-                    "Administrator Privileges Required",
-                    MessageBoxButtons.OK,
-                    MessageBoxIcon.Warning);
+                ShowAdministratorRequiredDialog();
                 return;
             }
 
@@ -840,6 +834,96 @@ namespace NutriculaInstaller
             }
 
             return tcs.Task;
+        }
+
+        /// <summary>
+        /// Shown when Premium/Transfer is picked without Administrator
+        /// rights (see OnOptionTapped above). Built as a small custom Form,
+        /// like ShowConfirmationDialogAsync above, rather than a plain
+        /// MessageBox: a MessageBox can't give the headline its own larger,
+        /// bold, colored styling, and this message needs to be readable at a
+        /// glance for a first-time, non-technical user - a bold red
+        /// headline stating exactly what is needed, then a short numbered
+        /// list of the exact clicks to make.
+        /// </summary>
+        private void ShowAdministratorRequiredDialog()
+        {
+            using (var dialog = new Form())
+            {
+                dialog.Text = "Administrator Access Required";
+                dialog.FormBorderStyle = FormBorderStyle.FixedDialog;
+                dialog.StartPosition = FormStartPosition.CenterParent;
+                dialog.MinimizeBox = false;
+                dialog.MaximizeBox = false;
+                dialog.ClientSize = new Size(460, 300);
+                dialog.BackColor = UiHelpers.Surface;
+
+                var iconBadge = new Panel { Location = new Point(20, 22), Size = new Size(44, 44), BackColor = Color.Transparent };
+                iconBadge.Paint += delegate (object sender, PaintEventArgs e)
+                {
+                    UiHelpers.DrawGlyphBadge(e.Graphics, iconBadge.ClientRectangle, UiHelpers.GlyphShield, UiHelpers.ErrorSoft, UiHelpers.Error, 20f);
+                };
+                dialog.Controls.Add(iconBadge);
+
+                var headline = new Label
+                {
+                    Text = "Administrator Access Required",
+                    AutoSize = false,
+                    Location = new Point(76, 24),
+                    Size = new Size(364, 44),
+                    Font = new Font("Segoe UI Semibold", 14f),
+                    ForeColor = UiHelpers.Error
+                };
+                dialog.Controls.Add(headline);
+
+                var body = new Label
+                {
+                    Text = "This installation option needs administrator permissions on this computer.",
+                    AutoSize = false,
+                    Location = new Point(20, 82),
+                    Size = new Size(420, 36),
+                    Font = UiHelpers.UiFont(9.5f),
+                    ForeColor = UiHelpers.TextDark
+                };
+                dialog.Controls.Add(body);
+
+                var stepsTitle = new Label
+                {
+                    Text = "To continue:",
+                    AutoSize = true,
+                    Location = new Point(20, 122),
+                    Font = UiHelpers.UiFont(9.5f, FontStyle.Bold),
+                    ForeColor = UiHelpers.TextDark
+                };
+                dialog.Controls.Add(stepsTitle);
+
+                var steps = new Label
+                {
+                    Text =
+                        "1.  Close this installer window.\n" +
+                        "2.  Right-click the Nutricula installer file.\n" +
+                        "3.  Select \"Run as administrator\" from the menu.\n" +
+                        "4.  Open it again and choose this option.",
+                    AutoSize = false,
+                    Location = new Point(20, 148),
+                    Size = new Size(420, 96),
+                    Font = UiHelpers.UiFont(9.5f),
+                    ForeColor = UiHelpers.TextDark
+                };
+                dialog.Controls.Add(steps);
+
+                var okButton = new Button
+                {
+                    Text = "OK",
+                    Size = new Size(420, 36),
+                    Location = new Point(20, 250),
+                    DialogResult = DialogResult.OK
+                };
+                dialog.Controls.Add(okButton);
+                dialog.AcceptButton = okButton;
+
+                dialog.ShowDialog(this);
+            }
         }
 
         private void ShowResult(bool success, string message, int mt4Count, int mt5Count)

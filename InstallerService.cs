@@ -836,6 +836,10 @@ namespace NutriculaInstaller
         /// </summary>
         private static LocalFileFailureKind ClassifyLocalFileException(Exception ex)
         {
+            // Checked before the generic IOException case below, since
+            // FileVerificationException IS an IOException and would
+            // otherwise be caught by that broader check first.
+            if (ex is FileVerificationException) return LocalFileFailureKind.VerificationFailed;
             if (ex is UnauthorizedAccessException) return LocalFileFailureKind.AccessDenied;
             if (ex is PathTooLongException) return LocalFileFailureKind.PathTooLong;
             if (ex is DirectoryNotFoundException) return LocalFileFailureKind.PathNotFound;
@@ -1157,8 +1161,8 @@ namespace NutriculaInstaller
         private static void VerifyInstalledFile(string path)
         {
             string longPath = LongPath(path);
-            if (!File.Exists(longPath)) throw new IOException("The file could not be verified after installation: " + path);
-            if (new FileInfo(longPath).Length <= 0) throw new IOException("The installed file is empty: " + path);
+            if (!File.Exists(longPath)) throw new FileVerificationException("The file could not be verified after installation: " + path);
+            if (new FileInfo(longPath).Length <= 0) throw new FileVerificationException("The installed file is empty: " + path);
         }
 
         private static async Task CopyEmbeddedResourceAsync(ResourceItem item, string destinationDirectory, CancellationToken token, string overrideFileName = null)
@@ -1210,7 +1214,31 @@ namespace NutriculaInstaller
             FileInUse,
             PathTooLong,
             PathNotFound,
+            VerificationFailed,
             Unknown
+        }
+
+        /// <summary>
+        /// Thrown only by VerifyInstalledFile below, when a file this
+        /// installer just wrote to disk is missing or empty right
+        /// afterwards - never a real OS-level I/O error (no sharing
+        /// violation, no access-denied, nothing an antivirus or "close
+        /// MetaTrader" advice could fix). The most likely real cause is that
+        /// this installer's OWN embedded copy of that file (baked in at
+        /// build time from the Assets folder) is itself empty or corrupted -
+        /// e.g. a 0-byte or truncated file was accidentally committed/
+        /// uploaded before the GitHub Actions build ran. A plain IOException
+        /// would fall through ClassifyLocalFileException's switch (its
+        /// default HResult matches none of the specific Win32 codes there)
+        /// and be misreported as a generic "unexpected file system error" -
+        /// which used to send users looking for a permissions or
+        /// disk-space problem that was never the real cause. This subtype
+        /// is classified explicitly instead, so the on-screen message names
+        /// the real, fixable problem.
+        /// </summary>
+        private sealed class FileVerificationException : IOException
+        {
+            public FileVerificationException(string message) : base(message) { }
         }
 
         private sealed class FileInstallOutcome
@@ -1381,6 +1409,10 @@ namespace NutriculaInstaller
                     case LocalFileFailureKind.PathNotFound:
                         return "Nutricula could not be installed because part of the MetaTrader folder could not be found. " +
                                "Please make sure MetaTrader is installed correctly and try again.";
+                    case LocalFileFailureKind.VerificationFailed:
+                        return "Nutricula could not be installed because one of its own installation files is missing or " +
+                               "corrupted inside this installer. This is not a problem with your computer - please " +
+                               "re-download the Nutricula installer (or rebuild it, if you are the developer) and try again.";
                     default:
                         return "Nutricula could not be installed due to an unexpected file system error. " +
                                "Please close MetaTrader and try again.";
