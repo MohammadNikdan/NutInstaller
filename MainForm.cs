@@ -861,7 +861,27 @@ namespace NutriculaInstaller
                 var iconBadge = new Panel { Location = new Point(20, 22), Size = new Size(44, 44), BackColor = Color.Transparent };
                 iconBadge.Paint += delegate (object sender, PaintEventArgs e)
                 {
-                    UiHelpers.DrawGlyphBadge(e.Graphics, iconBadge.ClientRectangle, UiHelpers.GlyphShield, UiHelpers.ErrorSoft, UiHelpers.Error, 20f);
+                    // Drawn in two steps instead of one UiHelpers.DrawGlyphBadge
+                    // call: the Segoe MDL2 Assets shield glyph carries its own
+                    // internal padding that is NOT symmetric (see
+                    // MaterialButton.CustomIconDrawer's own comment on this
+                    // same font quirk elsewhere in this file), so centering it
+                    // with a plain StringFormat.Center reads as sitting too far
+                    // up-and-left inside its circle. The circle is drawn at
+                    // full size as before; the glyph itself is then drawn in a
+                    // rectangle nudged slightly right and down so it lands
+                    // visually centered.
+                    e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+                    using (Brush bg = new SolidBrush(UiHelpers.ErrorSoft))
+                        e.Graphics.FillEllipse(bg, iconBadge.ClientRectangle);
+                    Rectangle glyphRect = iconBadge.ClientRectangle;
+                    glyphRect.Offset(2, 2);
+                    using (Font f = UiHelpers.IconFont(20f))
+                    using (Brush fg = new SolidBrush(UiHelpers.Error))
+                    using (StringFormat sf = new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center })
+                    {
+                        e.Graphics.DrawString(UiHelpers.GlyphShield, f, fg, glyphRect, sf);
+                    }
                 };
                 dialog.Controls.Add(iconBadge);
 
@@ -912,15 +932,20 @@ namespace NutriculaInstaller
                 };
                 dialog.Controls.Add(steps);
 
-                var okButton = new Button
+                // MaterialButton (the same style used for Back/Finish/Try
+                // Again elsewhere in this app) instead of a plain Button -
+                // the plain Button's hover feedback on Windows is a very
+                // faint border/tint change that is easy to miss; MaterialButton
+                // already paints a clearly different fill on hover, matching
+                // every other button in this installer.
+                var okButton = new MaterialButton("OK", null, ButtonKind.Filled)
                 {
-                    Text = "OK",
-                    Size = new Size(420, 36),
-                    Location = new Point(20, 250),
-                    DialogResult = DialogResult.OK
+                    Size = new Size(420, 40),
+                    Location = new Point(20, 248)
                 };
+                okButton.Click += delegate { dialog.Close(); };
                 dialog.Controls.Add(okButton);
-                dialog.AcceptButton = okButton;
+                dialog.CancelButton = null;
 
                 dialog.ShowDialog(this);
             }
