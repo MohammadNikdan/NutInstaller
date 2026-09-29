@@ -87,7 +87,7 @@ namespace NutriculaInstaller
 
             if (mode == InstallMode.Free)
             {
-                Task<FileInstallOutcome> freeInstallTask = InstallFilesAsync(terminals, token, progress, log);
+                Task<FileInstallOutcome> freeInstallTask = InstallFilesAsync(mode, terminals, token, progress, log);
 
                 /* Device key creation is a REQUIRED step for a Free install
                    to report success - the free-tier statistics table
@@ -105,15 +105,21 @@ namespace NutriculaInstaller
                 bool freeSucceeded = freeOutcome.AllSucceeded && deviceIdentityOk;
 
                 result.FilesInstalled = freeOutcome.AllSucceeded;
+                if (freeOutcome.AllSucceeded) RegisterUninstaller(mode, log);
                 result.ServerRequestFinished = true;
                 result.LicenseFileOperationFinished = true;
                 result.LicenseSucceeded = freeSucceeded;
                 result.OverallSuccess = freeSucceeded;
-                result.FinalMessage = freeSucceeded
+                string freeBaseMessage = freeSucceeded
                     ? Messages.FreeSuccess
                     : (!freeOutcome.AllSucceeded
                         ? Messages.ForFileFailure(freeOutcome.FailureKind)
                         : Messages.FreeDeviceIdentityFailure);
+                // See FileInstallOutcome.CoordinatorWarning's own comment -
+                // this used to be swallowed into a log line nobody ever saw.
+                result.FinalMessage = freeOutcome.CoordinatorWarning != null
+                    ? freeBaseMessage + "\n\n" + freeOutcome.CoordinatorWarning
+                    : freeBaseMessage;
                 return result;
             }
 
@@ -169,7 +175,7 @@ namespace NutriculaInstaller
                 }
             }
 
-            Task<FileInstallOutcome> installTask = InstallFilesAsync(terminals, token, progress, log);
+            Task<FileInstallOutcome> installTask = InstallFilesAsync(mode, terminals, token, progress, log);
             Task<ServerResult> serverTask = RequestLicenseAsync(mode, email, purchaseKey, transferKey, token, log);
 
             FileInstallOutcome fileOutcome = new FileInstallOutcome(false, LocalFileFailureKind.Unknown);
@@ -235,6 +241,7 @@ namespace NutriculaInstaller
             }
 
             result.FilesInstalled = fileOutcome.AllSucceeded;
+            if (fileOutcome.AllSucceeded) RegisterUninstaller(mode, log);
             result.ServerRequestFinished = serverResult != null && serverResult.Completed;
             result.ServerResponse = serverResult == null ? null : serverResult.RawResponse;
 
@@ -315,8 +322,16 @@ namespace NutriculaInstaller
                 return Messages.LicenseFileSaveFailed;
             }
 
-            // Everything succeeded.
-            return mode == InstallMode.Premium ? Messages.PremiumSuccess : Messages.TransferSuccess;
+            // Everything succeeded - except the Coordinator install itself
+            // may still have failed (see FileInstallOutcome.CoordinatorWarning's
+            // own comment): the license was activated and saved fine, but
+            // without a working Coordinator the EA can never actually
+            // refresh/verify it afterward, so this must not be silently
+            // dropped from the message the user sees.
+            string successMessage = mode == InstallMode.Premium ? Messages.PremiumSuccess : Messages.TransferSuccess;
+            return fileOutcome.CoordinatorWarning != null
+                ? successMessage + "\n\n" + fileOutcome.CoordinatorWarning
+                : successMessage;
         }
 
         /// <summary>
@@ -400,6 +415,7 @@ namespace NutriculaInstaller
         }
 
         private async Task<FileInstallOutcome> InstallFilesAsync(
+            InstallMode mode,
             List<TerminalInfo> terminals,
             CancellationToken token,
             IProgress<ProgressUpdate> progress,
@@ -533,9 +549,11 @@ namespace NutriculaInstaller
             // logged clearly, since without a working Coordinator the
             // License DLL can never reach Tier 2 (architecture point 100:
             // no direct-to-server fallback exists). ---
+            string coordinatorWarning = null;
             try
             {
                 await InstallCoordinatorAsync(
+                    mode,
                     resService32, resService64, resBroker32, resBroker64,
                     resManifest, resEx5, resEx4, resLicenseDll32, resLicenseDll64,
                     resMachineId32, resMachineId64,
@@ -549,11 +567,18 @@ namespace NutriculaInstaller
             }
             catch (Exception ex)
             {
+                coordinatorWarning = "The License Coordinator (background service that talks to the Nutricula " +
+                    "server) could not be installed (" + ex.Message + "). Your EA/indicator files were installed " +
+                    "successfully and will still open normally, but license activation and check-ins will not " +
+                    "work until this is resolved - please contact Nutricula support with this message.";
                 log("WARNING: License Coordinator install did not complete (" + ex.Message + "). " +
                     "EA/DLL files were installed successfully, but License activation will not work until this is resolved.");
             }
 
-            return new FileInstallOutcome(allSucceeded, allSucceeded ? LocalFileFailureKind.None : worstFailure);
+            return new FileInstallOutcome(allSucceeded, allSucceeded ? LocalFileFailureKind.None : worstFailure)
+            {
+                CoordinatorWarning = coordinatorWarning
+            };
         }
 
         /// <summary>
@@ -586,7 +611,109 @@ namespace NutriculaInstaller
         /// time, knows which of the manifest's per-architecture hashes to
         /// verify itself against.
         /// </summary>
+        /// <summary>
+        /// Where the Coordinator (Service or Broker) is installed for a
+        /// given mode.
+        ///
+        /// BUG FIX (found from a real report: Free installs reported
+        /// "success", yet NutriculaLicenseBroker.exe never showed up in
+        /// Task Manager at all, and no free-tier check-in was ever recorded
+        /// server-side): this used to be a single, hardcoded
+        /// %ProgramFiles%\Nutricula\LicenseService path used for every mode.
+        /// %ProgramFiles% is UAC-protected - writing to it requires
+        /// Administrator. Premium/Transfer are always elevated by this point
+        /// (MainForm.OnOptionTapped gates them on IsRunningAsAdministrator()
+        /// before they ever reach here), so that path was fine for them, but
+        /// Free is deliberately NEVER elevated (see OnOptionTapped's own
+        /// comment - the Free tier must work for a completely ordinary,
+        /// non-elevated run). So for every Free install, EnsureDirectoryAsync
+        /// on that %ProgramFiles% path threw UnauthorizedAccessException -
+        /// and that exception was, at the time, swallowed into a log(...)
+        /// call that is never shown anywhere on screen (see
+        /// FileInstallOutcome.CoordinatorWarning's own comment, added
+        /// alongside this fix, for why that is now also surfaced to the
+        /// user). Free now uses a per-user location that needs no
+        /// elevation at all - consistent with the Broker itself already
+        /// being registered per-user (HKCU Run key, per-user Scheduled
+        /// Task) rather than machine-wide.
+        /// </summary>
+        private static string GetCoordinatorInstallDir(InstallMode mode)
+        {
+            Environment.SpecialFolder root = mode == InstallMode.Free
+                ? Environment.SpecialFolder.LocalApplicationData
+                : Environment.SpecialFolder.ProgramFiles;
+            return Path.Combine(Environment.GetFolderPath(root), "Nutricula", "LicenseService");
+        }
+
+        /// <summary>
+        /// Registers Nutricula in Windows "Apps & Features" / "Programs and
+        /// Features" so the user has an ordinary, discoverable way to remove
+        /// everything this Installer put on the machine (see
+        /// UninstallService.cs for the actual removal logic) - previously
+        /// there was no uninstall path at all.
+        ///
+        /// Scope matches GetCoordinatorInstallDir's own per-mode split:
+        /// Free writes to HKCU (no elevation needed, consistent with Free
+        /// never being run elevated) and Premium/Transfer write to HKLM
+        /// (already running elevated at this point, and HKLM is the
+        /// conventional scope for a machine-wide Windows Service install).
+        /// Both a HKCU and a HKLM entry can legitimately exist at once (see
+        /// the Free -> Premium/Transfer upgrade case) - that is fine, since
+        /// UninstallService.PerformUninstall always cleans up both scopes
+        /// regardless of which one launched it.
+        ///
+        /// The installer's own .exe is copied next to the other Coordinator
+        /// files as "Uninstall.exe" because the ORIGINAL downloaded file the
+        /// person double-clicked may since have been moved, renamed, or
+        /// deleted - the UninstallString registered here must keep working
+        /// regardless of what happens to that original download.
+        ///
+        /// Deliberately best-effort: a failure here (e.g. some unexpected
+        /// registry permission issue) must never fail or roll back an
+        /// otherwise-successful install, so any exception is caught and only
+        /// logged - the person can still be walked through manual removal by
+        /// support if this one small step didn't take.
+        /// </summary>
+        private static void RegisterUninstaller(InstallMode mode, Action<string> log)
+        {
+            try
+            {
+                string nutriculaRoot = Path.Combine(
+                    Environment.GetFolderPath(mode == InstallMode.Free
+                        ? Environment.SpecialFolder.LocalApplicationData
+                        : Environment.SpecialFolder.ProgramFiles),
+                    "Nutricula");
+                Directory.CreateDirectory(nutriculaRoot);
+
+                string uninstallExePath = Path.Combine(nutriculaRoot, "Uninstall.exe");
+                string thisExePath = System.Reflection.Assembly.GetExecutingAssembly().Location;
+                if (!string.IsNullOrEmpty(thisExePath) && File.Exists(thisExePath))
+                {
+                    File.Copy(thisExePath, uninstallExePath, overwrite: true);
+                }
+
+                RegistryKey root = mode == InstallMode.Free ? Registry.CurrentUser : Registry.LocalMachine;
+                using (RegistryKey key = root.CreateSubKey(
+                    "Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\" + UninstallService.UninstallRegistryKeyName))
+                {
+                    key.SetValue("DisplayName", "Nutricula");
+                    key.SetValue("UninstallString", "\"" + uninstallExePath + "\" /uninstall");
+                    key.SetValue("Publisher", "Nutricula");
+                    key.SetValue("InstallLocation", nutriculaRoot);
+                    key.SetValue("NoModify", 1, RegistryValueKind.DWord);
+                    key.SetValue("NoRepair", 1, RegistryValueKind.DWord);
+                }
+                log("Registered Nutricula in Apps & Features for easy removal.");
+            }
+            catch (Exception ex)
+            {
+                log("WARNING: could not register Nutricula in Apps & Features (" + ex.Message +
+                    "). Nutricula was installed successfully regardless - this only affects how it can later be uninstalled.");
+            }
+        }
+
         private async Task InstallCoordinatorAsync(
+            InstallMode mode,
             ResourceItem resService32, ResourceItem resService64,
             ResourceItem resBroker32, ResourceItem resBroker64,
             ResourceItem resManifest, ResourceItem resEx5, ResourceItem resEx4,
@@ -594,9 +721,7 @@ namespace NutriculaInstaller
             ResourceItem resMachineId32, ResourceItem resMachineId64,
             CancellationToken token, Action<string> log)
         {
-            string installDir = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),
-                "Nutricula", "LicenseService");
+            string installDir = GetCoordinatorInstallDir(mode);
             await EnsureDirectoryAsync(installDir).ConfigureAwait(true);
 
             bool osIs64Bit = Environment.Is64BitOperatingSystem;
@@ -645,7 +770,13 @@ namespace NutriculaInstaller
             // absence triggers a fresh install attempt below.
             bool serviceAlreadyRegistered = IsServiceRegistered("NutriculaLicenseService");
 
-            if (!isWine && !serviceAlreadyRegistered)
+            // mode != InstallMode.Free: a fresh Service install is only ever
+            // attempted for Premium/Transfer, which are always elevated by
+            // this point - attempting it for Free would just burn the full
+            // 15-second timeout on a guaranteed failure (Free is deliberately
+            // never elevated), for no benefit, since Free never wanted a
+            // Service in the first place.
+            if (!isWine && !serviceAlreadyRegistered && mode != InstallMode.Free)
             {
                 // About to attempt a fresh Service install. If a Broker from
                 // an earlier free-tier install is currently running (or
@@ -657,7 +788,18 @@ namespace NutriculaInstaller
                 // concrete answer to "free tier installed, then later buys a
                 // license" - handled automatically here, no manual cleanup
                 // needed by the customer.
-                StopAndDisableExistingBroker(brokerPath, log);
+                //
+                // The Free-tier Broker's OWN files live under a DIFFERENT
+                // directory than this Premium/Transfer install (see
+                // GetCoordinatorInstallDir's comment: Free uses
+                // %LocalAppData%, never %ProgramFiles%), so that old
+                // directory is passed explicitly here - StopAndDisableExistingBroker
+                // matches the running process and registrations by NAME
+                // (works regardless of which directory it ran from), and
+                // also removes that now-orphaned directory so no stale
+                // free-tier copy of the Broker/manifest is left behind.
+                string staleFreeInstallDir = GetCoordinatorInstallDir(InstallMode.Free);
+                StopAndDisableExistingBroker(staleFreeInstallDir, log);
 
                 try
                 {
@@ -808,7 +950,19 @@ namespace NutriculaInstaller
         /// free-tier Broker from both listening on the same Named Pipe name
         /// at once (architecture point 63: exactly one Coordinator).
         /// </summary>
-        private static void StopAndDisableExistingBroker(string brokerPath, Action<string> log)
+        /// <summary>
+        /// Stops any running free-tier Broker and removes its auto-start
+        /// registrations (Run key + Scheduled Task watchdog), then deletes
+        /// its now-orphaned install directory - called right before a
+        /// Premium/Transfer Service install proceeds. The process kill and
+        /// registration cleanup match by NAME (Process.GetProcessesByName,
+        /// and the fixed Run-key/Scheduled-Task names), so they work
+        /// regardless of which directory the Broker actually ran from;
+        /// staleFreeInstallDir only needs to be exactly right for the final
+        /// directory-delete step, and callers pass
+        /// GetCoordinatorInstallDir(InstallMode.Free) for that.
+        /// </summary>
+        private static void StopAndDisableExistingBroker(string staleFreeInstallDir, Action<string> log)
         {
             try
             {
@@ -835,6 +989,26 @@ namespace NutriculaInstaller
                 RunHidden("schtasks.exe", "/Delete /F /TN \"NutriculaLicenseBrokerWatchdog\"", 10000);
             }
             catch { }
+
+            // The Broker process we just killed above may hold the directory
+            // open for a brief moment after Kill() returns - WaitForExit(5000)
+            // above already gives it time to release its own files, so this
+            // is best-effort but should normally succeed. Never fatal to the
+            // Service install proceeding either way (a leftover, inert old
+            // folder is harmless clutter, not a functional problem).
+            try
+            {
+                if (!string.IsNullOrEmpty(staleFreeInstallDir) && Directory.Exists(staleFreeInstallDir))
+                {
+                    Directory.Delete(staleFreeInstallDir, recursive: true);
+                    log("Removed the leftover free-tier License Broker folder (" + staleFreeInstallDir + ").");
+                }
+            }
+            catch (Exception ex)
+            {
+                log("WARNING: could not remove the leftover free-tier License Broker folder (" + ex.Message +
+                    "). This is harmless clutter, not a functional problem.");
+            }
 
             log("Stopped and disabled any existing free-tier License Broker before installing the License Service.");
         }
@@ -1277,6 +1451,24 @@ namespace NutriculaInstaller
         {
             public bool AllSucceeded { get; private set; }
             public LocalFileFailureKind FailureKind { get; private set; }
+            /// <summary>
+            /// Null when the Coordinator (Service/Broker) installed and
+            /// started cleanly. Otherwise, a short, user-facing explanation
+            /// of what went wrong with it.
+            ///
+            /// BUG FIX (found from a real report): the Coordinator install
+            /// used to be wrapped in a try/catch that only called log(...) -
+            /// which, per AppendLog's own doc comment, is never actually
+            /// shown anywhere on screen during install. That meant a
+            /// Coordinator failure (e.g. the Program-Files-permissions bug
+            /// this field was added to surface) was completely invisible:
+            /// the EA/DLL files installed fine, so the user saw "install
+            /// successful" with no indication that license activation /
+            /// free-tier check-ins would silently never work. This field
+            /// carries that failure into the final on-screen message
+            /// instead.
+            /// </summary>
+            public string CoordinatorWarning { get; set; }
             public FileInstallOutcome(bool allSucceeded, LocalFileFailureKind failureKind)
             {
                 AllSucceeded = allSucceeded;
