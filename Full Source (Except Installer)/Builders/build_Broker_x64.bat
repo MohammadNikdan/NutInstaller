@@ -20,6 +20,18 @@ if not exist %GPP64% (
     exit /b 1
 )
 
+REM --- windres.exe (resource compiler, embeds the Nutricula icon below) is
+REM     expected right next to g++.exe in the same Dev-C++/TDM-GCC bin
+REM     folder, which is the normal layout for every MinGW/TDM-GCC
+REM     distribution - no separate path to configure.
+for %%I in (%GPP64%) do set GPPDIR=%%~dpI
+set WINDRES="%GPPDIR%windres.exe"
+if not exist %WINDRES% (
+    echo ERROR: windres.exe not found at %WINDRES%
+    echo It should sit next to g++.exe in the same Dev-C++/TDM-GCC bin folder.
+    exit /b 1
+)
+
 if not exist "..\Coordinator\CoordinatorIdentityPrivate.h" (
     echo ERROR: CoordinatorIdentityPrivate.h is missing from ..\Coordinator\
     echo Copy it there temporarily from 01_DO_NOT_UPLOAD_TO_GITHUB before building.
@@ -51,6 +63,19 @@ if %ERRORLEVEL% NEQ 0 (
 set OUT_DIR=Builds
 if not exist %OUT_DIR% mkdir %OUT_DIR%
 
+REM --- Compile the Nutricula application icon (see
+REM     ..\Coordinator\NutriculaCoordinatorIcon.rc) into a linkable object,
+REM     so NutriculaLicenseBroker64.exe shows the Nutricula icon in Windows
+REM     Explorer AND in Task Manager's Details tab - previously this exe had
+REM     no icon resource at all. -F pe-x86-64 matches this script's 64-bit
+REM     output; see build_Broker_x86.bat for the 32-bit equivalent.
+set RES_OBJ=%OUT_DIR%\AppIcon_x64.o
+%WINDRES% -F pe-x86-64 -O coff -o %RES_OBJ% ..\Coordinator\NutriculaCoordinatorIcon.rc
+if %ERRORLEVEL% NEQ 0 (
+    echo Failed to compile the Nutricula application icon resource.
+    exit /b 1
+)
+
 %GPP64% -D_WIN32_WINNT=0x0601 -std=c++17 -O2 -static-libgcc -static-libstdc++ ^
     -I ..\Coordinator -I ..\LicenseCheck ^
     ..\Coordinator\NutriculaLicenseBroker.cpp ^
@@ -60,6 +85,7 @@ if not exist %OUT_DIR% mkdir %OUT_DIR%
     ..\LicenseCheck\ServerSignatureVerify.cpp ^
     ..\LicenseCheck\Transport.cpp ^
     ..\LicenseCheck\MachineIdBridge.cpp ^
+    %RES_OBJ% ^
     -o %OUT_DIR%\NutriculaLicenseBroker64.exe ^
     -lbcrypt -lcrypt32 -lwinhttp -ladvapi32
 
