@@ -88,7 +88,10 @@ REM windres to invoke the preprocessor by its bare name only - a bare name
 REM resolved via PATH never needs quoting, regardless of spaces/parentheses
 REM in the folder it resolves to.
 set PATH=%GPPBIN%;%PATH%
-set RES_OBJ=%OUT_DIR%\AppIcon_x86.o
+REM Built in %TEMP%, not in the repo/output folder - it's a throwaway
+REM intermediate, already embedded into the final .exe by the g++ link
+REM below, and deleted again right after that link succeeds.
+set RES_OBJ=%TEMP%\NutriculaBuild_Broker_AppIcon_x86.o
 %WINDRES% --preprocessor=gcc.exe --preprocessor-arg=-E --preprocessor-arg=-xc-header --preprocessor-arg=-DRC_INVOKED -F pe-i386 -O coff -o %RES_OBJ% ..\Coordinator\NutriculaCoordinatorIcon.rc
 if %ERRORLEVEL% NEQ 0 (
     echo Failed to compile the Nutricula application icon resource.
@@ -113,6 +116,7 @@ if %ERRORLEVEL% NEQ 0 (
     exit /b 1
 )
 echo BUILD SUCCEEDED: %OUT_DIR%\NutriculaLicenseBroker32.exe
+del /f /q "%RES_OBJ%" >nul 2>&1
 echo REMINDER: delete ..\Coordinator\CoordinatorIdentityPrivate.h AND ..\LicenseCheck\TransportKeyPrivate.h now.
 endlocalREM !!! Compiler: using TDM-GCC-64 with the -m32 flag to cross-compile to
 REM     32-bit. The REAL TDM-GCC project (unlike a plain single-arch
