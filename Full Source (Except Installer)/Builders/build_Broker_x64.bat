@@ -12,11 +12,18 @@ REM     build_LicenseCheck_x86.bat's comment for why -m32 is not used. !!!
 REM ============================================================================
 
 setlocal
-set GPP64="C:\Program Files (x86)\Embarcadero\Dev-Cpp\TDM-GCC-64\bin\g++.exe"
+REM GPPBIN is the plain, UNQUOTED bin folder - kept separate from GPP64/
+REM WINDRES (which need their own quotes for use as commands) so it can
+REM also be prepended to PATH further down without embedding stray quote
+REM characters into PATH itself (a quoted PATH segment is not a valid
+REM directory entry and would silently break PATH lookups).
+set GPPBIN=C:\Program Files (x86)\Embarcadero\Dev-Cpp\TDM-GCC-64\bin
+set GPP64="%GPPBIN%\g++.exe"
+set WINDRES="%GPPBIN%\windres.exe"
 
 if not exist %GPP64% (
     echo ERROR: g++.exe not found at %GPP64%
-    echo Edit this script and set GPP64 to your actual 64-bit Dev-C++ compiler path.
+    echo Edit this script and set GPPBIN to your actual 64-bit Dev-C++ compiler folder.
     exit /b 1
 )
 
@@ -24,13 +31,6 @@ REM --- windres.exe (resource compiler, embeds the Nutricula icon below) is
 REM     expected right next to g++.exe in the same Dev-C++/TDM-GCC bin
 REM     folder, which is the normal layout for every MinGW/TDM-GCC
 REM     distribution - no separate path to configure.
-REM NOTE: deliberately NOT using "for %%I in (%GPP64%) do set GPPDIR=%%~dpI"
-REM here - cmd.exe's FOR-list parser gets confused by the literal
-REM parentheses in "Program Files (x86)" even inside quotes, which made
-REM this script exit almost immediately (with no visible error, since the
-REM window closes as soon as a double-clicked .bat exits) as soon as this
-REM check was reached. Plain string substitution avoids FOR entirely.
-set WINDRES=%GPP64:g++.exe=windres.exe%
 if not exist %WINDRES% (
     echo ERROR: windres.exe not found at %WINDRES%
     echo It should sit next to g++.exe in the same Dev-C++/TDM-GCC bin folder.
@@ -74,8 +74,22 @@ REM     so NutriculaLicenseBroker64.exe shows the Nutricula icon in Windows
 REM     Explorer AND in Task Manager's Details tab - previously this exe had
 REM     no icon resource at all. -F pe-x86-64 matches this script's 64-bit
 REM     output; see build_Broker_x86.bat for the 32-bit equivalent.
+REM
+REM windres itself needs to run a C preprocessor over the .rc file first.
+REM Left to its own default, windres builds that preprocessor's full path
+REM (something like "...\TDM-GCC-64\bin\gcc.exe") WITHOUT quoting it, and
+REM a path containing "Program Files (x86)" then breaks with
+REM  'C:\Program' is not recognized as an internal or external command
+REM (this was the actual cause behind the "opens and immediately closes"
+REM symptom, and a separate/unrelated Windows "security warning" dialog
+REM some people see for a freshly downloaded .bat/.exe is not related to
+REM this). Fixed by TEMPORARILY adding this bin folder to PATH and telling
+REM windres to invoke the preprocessor by its bare name only - a bare name
+REM resolved via PATH never needs quoting, regardless of spaces/parentheses
+REM in the folder it resolves to.
+set PATH=%GPPBIN%;%PATH%
 set RES_OBJ=%OUT_DIR%\AppIcon_x64.o
-%WINDRES% -F pe-x86-64 -O coff -o %RES_OBJ% ..\Coordinator\NutriculaCoordinatorIcon.rc
+%WINDRES% --preprocessor=gcc.exe --preprocessor-arg=-E --preprocessor-arg=-xc-header --preprocessor-arg=-DRC_INVOKED -F pe-x86-64 -O coff -o %RES_OBJ% ..\Coordinator\NutriculaCoordinatorIcon.rc
 if %ERRORLEVEL% NEQ 0 (
     echo Failed to compile the Nutricula application icon resource.
     exit /b 1
