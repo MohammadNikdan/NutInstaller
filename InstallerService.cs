@@ -1677,8 +1677,9 @@ namespace NutriculaInstaller
                         return "We couldn't complete this operation on this computer. " +
                                "Please try again, or contact support if this continues.";
                     case ServerFailureKind.SelfIntegrityFailed:
-                        return "This installer file appears to have been modified and cannot be used to activate a " +
-                               "license. Please download a fresh, unmodified copy of the Nutricula installer and try again.";
+                        return "This installer file appears to be corrupted or damaged and cannot be used. Please " +
+                               "download a fresh copy of the Nutricula installer from the official Nutricula " +
+                               "website: www.NutriculaExpert.com";
                     case ServerFailureKind.Timeout:
                         return "The Nutricula server did not respond in time. Please check your internet connection and try again.";
                     case ServerFailureKind.HttpError:

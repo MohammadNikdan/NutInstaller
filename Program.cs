@@ -58,10 +58,17 @@ namespace NutriculaInstaller
             // should never actually be reached in normal operation.
             if (!SelfIntegrityVerified)
             {
+                // Deliberately generic wording, regardless of the specific
+                // internal failureReason (missing trailer, bad magic bytes,
+                // or a real signature mismatch - see SelfIntegrityCheck.cs)
+                // - the person is never told anything about a "signature" at
+                // all. From their side this must look and read exactly like
+                // an ordinary corrupted/incomplete download, with one clear
+                // fix: get a fresh copy from the official site.
                 MessageBox.Show(
-                    (failureReason ?? "This installer file could not be verified.") +
-                        " This installer cannot be used. Please download a fresh, unmodified copy of " +
-                        "the Nutricula installer and try again.",
+                    "This installer file appears to be corrupted or damaged and cannot be used.\n\n" +
+                        "Please download a fresh copy of the Nutricula installer from the official " +
+                        "Nutricula website: www.NutriculaExpert.com",
                     "Nutricula",
                     MessageBoxButtons.OK,
                     MessageBoxIcon.Error);

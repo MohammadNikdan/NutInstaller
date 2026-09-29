@@ -57,7 +57,7 @@ namespace NutriculaInstaller
 
                 if (fileBytes.Length < TrailerLen)
                 {
-                    failureReason = "This installer file is missing its integrity signature.";
+                    failureReason = "This installer file appears to be corrupted or invalid.";
                     return false;
                 }
 
@@ -66,7 +66,7 @@ namespace NutriculaInstaller
                 {
                     if (fileBytes[magicOffset + i] != MagicBytes[i])
                     {
-                        failureReason = "This installer file is missing its integrity signature.";
+                        failureReason = "This installer file appears to be corrupted or invalid.";
                         return false;
                     }
                 }
@@ -93,14 +93,14 @@ namespace NutriculaInstaller
                     bool valid = ecdsa.VerifyHash(cleanHash, signatureBytes);
                     if (!valid)
                     {
-                        failureReason = "The installer's integrity signature does not match this file's contents.";
+                        failureReason = "This installer file appears to be corrupted or invalid.";
                     }
                     return valid;
                 }
             }
             catch (Exception)
             {
-                failureReason = "The installer's integrity could not be verified.";
+                failureReason = "This installer file appears to be corrupted or invalid.";
                 return false;
             }
         }

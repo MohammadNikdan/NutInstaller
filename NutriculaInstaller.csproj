@@ -49,6 +49,7 @@
     <Compile Include="MainForm.cs" />
     <Compile Include="Models.cs" />
     <Compile Include="InstallerService.cs" />
+    <Compile Include="UninstallService.cs" />
     <Compile Include="MachineIdService.cs" />
     <Compile Include="CryptoService.cs" />
     <Compile Include="TerminalDiscoveryService.cs" />
