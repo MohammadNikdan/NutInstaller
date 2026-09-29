@@ -334,36 +334,68 @@ namespace NutriculaInstaller
         {
             return Task.Run(delegate
             {
-                try
+                // BUG FIX (found from a real report, confirmed to happen even
+                // with an all-ASCII Windows user name, so it is NOT the
+                // APPDATA/non-ASCII-user-name issue fixed earlier in
+                // MachineIdService.EnsureLoaded): the free install failed
+                // once with this exact "device identity" error, then
+                // succeeded immediately on "Try Again" with nothing else
+                // changed. "Try Again" re-runs inside the SAME process (see
+                // MainForm.OnTryAgainTapped), so the only thing different on
+                // the second attempt is time elapsed - the signature of a
+                // one-time, transient slow/failed first call, not a
+                // permanent problem. The per-DLL-load retry already added to
+                // EnsureLoaded() only covers the specific case of the DLL
+                // file itself being briefly locked; it does not cover other
+                // plausible first-call delays such as the native DLL's WMI/
+                // COM initialization (used to read hardware identifiers)
+                // genuinely taking longer than usual the very first time a
+                // process touches WMI, or a real-time antivirus product
+                // momentarily delaying the DLL's actual first EXECUTION
+                // (not just its load) while it is inspected. Rather than
+                // depend on the user clicking "Try Again" themselves, the
+                // whole sequence below is now retried a few times, with a
+                // real pause between attempts, before actually giving up.
+                const int maxAttempts = 3;
+                const int retryDelayMs = 1500;
+                Exception lastException = null;
+                for (int attempt = 1; attempt <= maxAttempts; attempt++)
                 {
-                    // Machine ID is attempted but its success is NOT
-                    // required here (see the free_checkin design: a device
-                    // key alone is sufficient to identify this computer in
-                    // the unlicensed-usage table if machine_id can't be
-                    // produced on this particular system - very rare, but
-                    // possible, e.g. inside certain restricted containers).
-                    // 2026 hardening: Free installs always use the WithGuid
-                    // variant (never the primary/no-GUID one) - Free's
-                    // machine_id exists purely for check-in statistics and
-                    // never gates activation, so there's no reason to
-                    // prefer the "stable across OS reinstall" property
-                    // here. This matches what CoordinatorCore.cpp's own
-                    // free_checkin path sends.
-                    MachineIdService.GenerateComputerIdWithGuid();
-                    string devicePublicKey = MachineIdService.GetDevicePublicKey();
-                    if (string.IsNullOrEmpty(devicePublicKey))
+                    try
                     {
-                        log("Device key could not be created or loaded during the free install.");
-                        return false;
+                        // Machine ID is attempted but its success is NOT
+                        // required here (see the free_checkin design: a device
+                        // key alone is sufficient to identify this computer in
+                        // the unlicensed-usage table if machine_id can't be
+                        // produced on this particular system - very rare, but
+                        // possible, e.g. inside certain restricted containers).
+                        // 2026 hardening: Free installs always use the WithGuid
+                        // variant (never the primary/no-GUID one) - Free's
+                        // machine_id exists purely for check-in statistics and
+                        // never gates activation, so there's no reason to
+                        // prefer the "stable across OS reinstall" property
+                        // here. This matches what CoordinatorCore.cpp's own
+                        // free_checkin path sends.
+                        MachineIdService.GenerateComputerIdWithGuid();
+                        string devicePublicKey = MachineIdService.GetDevicePublicKey();
+                        if (!string.IsNullOrEmpty(devicePublicKey))
+                        {
+                            log("Free install setup completed" + (attempt > 1 ? " (attempt " + attempt + ")." : "."));
+                            return true;
+                        }
+                        lastException = null;
                     }
-                    log("Free install setup completed.");
-                    return true;
+                    catch (Exception ex)
+                    {
+                        lastException = ex;
+                    }
+
+                    if (attempt < maxAttempts) Thread.Sleep(retryDelayMs);
                 }
-                catch (Exception)
-                {
-                    log("Device key could not be created or loaded during the free install.");
-                    return false;
-                }
+
+                log("Device key could not be created or loaded during the free install after " +
+                    maxAttempts + " attempts." + (lastException != null ? " (" + lastException.Message + ")" : ""));
+                return false;
             });
         }
 
