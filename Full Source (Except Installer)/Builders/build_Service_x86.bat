@@ -24,8 +24,13 @@ REM --- windres.exe (resource compiler, embeds the Nutricula icon below) is
 REM     expected right next to g++.exe in the same Dev-C++/TDM-GCC bin
 REM     folder, which is the normal layout for every MinGW/TDM-GCC
 REM     distribution - no separate path to configure.
-for %%I in (%GPP32%) do set GPPDIR=%%~dpI
-set WINDRES="%GPPDIR%windres.exe"
+REM NOTE: deliberately NOT using "for %%I in (%GPP32%) do set GPPDIR=%%~dpI"
+REM here - cmd.exe's FOR-list parser gets confused by the literal
+REM parentheses in "Program Files (x86)" even inside quotes, which made
+REM this script exit almost immediately (with no visible error, since the
+REM window closes as soon as a double-clicked .bat exits) as soon as this
+REM check was reached. Plain string substitution avoids FOR entirely.
+set WINDRES=%GPP32:g++.exe=windres.exe%
 if not exist %WINDRES% (
     echo ERROR: windres.exe not found at %WINDRES%
     echo It should sit next to g++.exe in the same Dev-C++/TDM-GCC bin folder.
