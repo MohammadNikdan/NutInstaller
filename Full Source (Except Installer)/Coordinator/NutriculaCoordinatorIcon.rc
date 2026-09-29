@@ -1,0 +1,16 @@
+// Application icon for the Coordinator binaries (NutriculaLicenseService.exe
+// and NutriculaLicenseBroker.exe). Windows Explorer and Task Manager's
+// "Details" tab both show the icon with the LOWEST resource ID in an exe's
+// resources as its "main" icon - hence ID 1 here, matching the convention
+// the C# Installer itself already follows for its own icon.
+//
+// Shared by both build_Broker_*.bat and build_Service_*.bat (see their own
+// comments) - both binaries get the same Nutricula icon, since to a user in
+// Task Manager they are both just "Nutricula" processes.
+//
+// The referenced icon.ico is resolved relative to THIS .rc file's own
+// location (standard windres/cpp #include-style resolution, independent of
+// whatever directory a build script happens to be invoked from) - so this
+// path must stay in sync with icon.ico's actual location at the repository
+// root, two levels up from this Coordinator folder.
+1 ICON "../../icon.ico"
