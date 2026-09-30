@@ -40,6 +40,20 @@ constexpr int TIER_FREE = 1;
 constexpr int TIER_LICENSED = 2;
 constexpr int TIER_FAILED = -10;
 constexpr int TIER_UPDATE_REQUIRED = -50; // "please update the EA" - see CoordinatorCore.h's comment for the full explanation
+// BUG FIX (2026, found via a documentation review of every tier value this
+// DLL can receive): this constant was simply never declared here at all,
+// even though CoordinatorProtocol.h's own StatusReplyMsg comment explicitly
+// lists -100 as one of the meaningful tier values, and the Coordinator
+// genuinely publishes it (see CoordinatorCore.cpp's clone-detection Reject
+// handling, rejectReason == "blocked"). Without this constant AND the
+// matching branch below, a real, signature-verified TIER_BLOCKED status
+// from the Coordinator matched none of the existing `else if` conditions in
+// Nutricula_Poll and was silently dropped - g_tier simply kept whatever
+// value it held before the block (which could still be TIER_LICENSED if
+// the EA had been trading normally right up until the clone-detection
+// block triggered), so a blocked license was never actually reflected to
+// MQL at all.
+constexpr int TIER_BLOCKED = -100;
 constexpr int PENDING_IDLE = -1;
 constexpr int PENDING_COMM_FAIL = -2;
 constexpr int PENDING_REFRESH_IN_PROGRESS = -3;
@@ -443,6 +457,22 @@ extern "C" __declspec(dllexport) void __cdecl Nutricula_Poll()
             g_tier.store(TIER_UPDATE_REQUIRED);
             std::lock_guard<std::mutex> lock(g_verifiedCacheMutex);
             g_verifiedTierClaim = TIER_UPDATE_REQUIRED;
+        }
+        else if (sigOk && status.tier == TIER_BLOCKED)
+        {
+            // BUG FIX (2026) - see TIER_BLOCKED's own declaration comment
+            // above. A signature-verified "blocked" Reject (clone detection
+            // tripped) must immediately override any previously-cached Tier
+            // 2 state, exactly like TIER_UPDATE_REQUIRED already did -
+            // otherwise an EA that was mid-session on a genuine Tier 2
+            // would keep trading as licensed for up to
+            // STALE_COORDINATOR_DEGRADE_SECONDS after the server explicitly
+            // said this license is blocked, since GetLicenseTier()'s own
+            // re-verification only re-checks the LAST cached verified
+            // canonical, which without this branch would never be replaced.
+            g_tier.store(TIER_BLOCKED);
+            std::lock_guard<std::mutex> lock(g_verifiedCacheMutex);
+            g_verifiedTierClaim = TIER_BLOCKED;
         }
         else if (!sigOk)
         {
