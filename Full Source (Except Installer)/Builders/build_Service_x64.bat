@@ -98,7 +98,17 @@ if %ERRORLEVEL% NEQ 0 (
     exit /b 1
 )
 
-%GPP64% -D_WIN32_WINNT=0x0601 -std=c++17 -O2 -static-libgcc -static-libstdc++ ^
+REM --- -s (strip) removes the symbol table from the output binary. WITHOUT
+REM     it, the names of INTERNAL (non-exported) functions stay embedded and
+REM     readable in the shipped file - verified directly: `nm`/`strings` on an
+REM     unstripped build happily lists them (CoordinatorCore::EvaluateLocalFile,
+REM     EstimatedNow, ...), handing a reverse engineer a free map of the code.
+REM     Stripping removes those names while leaving the DLL export table, the
+REM     .rsrc icon and the .pdata/.xdata exception-unwind tables fully intact
+REM     (all three verified), so runtime behavior is completely unchanged.
+REM     NOTE: this changes the binary's SHA-256, so the manifest MUST be
+REM     regenerated with NutriculaSignTool after rebuilding.
+%GPP64% -D_WIN32_WINNT=0x0601 -std=c++17 -O2 -s -static-libgcc -static-libstdc++ ^
     -I ..\Coordinator -I ..\LicenseCheck ^
     ..\Coordinator\NutriculaLicenseService.cpp ^
     ..\Coordinator\CoordinatorCore.cpp ^
