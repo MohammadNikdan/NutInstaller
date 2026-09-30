@@ -55,6 +55,12 @@ unsigned __stdcall ServeOneClient(void* param)
         return 0;
     }
 
+    // The EA/DLL just genuinely talked to us over the pipe - either
+    // message type counts as "the EA is actually attached to a running
+    // MetaTrader right now" (see CoordinatorCore::NoteEaActivity's own
+    // comment for why WorkerLoop needs this signal).
+    g_core.NoteEaActivity();
+
     if (requestBuf.type == CoordinatorProtocol::MessageType::GetStatus)
     {
         CoordinatorProtocol::StatusReplyMsg reply;
