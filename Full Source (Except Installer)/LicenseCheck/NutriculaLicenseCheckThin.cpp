@@ -185,6 +185,25 @@ std::atomic<unsigned long long> g_hsToken{0};
 // one-time memory patch of the token still lapses on its own.
 constexpr unsigned long long NUT_HS_VALID_MS = 30ULL * 60ULL * 1000ULL; // 30 min
 
+// Consolidated-status tracking (2026, for Check_Core_Integrity below).
+// Separate from g_hsTick/g_hsToken on purpose: those two only ever get
+// WRITTEN on a SUCCESSFUL handshake, so on their own they cannot tell "never
+// attempted yet" apart from "attempted and got the wrong answer" - both look
+// like "tick==0" to HandshakeValid(). These two flags track the MOST RECENT
+// attempt's own outcome directly, regardless of any earlier success still
+// sitting in its 30-minute window, which is what lets a single bad attempt
+// be reported immediately instead of only once the old grant expires.
+std::atomic<bool> g_hsEverAttempted{false};
+std::atomic<bool> g_hsLastAttemptOk{false};
+
+// Same idea, for the Coordinator/server side of Poll() rather than the EA
+// handshake - declared up here (rather than next to Nutricula_Poll further
+// down) purely so Check_Core_Integrity, which is defined earlier in the
+// file than Nutricula_Poll, can see them. Full explanation of what each
+// means sits with Nutricula_Poll's own implementation further down.
+std::atomic<bool> g_pollEverCompleted{false};
+std::atomic<bool> g_lastPollOutcomeOk{false};
+
 inline bool HandshakeValid()
 {
     unsigned long long tick = g_hsTick.load();
@@ -1688,8 +1707,41 @@ double __stdcall Zenith_Star_137(double p1, double pt2, int junk) {
 // =========================================================================
 // ???? ?????: ??????? ????? ?????? ???? MQL5
 // =========================================================================
+//
+// REWRITTEN (2026, at the project owner's explicit request) into a single
+// consolidated status code, unifying all three verification layers into one
+// value so MQL only ever has to read ONE function to decide what to do:
+//
+//    0    EA<->DLL handshake (layer 3) has literally never been attempted
+//         yet this process ("still connecting MQL to DLL").
+//   -1    Handshake is fine, but no Nutricula_Poll() cycle has completed
+//         yet at all ("still connecting DLL to server, keep waiting").
+//   -2    ANY problem: the most recent handshake attempt was wrong, OR an
+//         earlier-successful handshake's 30-minute grant has lapsed without
+//         a fresh success, OR the last completed Poll cycle could not reach/
+//         identity-verify the Coordinator (layer 1), OR its signature did
+//         not verify (layer 2), OR the server itself reported TIER_FAILED
+//         (exhausted its own verification attempts). All of these collapse
+//         to the same code on purpose - the project owner wants ANY of them
+//         treated identically (Alert + remove), not distinguished.
+//  -50    TIER_UPDATE_REQUIRED, unchanged.
+// -100    TIER_BLOCKED, unchanged.
+//   1     TIER_FREE, unchanged.
+//   2     TIER_LICENSED, unchanged.
+//
+// Only reached through NxD (id 322) like every other calc function - this
+// rewrite changes ONLY what this one function computes, not its export
+// status, its dispatcher id, or its MQL-side wrapper's name/signature, so
+// nothing on the MQL side needs to change for this alone.
 int __stdcall Check_Core_Integrity() {
-    return EffectiveTier();
+    if (!g_hsEverAttempted.load()) return 0;
+    if (!g_hsLastAttemptOk.load()) return -2;   // most recent attempt was wrong - immediate, regardless of any earlier grant still technically valid
+    if (!HandshakeValid()) return -2;           // was right before, but that grant has since lapsed with no fresh attempt
+    if (!g_pollEverCompleted.load()) return -1; // handshake is fine, just no answer from the Coordinator/server yet
+    if (!g_lastPollOutcomeOk.load()) return -2; // last poll cycle: Coordinator unreachable/unverified, or signature invalid
+    int t = g_tier.load();
+    if (t == TIER_FAILED) return -2;            // server exhausted its own verification attempts - folded into -2 as requested
+    return t;                                    // TIER_FREE, TIER_LICENSED, TIER_UPDATE_REQUIRED, or TIER_BLOCKED pass through unchanged
 }
 
 // ???? ????? ???? ????? ??????? ??? (??? ??? ???????)
@@ -5505,6 +5557,18 @@ std::atomic<bool> g_pollInFlight{false};
 std::mutex g_initMutex;
 std::atomic<bool> g_publicKeyLoaded{false};
 
+// g_pollEverCompleted/g_lastPollOutcomeOk (used by Nutricula_Poll just below,
+// and by Check_Core_Integrity) are declared near the top of this file instead
+// of here, purely so Check_Core_Integrity - defined earlier in the file - can
+// see them. g_pollEverCompleted is set true at every exit point of
+// Nutricula_Poll(), success or failure alike - it only answers "has a poll
+// cycle finished at all yet", not "did it go well". g_lastPollOutcomeOk
+// records THAT cycle's own trustworthiness: false only when the Coordinator
+// couldn't be reached/identity-verified (layer 1) or its signature didn't
+// verify (layer 2) - true for every other outcome, including a legitimate
+// TIER_FAILED answer, since that IS a genuine, trustworthy response from
+// the system, just not a positive one.
+
 // Tracks the last time g_tier was set to TIER_LICENSED via a genuinely,
 // independently verified signature (never just "Coordinator said so").
 // Used to degrade gracefully if the Coordinator becomes unreachable for an
@@ -5834,7 +5898,12 @@ extern "C" __declspec(dllexport) void __cdecl Nutricula_Poll()
     if (!EnsurePublicKeyLoaded())
     {
         // Cannot verify anything without the server public key - stay at
-        // whatever the last known-good state was; do not guess.
+        // whatever the last known-good state was; do not guess. Still
+        // counted as a completed (failed) poll cycle for Check_Core_Integrity
+        // - otherwise a genuinely broken install would sit at "-1: still
+        // waiting" forever instead of ever surfacing as an actionable "-2".
+        g_pollEverCompleted.store(true);
+        g_lastPollOutcomeOk.store(false);
         g_pollInFlight.store(false);
         return;
     }
@@ -5858,6 +5927,8 @@ extern "C" __declspec(dllexport) void __cdecl Nutricula_Poll()
             g_tier.store(TIER_FREE);
         }
         g_pending.store(PENDING_COMM_FAIL);
+        g_pollEverCompleted.store(true);
+        g_lastPollOutcomeOk.store(false); // layer 1 failure
         g_pollInFlight.store(false);
         return;
     }
@@ -5933,17 +6004,42 @@ extern "C" __declspec(dllexport) void __cdecl Nutricula_Poll()
             // glitch forwarding the signature shouldn't nuke a
             // previously-good Tier 2 the DLL already independently
             // verified on an earlier Poll) - it just skips updating g_tier
-            // this cycle.
+            // this cycle. Still surfaced via g_lastPollOutcomeOk below so
+            // Check_Core_Integrity can report it immediately (as "-2"),
+            // even though g_tier itself is deliberately left untouched.
+            g_lastPollOutcomeOk.store(false);
+            g_pollEverCompleted.store(true);
+            g_pending.store(status.pending);
+            g_pollInFlight.store(false);
+            return;
         }
+        // Every sigOk branch above reached here falls through to a genuine,
+        // trustworthy outcome for this cycle.
+        g_lastPollOutcomeOk.store(true);
     }
     else if (status.tier == TIER_FAILED)
     {
         // TIER_FAILED (10 attempts exhausted) carries no signature to
         // verify by design - it's an absence-of-proof state, not a
-        // positive claim requiring authentication.
+        // positive claim requiring authentication. Still a genuine,
+        // trustworthy answer FROM the system (not a comms/verification
+        // failure OF the polling mechanism itself) - Check_Core_Integrity
+        // folds this into "-2" separately, via g_tier, not via this flag.
         g_tier.store(TIER_FAILED);
+        g_lastPollOutcomeOk.store(true);
+    }
+    else
+    {
+        // Neither branch matched: canonicalLen/signatureLen were 0 and the
+        // tier isn't TIER_FAILED either - i.e. "no verified response
+        // available yet" per StatusReplyMsg's own doc comment (e.g. no
+        // license ever requested on this machine, still legitimately Idle).
+        // Not a failure of anything - g_tier is correctly left at its
+        // current value (TIER_FREE by default).
+        g_lastPollOutcomeOk.store(true);
     }
 
+    g_pollEverCompleted.store(true);
     g_pending.store(status.pending);
     g_pollInFlight.store(false);
 }
@@ -7005,8 +7101,15 @@ extern "C" __declspec(dllexport) long long __cdecl NxW(
 // both sides.
 extern "C" __declspec(dllexport) int __cdecl Nutricula_Handshake(long long nonce, long long response)
 {
+    g_hsEverAttempted.store(true);
     unsigned long long expected = NutHsMix((unsigned long long)nonce);
-    if ((unsigned long long)response == expected)
+    bool ok = ((unsigned long long)response == expected);
+    // Recorded regardless of ok/not-ok, and regardless of whether an earlier
+    // successful attempt is still sitting inside its own 30-minute window -
+    // this is what lets Check_Core_Integrity see a single bad attempt as an
+    // immediate problem rather than only once that earlier grant lapses.
+    g_hsLastAttemptOk.store(ok);
+    if (ok)
     {
         unsigned long long tick = GetTickCount64();
         g_hsTick.store(tick == 0 ? 1ULL : tick);
