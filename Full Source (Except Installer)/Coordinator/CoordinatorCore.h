@@ -87,6 +87,18 @@ public:
     // Snapshot read for IPC StatusReplyMsg construction.
     void GetPublished(int& outTier, int& outPending, std::string& outCanonical, std::string& outSignatureB64);
 
+    // Called from ServeOneClient (both the Service's and the Broker's own
+    // copies) whenever the EA/DLL genuinely talks to us over the pipe -
+    // GetStatus or RequestRefresh, either counts (see WorkerLoop's own
+    // comment for why). This is the ONLY signal the Coordinator has that
+    // an EA is actually attached to a running MetaTrader right now, as
+    // opposed to merely being installed on this machine - WorkerLoop uses
+    // it to skip its own periodic network activity entirely (no
+    // free_checkin telemetry, no license verify) when nobody has asked in
+    // a while, so an installed-but-unused copy generates zero server
+    // traffic instead of running forever in the background.
+    void NoteEaActivity();
+
 private:
     void WorkerLoop();
 
@@ -102,6 +114,15 @@ private:
     // pure statistics, not a security-relevant check, so there is no need
     // to burden the server with it as often as real license verification.
     long long m_lastFreeCheckinSentAt = 0;
+    // Last time (EstimatedNow(), i.e. clock-anchor-protected, not raw wall
+    // clock) the EA/DLL was heard from over the pipe - see NoteEaActivity.
+    // 0 means "never" (covers both a fresh install where the EA hasn't
+    // been opened yet, and a just-restarted Coordinator process, since
+    // this is in-memory only and intentionally not persisted to disk).
+    // Atomic because it's written from whichever short-lived
+    // ServeOneClient thread happens to be handling the current pipe
+    // connection, and read from the separate WorkerLoop thread.
+    std::atomic<long long> m_lastEaActivityAt{0};
 };
 
 } // namespace Coordinator

@@ -40,6 +40,18 @@ constexpr long long MAX_RANDOM_OFFSET_SEC = 900;   // 15:00
 // itself is throttled to this interval via m_lastFreeCheckinSentAt.
 constexpr long long FREE_CHECKIN_INTERVAL_SEC = 1800; // 30:00
 
+// EA-activity gate (2026): how long a "the EA/DLL pinged us over the pipe"
+// signal (see CoordinatorCore::NoteEaActivity) stays "recent" before
+// WorkerLoop treats this install as idle and skips its own periodic
+// network activity entirely. Deliberately longer than EITHER tier's own
+// natural check-in cadence (FREE_CHECKIN_INTERVAL_SEC=30:00 for Free,
+// MAX_RANDOM_OFFSET_SEC=15:00 for Premium/Transfer) plus real slack, so a
+// genuinely-running EA (which polls far more often than either of those,
+// every few seconds while attached to a chart) always has time to have
+// pinged us at least once before WorkerLoop next reaches this gate -
+// never a source of false "idle" positives for real, active usage.
+constexpr long long EA_ACTIVITY_WINDOW_SEC = FREE_CHECKIN_INTERVAL_SEC + 300; // 35:00
+
 // Deterministically derives the next-request offset from a lease's
 // refresh token - same token always yields the same offset (so a
 // restart never changes it), but the value is unpredictable to anyone
@@ -375,6 +387,15 @@ void CoordinatorCore::RequestRefreshIfDue()
     if (m_wakeEvent) SetEvent(m_wakeEvent);
 }
 
+void CoordinatorCore::NoteEaActivity()
+{
+    m_lastEaActivityAt.store(EstimatedNow());
+    // Also wake WorkerLoop immediately if it's sitting in the idle-gate
+    // wait below - so an EA that just opened/reconnected gets picked up
+    // right away instead of waiting out the rest of that wait's timeout.
+    if (m_wakeEvent) SetEvent(m_wakeEvent);
+}
+
 void CoordinatorCore::GetPublished(int& outTier, int& outPending, std::string& outCanonical, std::string& outSignatureB64)
 {
     outTier = m_state.tier.load();
@@ -389,6 +410,30 @@ void CoordinatorCore::WorkerLoop()
     for (;;)
     {
         LocalFileState local = EvaluateLocalFile();
+
+        // Expired-license handling (2026, product decision): once a
+        // license is LOCALLY determined to be expired, this machine is
+        // meant to behave exactly as if it never had a license at all -
+        // delete the stale lease file (so this isn't re-decided against
+        // the same stale data on every single loop iteration, and so a
+        // human looking at the machine sees no leftover license file
+        // either) and fall straight into the ordinary free-tier telemetry
+        // path below, on the ordinary free-tier cadence. This is a
+        // deliberate choice: reactivating after expiry goes through the
+        // installer again (purchase key / transfer key), never through a
+        // silent background auto-renewal - a real subscription renewal on
+        // the server is therefore NOT automatically picked back up by
+        // this loop; the customer has to run the installer again. This
+        // also fixes what used to be an unthrottled ~5-second retry loop
+        // against an already-rejected/expired license (no backoff existed
+        // for that case at all).
+        if (local.hasLease && local.licenseCurrentlyExpired)
+        {
+            std::wstring stalePath = GetLicenseFilePathW();
+            if (!stalePath.empty()) DeleteFileW(stalePath.c_str());
+            local = LocalFileState(); // re-evaluate this iteration as a fresh, lease-free install
+        }
+
         long long now = EstimatedNow();
 
         // Layer 1 (cheap, local-only clone/copy detection - see the
@@ -485,6 +530,44 @@ void CoordinatorCore::WorkerLoop()
                 // loop re-checks whether a refresh is genuinely due yet.
                 ResetEvent(m_wakeEvent);
                 WaitForSingleObject(m_wakeEvent, static_cast<DWORD>(waitSeconds * 1000));
+                continue;
+            }
+
+            // EA-activity gate (2026): everything from here down is either
+            // a real license verify (Premium/Transfer) or free-tier
+            // telemetry - both only mean something, and were only ever
+            // meant to represent, actual USE of the product right now.
+            // Previously this loop kept talking to the server on its own
+            // clock forever, even for an install where the EA/DLL hasn't
+            // been loaded into a running MetaTrader in days or weeks -
+            // counted as "active" free-tier usage, and kept spending a
+            // verify round-trip on a Premium/Transfer license nobody is
+            // even using at the moment. Skip the whole refresh attempt
+            // (no artifact check, no network call at all - not even
+            // free-tier telemetry) unless the EA has actually talked to us
+            // over the pipe (see NoteEaActivity, called from
+            // ServeOneClient in both the Service and the Broker) within
+            // the last EA_ACTIVITY_WINDOW_SEC. That window is comfortably
+            // longer than either tier's own natural check-in cadence, so a
+            // genuinely-running EA (which polls far more often than that)
+            // always has time to have pinged us before this gate is
+            // reached - this never produces a false "idle" read for real,
+            // active usage, only for installs nobody is currently running.
+            long long lastEaActivity = m_lastEaActivityAt.load();
+            bool eaActiveRecently = (lastEaActivity != 0) &&
+                ((EstimatedNow() - lastEaActivity) <= EA_ACTIVITY_WINDOW_SEC);
+            if (!eaActiveRecently)
+            {
+                m_state.pending.store(PENDING_IDLE);
+                ResetEvent(m_wakeEvent);
+                // A short, fixed wait (rather than reusing the target/
+                // waitSeconds math above, which is anchored to a
+                // requestedAt that isn't moving while we're skipping
+                // network activity) - just re-checks "has the EA shown up
+                // yet" periodically. NoteEaActivity also signals
+                // m_wakeEvent directly, so a newly-opened EA is picked up
+                // immediately rather than waiting out this timeout anyway.
+                WaitForSingleObject(m_wakeEvent, 30000);
                 continue;
             }
 
