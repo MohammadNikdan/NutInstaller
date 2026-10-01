@@ -12,7 +12,7 @@ require_once __DIR__ . '/license_common.php';
 const CHECK_ALLOWED_FIELDS = [
     'v', 'stage', 'license_id', 'machine_id', 'machine_id_alt', 'device_key_hash', 'local_ip',
     'challenge_id', 'signature', 'build_id', 'ex5_hash', 'ex4_hash', 'dll32_hash', 'dll64_hash',
-    'machineid32_hash', 'machineid64_hash', 'service_hash', 'broker_hash',
+    'machineid32_hash', 'machineid64_hash', 'broker_hash',
     'refresh_token',
 ];
 const CHALLENGE_STAGE_FIELDS = ['v', 'stage', 'license_id', 'machine_id', 'machine_id_alt', 'device_key_hash', 'local_ip'];
@@ -35,21 +35,22 @@ const CHALLENGE_STAGE_FIELDS = ['v', 'stage', 'license_id', 'machine_id', 'machi
    existing challenge/verify path instead of this one. */
 const FREE_CHECKIN_STAGE_FIELDS = ['v', 'stage', 'machine_id', 'device_key_hash'];
 /* build_id/ex5_hash/dll32_hash/dll64_hash/machineid32_hash/machineid64_hash/
-   service_hash: Artifact Evidence (architecture points 47-49/88) - the
+   broker_hash: Artifact Evidence (architecture points 47-49/88) - the
    Coordinator's own measured hashes of the currently-installed EX5/DLL32/
-   DLL64/MachineId32/MachineId64/Service, bound into the SAME device
+   DLL64/MachineId32/MachineId64/Broker, bound into the SAME device
    signature that proves possession of the license's private key.
    machineid32_hash/machineid64_hash were added alongside dll32_hash/
-   dll64_hash (not alongside service_hash/broker_hash) because MachineId32/
-   64.dll are unconditional, always-both-present artifacts just like the
-   License Check DLLs - never trusted as bare client-reported values (point
-   46/122) - see the comparison against nutricula_build_manifests below,
-   which is the only source of "expected" hashes this endpoint ever
-   consults. */
+   dll64_hash (not alongside broker_hash) because MachineId32/64.dll are
+   unconditional, always-both-present artifacts just like the License Check
+   DLLs - never trusted as bare client-reported values (point 46/122) - see
+   the comparison against nutricula_build_manifests below, which is the only
+   source of "expected" hashes this endpoint ever consults. (The Windows
+   Service host was removed in 2026 - the Broker is the sole Coordinator -
+   so there is no longer a service_hash field.) */
 const VERIFY_STAGE_FIELDS = [
     'v', 'stage', 'license_id', 'machine_id', 'machine_id_alt', 'device_key_hash', 'local_ip', 'challenge_id', 'signature',
     'build_id', 'ex5_hash', 'ex4_hash', 'dll32_hash', 'dll64_hash',
-    'machineid32_hash', 'machineid64_hash', 'service_hash', 'broker_hash',
+    'machineid32_hash', 'machineid64_hash', 'broker_hash',
     'refresh_token',
 ];
 
@@ -373,10 +374,9 @@ try {
         $dll64Hash = strtolower(trim(nutricula_required_field($fields, 'dll64_hash')));
         $machineid32Hash = strtolower(trim(nutricula_required_field($fields, 'machineid32_hash')));
         $machineid64Hash = strtolower(trim(nutricula_required_field($fields, 'machineid64_hash')));
-        $serviceHash = strtolower(trim(nutricula_required_field($fields, 'service_hash')));
         $brokerHash = strtolower(trim(nutricula_required_field($fields, 'broker_hash')));
         if ($buildId === '' || strlen($buildId) > 64) $rejectTracked('artifact_mismatch');
-        foreach ([$ex5Hash, $ex4Hash, $dll32Hash, $dll64Hash, $machineid32Hash, $machineid64Hash, $serviceHash, $brokerHash] as $h) {
+        foreach ([$ex5Hash, $ex4Hash, $dll32Hash, $dll64Hash, $machineid32Hash, $machineid64Hash, $brokerHash] as $h) {
             if (!preg_match('/\A[0-9a-f]{64}\z/', $h)) $rejectTracked('artifact_mismatch');
         }
 
@@ -412,7 +412,6 @@ try {
             '|dll64_hash=' . $dll64Hash .
             '|machineid32_hash=' . $machineid32Hash .
             '|machineid64_hash=' . $machineid64Hash .
-            '|service_hash=' . $serviceHash .
             '|broker_hash=' . $brokerHash;
 
         $publicKeyPem = nutricula_build_p256_pem((string)$license['device_public_key_b64']);
@@ -431,7 +430,7 @@ try {
         $manifestStmt = $conn->prepare(
             'SELECT version, ex5_sha256, ex4_sha256, dll32_sha256, dll64_sha256,
                     machineid32_sha256, machineid64_sha256,
-                    service32_sha256, service64_sha256, broker32_sha256, broker64_sha256
+                    broker32_sha256, broker64_sha256
              FROM nutricula_build_manifests WHERE build_id=? LIMIT 1'
         );
         if (!$manifestStmt) throw new RuntimeException('DB prepare failed.');
@@ -440,20 +439,17 @@ try {
         $expectedManifest = $manifestStmt->get_result()->fetch_assoc();
         $manifestStmt->close();
 
-        /* Both architectures of Service/Broker genuinely ship to customers
+        /* Both architectures of the Broker genuinely ship to customers
            (32-bit Windows hosts are a real, supported case) - the reporting
            Coordinator only ever measures and reports its OWN binary's hash
            (it has no way to even know the other architecture's file, which
            isn't present on its machine), so this server-side check accepts
-           a match against EITHER the 32-bit or the 64-bit expected value,
-           for each of service/broker independently. This is still exact
-           equality against a server-known-good value either way - never a
-           looser check - just against one of two valid values instead of
-           one. */
-        $serviceMatches = $expectedManifest && (
-            hash_equals((string)$expectedManifest['service32_sha256'], $serviceHash) ||
-            hash_equals((string)$expectedManifest['service64_sha256'], $serviceHash)
-        );
+           a match against EITHER the 32-bit or the 64-bit expected value.
+           This is still exact equality against a server-known-good value
+           either way - never a looser check - just against one of two valid
+           values instead of one. (The Windows Service host was removed in
+           2026 - the Broker is the sole Coordinator - so there is no
+           service_hash to check anymore.) */
         $brokerMatches = $expectedManifest && (
             hash_equals((string)$expectedManifest['broker32_sha256'], $brokerHash) ||
             hash_equals((string)$expectedManifest['broker64_sha256'], $brokerHash)
@@ -466,7 +462,7 @@ try {
             !hash_equals((string)$expectedManifest['dll64_sha256'], $dll64Hash) ||
             !hash_equals((string)$expectedManifest['machineid32_sha256'], $machineid32Hash) ||
             !hash_equals((string)$expectedManifest['machineid64_sha256'], $machineid64Hash) ||
-            !$serviceMatches || !$brokerMatches) {
+            !$brokerMatches) {
             $rejectTracked('artifact_mismatch');
         }
 
