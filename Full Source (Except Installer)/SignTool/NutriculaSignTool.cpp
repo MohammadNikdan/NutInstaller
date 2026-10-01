@@ -1,17 +1,17 @@
 //
 // NutriculaSignTool.cpp - offline build-signing tool (architecture point
 // 32/117). Run ONLY on the secure build machine, never distributed to
-// customers, never committed anywhere the DLL/Service/Broker are built
-// from (it links VendorIdentityPrivate.h, which must never ship).
+// customers, never committed anywhere the DLL/Broker are built from (it
+// links VendorIdentityPrivate.h, which must never ship).
 //
 // TWO WAYS TO RUN IT:
 //
 //   1) Interactive (recommended, default) - just run NutriculaSignTool.exe
 //      with NO arguments, e.g. by double-clicking it or typing its name
-//      alone in Command Prompt. It expects all 10 required build artifacts
+//      alone in Command Prompt. It expects all 8 required build artifacts
 //      (see RequiredArtifacts() below) to already be sitting in the SAME
 //      folder as NutriculaSignTool.exe itself - it checks for each one by
-//      name, tells you which (if any) are missing, and if all 10 are
+//      name, tells you which (if any) are missing, and if all 8 are
 //      present it asks you for build_id/version/protocol_version one at a
 //      time, then writes manifest.txt AND database_insert.sql into that
 //      same folder. This avoids ever having to type or paste a long
@@ -21,7 +21,6 @@
 //        NutriculaSignTool.exe <build_id> <version> <protocol_version>
 //            <path_to_ex5> <path_to_ex4> <path_to_dll32> <path_to_dll64>
 //            <path_to_machineid32> <path_to_machineid64>
-//            <path_to_service32> <path_to_service64>
 //            <path_to_broker32> <path_to_broker64>
 //            <output_manifest_path>
 //      Still fully supported, unchanged, for anyone scripting a build.
@@ -33,13 +32,14 @@
 // next to manifest.txt - so the only manual step left is pasting that SQL
 // into your database client.
 //
-// Both architectures of Service/Broker are hashed and included in one
-// manifest, since a single build/release genuinely ships both 32-bit and
-// 64-bit Coordinator binaries now (32-bit Windows hosts are a real,
-// supported case) - the Installer picks which one to actually install
-// based on the CUSTOMER's OS bitness, and whichever one gets installed
-// must be independently verifiable against its own hash, not a hash for
-// the other architecture.
+// Both architectures of the Broker are hashed and included in one manifest,
+// since a single build/release genuinely ships both 32-bit and 64-bit
+// Coordinator binaries (32-bit Windows hosts are a real, supported case) -
+// the Installer picks which one to actually install based on the CUSTOMER's
+// OS bitness, and whichever one gets installed must be independently
+// verifiable against its own hash, not a hash for the other architecture.
+// (The Windows Service host was removed in 2026 - the Broker is the sole
+// Coordinator - so there are no longer any service32/64 artifacts.)
 //
 // MachineId32.dll/MachineId64.dll are hashed and included the same way as
 // dll32/dll64 above (both architectures, unconditionally, BOTH always
@@ -47,7 +47,7 @@
 // the Coordinator itself (MachineIdBridge), and a tampered copy could
 // spoof or freeze machine_id without touching any other file, so it must
 // be covered by this same manifest just like every other shipped
-// artifact. Unlike Service/Broker (where only ONE architecture is ever
+// artifact. Unlike the Broker (where only ONE architecture is ever
 // actually installed on a given customer machine, so either one matching
 // is accepted), a 32-bit MT4 and a 64-bit MT5 can both be talking to the
 // SAME Coordinator at once, each needing its own genuine MachineId DLL -
@@ -96,15 +96,15 @@ std::string Base64Encode(const unsigned char* data, size_t len)
     return out;
 }
 
-// All 10 artifact hashes a manifest needs, gathered in one place so both
+// All 8 artifact hashes a manifest needs, gathered in one place so both
 // the interactive and scripted paths build/sign/write the exact same way.
 struct HashSet
 {
     std::string ex5, ex4, dll32, dll64, machineid32, machineid64;
-    std::string service32, service64, broker32, broker64;
+    std::string broker32, broker64;
 };
 
-// Hashes all 10 artifacts. Returns true only if every single one hashed
+// Hashes all 8 artifacts. Returns true only if every single one hashed
 // successfully; on the first failure, firstFailureLabel is set to a short
 // name identifying which artifact failed (e.g. "MachineId32.dll") so the
 // caller can report exactly what went wrong - never silently skipped.
@@ -112,7 +112,6 @@ bool HashAllArtifacts(
     const std::wstring& ex5Path, const std::wstring& ex4Path,
     const std::wstring& dll32Path, const std::wstring& dll64Path,
     const std::wstring& machineid32Path, const std::wstring& machineid64Path,
-    const std::wstring& service32Path, const std::wstring& service64Path,
     const std::wstring& broker32Path, const std::wstring& broker64Path,
     HashSet& out, std::vector<std::string>& failedLabels)
 {
@@ -124,8 +123,6 @@ bool HashAllArtifacts(
         { &dll64Path,       &HashSet::dll64,       "NutriculaLicenseCheck64.dll" },
         { &machineid32Path, &HashSet::machineid32, "MachineId32.dll" },
         { &machineid64Path, &HashSet::machineid64, "MachineId64.dll" },
-        { &service32Path,   &HashSet::service32,   "NutriculaLicenseService32.exe" },
-        { &service64Path,   &HashSet::service64,   "NutriculaLicenseService64.exe" },
         { &broker32Path,    &HashSet::broker32,    "NutriculaLicenseBroker32.exe" },
         { &broker64Path,    &HashSet::broker64,    "NutriculaLicenseBroker64.exe" },
     };
@@ -162,8 +159,6 @@ std::string BuildSignedManifestText(
     ss << "dll64_sha256=" << h.dll64 << "\n";
     ss << "machineid32_sha256=" << h.machineid32 << "\n";
     ss << "machineid64_sha256=" << h.machineid64 << "\n";
-    ss << "service32_sha256=" << h.service32 << "\n";
-    ss << "service64_sha256=" << h.service64 << "\n";
     ss << "broker32_sha256=" << h.broker32 << "\n";
     ss << "broker64_sha256=" << h.broker64 << "\n";
     std::string signedPortion = ss.str();
@@ -212,7 +207,7 @@ std::string BuildDbInsertSql(
     ss << "    (build_id, version, protocol_version,\n";
     ss << "     ex5_sha256, ex4_sha256, dll32_sha256, dll64_sha256,\n";
     ss << "     machineid32_sha256, machineid64_sha256,\n";
-    ss << "     service32_sha256, service64_sha256, broker32_sha256, broker64_sha256,\n";
+    ss << "     broker32_sha256, broker64_sha256,\n";
     ss << "     created_at)\n";
     ss << "VALUES\n";
     ss << "    ('" << SqlEscape(buildId) << "', '" << SqlEscape(version) << "', '"
@@ -223,8 +218,6 @@ std::string BuildDbInsertSql(
     ss << "     '" << h.dll64 << "',\n";
     ss << "     '" << h.machineid32 << "',\n";
     ss << "     '" << h.machineid64 << "',\n";
-    ss << "     '" << h.service32 << "',\n";
-    ss << "     '" << h.service64 << "',\n";
     ss << "     '" << h.broker32 << "',\n";
     ss << "     '" << h.broker64 << "',\n";
     ss << "     NOW());\n";
@@ -297,15 +290,15 @@ bool PromptYesNo(const char* prompt)
     return line == "y" || line == "yes";
 }
 
-// The 10 build artifacts, in the exact order they're hashed/signed in -
+// The 8 build artifacts, in the exact order they're hashed/signed in -
 // ex5/ex4/dll32/dll64/machineid32/machineid64 reuse the SAME name
 // constants CoordinatorProtocol.h, ManifestVerify and the Coordinator's
 // own runtime check all agree on, so these names can never drift apart
 // from what the Coordinator will actually look for on a customer's
-// machine. service32/64 and broker32/64 are build-output names only (the
-// Installer later places whichever ONE matches the customer's OS bitness
-// under the Coordinator's fixed single running name) - so those 4 stay as
-// plain literals here, not shared constants.
+// machine. broker32/64 are build-output names only (the Installer later
+// places whichever ONE matches the customer's OS bitness under the
+// Coordinator's fixed single running name) - so those 2 stay as plain
+// literals here, not shared constants.
 struct RequiredFile { const wchar_t* name; };
 const RequiredFile* RequiredArtifacts(size_t& count)
 {
@@ -316,8 +309,6 @@ const RequiredFile* RequiredArtifacts(size_t& count)
         { CoordinatorProtocol::ARTIFACT_DLL64_NAME },
         { CoordinatorProtocol::ARTIFACT_MACHINEID32_NAME },
         { CoordinatorProtocol::ARTIFACT_MACHINEID64_NAME },
-        { L"NutriculaLicenseService32.exe" },
-        { L"NutriculaLicenseService64.exe" },
         { L"NutriculaLicenseBroker32.exe" },
         { L"NutriculaLicenseBroker64.exe" },
     };
@@ -370,7 +361,6 @@ int RunInteractive()
         dir + CoordinatorProtocol::ARTIFACT_EX5_NAME, dir + CoordinatorProtocol::ARTIFACT_EX4_NAME,
         dir + CoordinatorProtocol::ARTIFACT_DLL32_NAME, dir + CoordinatorProtocol::ARTIFACT_DLL64_NAME,
         dir + CoordinatorProtocol::ARTIFACT_MACHINEID32_NAME, dir + CoordinatorProtocol::ARTIFACT_MACHINEID64_NAME,
-        dir + L"NutriculaLicenseService32.exe", dir + L"NutriculaLicenseService64.exe",
         dir + L"NutriculaLicenseBroker32.exe", dir + L"NutriculaLicenseBroker64.exe",
         hashes, failedLabels);
     if (!allHashed)
@@ -426,17 +416,15 @@ int RunFromArguments(char** argv)
     std::wstring dll64Path = Utf8ToWide(argv[7]);
     std::wstring machineid32Path = Utf8ToWide(argv[8]);
     std::wstring machineid64Path = Utf8ToWide(argv[9]);
-    std::wstring service32Path = Utf8ToWide(argv[10]);
-    std::wstring service64Path = Utf8ToWide(argv[11]);
-    std::wstring broker32Path = Utf8ToWide(argv[12]);
-    std::wstring broker64Path = Utf8ToWide(argv[13]);
-    std::wstring outPath = Utf8ToWide(argv[14]);
+    std::wstring broker32Path = Utf8ToWide(argv[10]);
+    std::wstring broker64Path = Utf8ToWide(argv[11]);
+    std::wstring outPath = Utf8ToWide(argv[12]);
 
     HashSet hashes;
     std::vector<std::string> failedLabels;
     bool allHashed = HashAllArtifacts(
         ex5Path, ex4Path, dll32Path, dll64Path, machineid32Path, machineid64Path,
-        service32Path, service64Path, broker32Path, broker64Path,
+        broker32Path, broker64Path,
         hashes, failedLabels);
     if (!allHashed)
     {
@@ -483,7 +471,7 @@ int RunFromArguments(char** argv)
 
 int main(int argc, char** argv)
 {
-    if (argc == 15)
+    if (argc == 13)
     {
         return RunFromArguments(argv);
     }
@@ -492,13 +480,13 @@ int main(int argc, char** argv)
         return RunInteractive();
     }
 
-    printf("Interactive mode (recommended): run %s with NO arguments. It looks for all 10\n"
+    printf("Interactive mode (recommended): run %s with NO arguments. It looks for all 8\n"
         "required build artifacts next to itself and asks for build_id/version/\n"
         "protocol_version one at a time.\n\n", argv[0]);
     printf("Scripted mode: %s <build_id> <version> <protocol_version> "
         "<ex5_path> <ex4_path> <dll32_path> <dll64_path> "
         "<machineid32_path> <machineid64_path> "
-        "<service32_path> <service64_path> <broker32_path> <broker64_path> "
+        "<broker32_path> <broker64_path> "
         "<output_manifest_path>\n", argv[0]);
     return 1;
 }
