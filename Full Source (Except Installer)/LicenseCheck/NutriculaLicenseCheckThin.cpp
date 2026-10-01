@@ -29,11 +29,15 @@
 #include "../Coordinator/EcdsaHelpers.h"
 #include "ServerSignatureVerify.h"
 #include <windows.h>
+#include <bcrypt.h>
 #include <process.h>
 #include <atomic>
 #include <mutex>
 #include <string>
 #include <cmath>
+#include <cstring>
+
+#pragma comment(lib, "bcrypt.lib")
 
 namespace {
 
@@ -62,7 +66,12 @@ constexpr int PENDING_REFRESH_IN_PROGRESS = -3;
 // Hot-path state (architecture point 3): plain atomics, no locks, no IPC,
 // no file I/O, no signature check on every read - only Poll() ever touches
 // the Coordinator, and only occasionally.
-std::atomic<int> g_tier{TIER_FREE};
+//
+// g_tier itself (the actual storage) is defined further down, right after
+// NutHsMix - it needs that mix function to XOR-obfuscate its value (2026
+// hardening - see the comment there for why). SetTier()/GetTierRaw() are
+// its only legitimate accessors; nothing above this point reads or writes
+// it directly.
 std::atomic<int> g_pending{PENDING_IDLE};
 
 
@@ -174,12 +183,109 @@ inline unsigned long long NutHsMix(unsigned long long x)
     return x ^ 0xD6E8FEB86659FD93ULL;
 }
 
+// ============================================================================
+// Obfuscated/self-verifying state (2026 hardening - project owner's
+// follow-up to the EA-binding handshake work above).
+//
+// THE GAP THIS CLOSES: EffectiveTier(), HandshakeValid(), and
+// Check_Core_Integrity() all ultimately read from just THREE plain global
+// atomics (the tier, and the handshake tick+token). A count of every place
+// in this file that WRITES any of those three found only about 8 call
+// sites total, versus well over a thousand places that READ them (every
+// one of the ~1020 real-IP calculation functions, via EffectiveTier()).
+// EffectiveTier() being a tiny `inline` function compiled into each of
+// those 1020 call sites (rather than one shared function address) already
+// means there is no single "patch the gate" shortcut for the calculation
+// functions specifically - but the cheapest attack was never patching
+// 1020 read sites anyway. It was finding these 3 small, plain, predictable
+// integers once (via a debugger or a Cheat-Engine-style memory scan) and
+// freezing them to licensed-looking values - a handful of write sites (or
+// even just the raw addresses, poked directly) is all that attack ever
+// needed to touch.
+//
+// FIX: the tier and the handshake tick/token are no longer stored as
+// plain integers. Each is XOR-encoded against a mask derived (via
+// NutHsMix, the same keyed mix already used for the EA handshake) from a
+// random salt generated fresh every time this DLL is loaded. A blind
+// memory poke - writing "2" where the tier used to be, or a plausible-
+// looking tick/token pair - now lands on ciphertext for a key the
+// attacker does not have, so it decodes to effectively a random tier
+// value and an invalid handshake, not the value they intended to force.
+// The salt is never written to disk and never leaves this process, so it
+// cannot be learned in advance or reused from a previous run - it has to
+// be rediscovered, in a live debugger, every single time. That is strictly
+// harder than before (a precomputed/scripted poke no longer works at
+// all), though - same honest ceiling as everywhere else in this section -
+// an attacker who fully reverse-engineers a live, running process can
+// still recover the salt and go on to compute a valid pair.
+// ============================================================================
+
+inline unsigned long long ObfuscationSalt()
+{
+    static std::atomic<unsigned long long> salt{0};
+    unsigned long long current = salt.load();
+    if (current != 0) return current;
+
+    unsigned char buf[sizeof(unsigned long long)] = {0};
+    unsigned long long generated = 0;
+    if (BCryptGenRandom(nullptr, buf, sizeof(buf), BCRYPT_USE_SYSTEM_PREFERRED_RNG) == 0)
+    {
+        std::memcpy(&generated, buf, sizeof(generated));
+    }
+    if (generated == 0)
+    {
+        // Practically unreachable - BCryptGenRandom with the system
+        // preferred RNG does not fail on any currently supported version
+        // of Windows. Kept only so a salt of exactly 0 (which would make
+        // every XOR below a no-op) is never used even in that case.
+        generated = NutHsMix(GetTickCount64() ^ static_cast<unsigned long long>(reinterpret_cast<uintptr_t>(&buf)) ^ 0x4E7574726943756CULL);
+        if (generated == 0) generated = 1;
+    }
+
+    unsigned long long expected = 0;
+    if (salt.compare_exchange_strong(expected, generated)) return generated;
+    return salt.load(); // another thread initialized it first - use that one
+}
+
+inline unsigned long long TierMask()  { return NutHsMix(ObfuscationSalt() ^ 0x5449455200ULL);  /* "TIER\0" */ }
+inline unsigned long long TickMask()  { return NutHsMix(ObfuscationSalt() ^ 0x5449434B00ULL);  /* "TICK\0" */ }
+inline unsigned long long TokenMask() { return NutHsMix(ObfuscationSalt() ^ 0x544F4B4E00ULL);  /* "TOKN\0" */ }
+
+std::atomic<int> g_tierObfuscated{0};
+std::atomic<bool> g_tierInitialized{false};
+
+// The only legitimate way to set/read the tier from here on - every write
+// site (6 of them) and every read site (EffectiveTier, Check_Core_Integrity,
+// Nutricula_GetLicenseTier) goes through these instead of touching storage
+// directly. Before g_tierInitialized is ever set (i.e. before the first
+// handshake/poll cycle has run at all), GetTierRaw() reports TIER_FREE -
+// matching the original plain atomic's {TIER_FREE} default exactly.
+inline void SetTier(int tier)
+{
+    g_tierObfuscated.store(tier ^ static_cast<int>(TierMask()));
+    g_tierInitialized.store(true);
+}
+
+inline int GetTierRaw()
+{
+    if (!g_tierInitialized.load()) return TIER_FREE;
+    return g_tierObfuscated.load() ^ static_cast<int>(TierMask());
+}
+
 // Last successful-handshake tick (GetTickCount64, boot-relative ms) and the
-// expected token that was matched. Both must be set for the gate to open.
-// Shared across all charts in this terminal process (one DLL instance), written
-// by whichever chart's OnInit/OnTimer last ran the handshake.
-std::atomic<unsigned long long> g_hsTick{0};
-std::atomic<unsigned long long> g_hsToken{0};
+// expected token that was matched, XOR-encoded as above. Both must be set
+// for the gate to open. Shared across all charts in this terminal process
+// (one DLL instance), written by whichever chart's OnInit/OnTimer last ran
+// the handshake.
+std::atomic<unsigned long long> g_hsTickObfuscated{0};
+std::atomic<unsigned long long> g_hsTokenObfuscated{0};
+
+inline void SetHandshakeState(unsigned long long tick, unsigned long long token)
+{
+    g_hsTickObfuscated.store(tick ^ TickMask());
+    g_hsTokenObfuscated.store(token ^ TokenMask());
+}
+
 // The handshake must be renewed at least this often (the EA re-runs it on its
 // timer). Generous window so a slow timer never breaks a genuine EA, while a
 // one-time memory patch of the token still lapses on its own.
@@ -233,20 +339,39 @@ std::atomic<int> g_pipeFailStreak{0};
 
 inline bool HandshakeValid()
 {
-    unsigned long long tick = g_hsTick.load();
+    unsigned long long tick = g_hsTickObfuscated.load() ^ TickMask();
     if (tick == 0) return false;               // never handshaked this process
-    if (g_hsToken.load() == 0) return false;
+    if ((g_hsTokenObfuscated.load() ^ TokenMask()) == 0) return false;
     unsigned long long now = GetTickCount64();
     return (now - tick) <= NUT_HS_VALID_MS;     // monotonic clock, no wall-clock dependency
 }
 
+// Full anti-tamper reverification (debugger detection + rate-limited
+// signature re-check against the last genuinely-signed canonical this
+// process received) - defined later in this file, alongside the state it
+// depends on (g_verifiedCanonical/g_verifiedSignatureB64/IsDebuggerAttached/
+// ServerSignatureVerify). This bodyless declaration is all EffectiveTier()
+// and Check_Core_Integrity() need to call it despite being defined earlier.
+//
+// 2026 hardening: this used to protect ONLY the legacy Nutricula_GetLicenseTier()
+// export - EffectiveTier() (and therefore every one of the ~1020 real-IP
+// calculation functions) trusted a raw tier read with NO reverification at
+// all, meaning a memory-patched g_tier used to be caught and reverted for
+// the legacy getter within TIER_REVERIFY_INTERVAL_MS, while the actual
+// trading math stayed silently unlocked the entire time. Both now go
+// through this exact same check - see its own definition further down for
+// the full explanation.
+int AntiTamperCheckedTier(int rawTier);
+
 // The single tier accessor every calculation function uses. Identical to
-// g_tier.load() while a genuine EA handshake is in effect (so real, licensed
-// operation is byte-for-byte unchanged), and 0 otherwise (forcing the fake
-// branch in every function).
+// GetTierRaw() while a genuine EA handshake is in effect AND that raw tier
+// survives anti-tamper reverification (so real, licensed operation is
+// byte-for-byte unchanged), and 0 otherwise (forcing the fake branch in
+// every function).
 inline int EffectiveTier()
 {
-    return HandshakeValid() ? g_tier.load() : 0;
+    if (!HandshakeValid()) return 0;
+    return AntiTamperCheckedTier(GetTierRaw());
 }
 
 double GetChaos(double input) {
@@ -1767,7 +1892,12 @@ int __stdcall Check_Core_Integrity() {
     if (!g_pollEverCompleted.load()) return -1; // handshake is fine, just no answer from the Coordinator/server yet
     if (!g_lastPollOutcomeOk.load()) return -2; // zero-tolerance problem: missing public key, invalid server signature, or a TIER_FAILED verdict - never a local-pipe miss (see g_pipeFailStreak's own comment)
     if (g_pipeFailStreak.load() >= NUT_PIPE_FAIL_TOLERANCE) return -2; // local pipe to Coordinator has failed too many times IN A ROW - a one-off hiccup is tolerated, a sustained one is not
-    int t = g_tier.load();
+    // 2026 hardening: routed through the same anti-tamper reverification as
+    // EffectiveTier()/Nutricula_GetLicenseTier() - this is the function MQL
+    // itself calls to decide whether to keep the EA running at all, so a
+    // raw memory-patched tier claim must not be able to talk this gate into
+    // reporting "all clear" either.
+    int t = AntiTamperCheckedTier(GetTierRaw());
     if (t == TIER_FAILED) return -2;            // server exhausted its own verification attempts - folded into -2 as requested
     return t;                                    // TIER_FREE, TIER_LICENSED, TIER_UPDATE_REQUIRED, or TIER_BLOCKED pass through unchanged
 }
@@ -5808,30 +5938,33 @@ void SendRefreshRequest()
     CloseHandle(pipe);
 }
 
-} // namespace
-
-extern "C" __declspec(dllexport) int __cdecl Nutricula_Initialize()
-{
-    return EnsurePublicKeyLoaded() ? 1 : 0;
-}
-
-// How often GetLicenseTier actually re-runs the real cryptographic
-// re-verification, rather than every single call - this function runs in
-// MQL's OnTick hot path (architecture point 3), which can fire hundreds or
-// thousands of times per second on an active chart; a full RSA signature
-// verification on every single call would be far too slow to be practical
-// there. An attacker who patches g_tier in memory now only gets away with
-// it for at most this long before the next real re-verification catches
-// and reverts it - not "never checked" (the original gap), and not
+// How often a TIER_LICENSED claim actually gets re-run through the real
+// cryptographic reverification below, rather than on every single call -
+// both of this function's callers (EffectiveTier via Check_Core_Integrity/
+// the 1020 calculation functions, and the legacy Nutricula_GetLicenseTier
+// export) can run in MQL's OnTick hot path, which can fire hundreds or
+// thousands of times per second on an active chart; a full signature
+// verification on every single call would be far too slow to be
+// practical there. An attacker who patches the tier in memory now only
+// gets away with it for at most this long before the next real
+// re-verification catches and reverts it - not "never checked", and not
 // "checked every microsecond" (too slow to ship).
 constexpr unsigned long long TIER_REVERIFY_INTERVAL_MS = 3000; // 3 seconds
 std::atomic<unsigned long long> g_lastReverifyTickMs{0};
 std::atomic<bool> g_lastReverifyResult{true}; // cached outcome between real re-verifications
 
-extern "C" __declspec(dllexport) int __cdecl Nutricula_GetLicenseTier()
+// Shared anti-tamper gate - see its forward declaration (right before
+// EffectiveTier, near the top of this file) for the full explanation of
+// what this closes and why both EffectiveTier() and the legacy
+// Nutricula_GetLicenseTier() export now go through it.
+//
+// Only a TIER_LICENSED claim is ever reverified here - FREE/FAILED/
+// BLOCKED/UPDATE_REQUIRED pass through unchanged, since forging a LOWER
+// tier is not a threat worth spending a real signature check on (nobody
+// attacks a license by making themselves look less licensed).
+int AntiTamperCheckedTier(int rawTier)
 {
-    int cached = g_tier.load();
-    if (cached != TIER_LICENSED) return cached;
+    if (rawTier != TIER_LICENSED) return rawTier;
 
     unsigned long long nowTick = GetTickCount64();
     unsigned long long lastTick = g_lastReverifyTickMs.load();
@@ -5842,14 +5975,14 @@ extern "C" __declspec(dllexport) int __cdecl Nutricula_GetLicenseTier()
         return g_lastReverifyResult.load() ? TIER_LICENSED : TIER_FREE;
     }
 
-    // Time for a real re-verification. The actual anti-tamper point: g_tier
-    // alone is NOT trusted for a TIER_LICENSED claim, no matter what value
-    // it currently holds - it is cross-checked against an independent
-    // re-verification of the last genuinely signed canonical this process
-    // itself received and already verified once (in Poll). Patching g_tier
-    // directly in memory (e.g. via a debugger or Cheat-Engine-style tool)
-    // no longer has unlimited effect: it is caught and reverted within
-    // TIER_REVERIFY_INTERVAL_MS at the latest.
+    // Time for a real re-verification. The actual anti-tamper point: the
+    // raw tier alone is NOT trusted for a TIER_LICENSED claim, no matter
+    // what value it currently holds - it is cross-checked against an
+    // independent re-verification of the last genuinely signed canonical
+    // this process itself received and already verified once (in Poll).
+    // Patching the tier directly in memory (e.g. via a debugger or
+    // Cheat-Engine-style tool) no longer has unlimited effect: it is
+    // caught and reverted within TIER_REVERIFY_INTERVAL_MS at the latest.
     bool ok = !IsDebuggerAttached();
     if (ok)
     {
@@ -5861,6 +5994,22 @@ extern "C" __declspec(dllexport) int __cdecl Nutricula_GetLicenseTier()
     g_lastReverifyResult.store(ok);
     g_lastReverifyTickMs.store(nowTick);
     return ok ? TIER_LICENSED : TIER_FREE;
+}
+
+} // namespace
+
+extern "C" __declspec(dllexport) int __cdecl Nutricula_Initialize()
+{
+    return EnsurePublicKeyLoaded() ? 1 : 0;
+}
+
+// Thin wrapper - all the actual anti-tamper logic (debugger detection +
+// rate-limited signature reverification) now lives in AntiTamperCheckedTier,
+// shared with EffectiveTier()/Check_Core_Integrity() - see that function's
+// own comment, just above the closing of the anonymous namespace above.
+extern "C" __declspec(dllexport) int __cdecl Nutricula_GetLicenseTier()
+{
+    return AntiTamperCheckedTier(GetTierRaw());
 }
 
 // Returns how many whole days of PREMIUM validity remain:
@@ -5958,7 +6107,7 @@ extern "C" __declspec(dllexport) void __cdecl Nutricula_Poll()
         unsigned long long lastVerifiedTick = g_lastVerifiedTierTickMs.load();
         if (lastVerifiedTick != 0 && (GetTickCount64() - lastVerifiedTick) > static_cast<unsigned long long>(STALE_COORDINATOR_DEGRADE_SECONDS) * 1000ULL)
         {
-            g_tier.store(TIER_FREE);
+            SetTier(TIER_FREE);
         }
         g_pending.store(PENDING_COMM_FAIL);
         g_pollEverCompleted.store(true);
@@ -6001,7 +6150,7 @@ extern "C" __declspec(dllexport) void __cdecl Nutricula_Poll()
 
         if (sigOk && status.tier == TIER_LICENSED)
         {
-            g_tier.store(TIER_LICENSED);
+            SetTier(TIER_LICENSED);
             g_lastVerifiedTierTickMs.store(GetTickCount64());
             {
                 std::lock_guard<std::mutex> lock(g_verifiedCacheMutex);
@@ -6017,13 +6166,13 @@ extern "C" __declspec(dllexport) void __cdecl Nutricula_Poll()
         }
         else if (sigOk && status.tier == TIER_FREE)
         {
-            g_tier.store(TIER_FREE);
+            SetTier(TIER_FREE);
             std::lock_guard<std::mutex> lock(g_verifiedCacheMutex);
             g_verifiedTierClaim = TIER_FREE;
         }
         else if (sigOk && status.tier == TIER_UPDATE_REQUIRED)
         {
-            g_tier.store(TIER_UPDATE_REQUIRED);
+            SetTier(TIER_UPDATE_REQUIRED);
             std::lock_guard<std::mutex> lock(g_verifiedCacheMutex);
             g_verifiedTierClaim = TIER_UPDATE_REQUIRED;
         }
@@ -6039,7 +6188,7 @@ extern "C" __declspec(dllexport) void __cdecl Nutricula_Poll()
             // said this license is blocked, since GetLicenseTier()'s own
             // re-verification only re-checks the LAST cached verified
             // canonical, which without this branch would never be replaced.
-            g_tier.store(TIER_BLOCKED);
+            SetTier(TIER_BLOCKED);
             std::lock_guard<std::mutex> lock(g_verifiedCacheMutex);
             g_verifiedTierClaim = TIER_BLOCKED;
         }
@@ -6073,7 +6222,7 @@ extern "C" __declspec(dllexport) void __cdecl Nutricula_Poll()
         // trustworthy answer FROM the system (not a comms/verification
         // failure OF the polling mechanism itself) - Check_Core_Integrity
         // folds this into "-2" separately, via g_tier, not via this flag.
-        g_tier.store(TIER_FAILED);
+        SetTier(TIER_FAILED);
         g_lastPollOutcomeOk.store(true);
     }
     else
@@ -7160,8 +7309,7 @@ extern "C" __declspec(dllexport) int __cdecl Nutricula_Handshake(long long nonce
     if (ok)
     {
         unsigned long long tick = GetTickCount64();
-        g_hsTick.store(tick == 0 ? 1ULL : tick);
-        g_hsToken.store(expected == 0 ? 1ULL : expected);
+        SetHandshakeState(tick == 0 ? 1ULL : tick, expected == 0 ? 1ULL : expected);
         return 1;
     }
     return 0;
