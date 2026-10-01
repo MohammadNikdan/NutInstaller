@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  app.manifest - 2026 hardening (project owner's explicit request).
+
+  requireAdministrator makes Windows show the UAC elevation prompt
+  immediately on every launch of this .exe - double-clicking it in
+  Explorer, launching it from "Apps & Features" as Uninstall.exe, or
+  running it any other way - before Main() ever executes. This replaces
+  the previous code-based "start normally, then relaunch yourself with
+  Process.Start(..., Verb="runas")" dance for the uninstall flow, which
+  worked but always involved one extra (if invisible) non-elevated
+  process start-and-exit first.
+
+  CONSEQUENCE (deliberate, discussed with the project owner): because
+  install and uninstall are the exact same .exe, this one manifest setting
+  applies to both - there is no way to make only the uninstall path
+  require elevation while leaving a normal install launch unelevated.
+  The Free install mode used to deliberately avoid needing elevation (it
+  only wrote to %LocalAppData%) - now that every launch already requires
+  Administrator regardless of mode, Free's install location was moved to
+  match Premium/Transfer's (see InstallerService.GetCoordinatorInstallDir)
+  so there is exactly one install location for every mode, rather than
+  two that happened to no longer need to differ.
+-->
+<assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
+  <assemblyIdentity version="1.0.0.0" name="NutriculaExpertInstaller"/>
+
+  <trustInfo xmlns="urn:schemas-microsoft-com:asm.v2">
+    <security>
+      <requestedPrivileges xmlns="urn:schemas-microsoft-com:asm.v3">
+        <requestedExecutionLevel level="requireAdministrator" uiAccess="false"/>
+      </requestedPrivileges>
+    </security>
+  </trustInfo>
+
+  <!-- Standard Windows-version compatibility list so Windows does not
+       apply legacy compatibility shims to this process - every modern
+       Windows version this installer is expected to run on. -->
+  <compatibility xmlns="urn:schemas-microsoft-com:compatibility.v1">
+    <application>
+      <supportedOS Id="{e2011457-1546-43c5-a5fe-008deee3d3f0}"/> <!-- Windows Vista -->
+      <supportedOS Id="{35138b9a-5d96-4fbd-8e2d-a2440225f93a}"/> <!-- Windows 7 -->
+      <supportedOS Id="{4a2f28e3-53b9-4441-ba9c-d69d4a4a6e38}"/> <!-- Windows 8 -->
+      <supportedOS Id="{1f676c76-80e1-4239-95bb-83d0f6d0da78}"/> <!-- Windows 8.1 -->
+      <supportedOS Id="{8e0f7a12-bfb3-4fe8-b9a5-48fd50a15a9a}"/> <!-- Windows 10 / 11 -->
+    </application>
+  </compatibility>
+</assembly>

@@ -66,6 +66,7 @@ namespace NutriculaInstaller
         // Footer links
         private MaterialButton guideButton;
         private MaterialButton buyButton;
+        private MaterialButton uninstallButton;
 
         private bool running;
         private bool lastResultSuccess;
@@ -78,6 +79,68 @@ namespace NutriculaInstaller
             InitializeForm();
             BuildUi();
             ShowPage(pageSelect);
+            RefreshUninstallButtonVisibilityAsync();
+        }
+
+        /// <summary>
+        /// Runs UninstallService.AnyTraceFound() in the background (it
+        /// touches the service list, running processes, the registry, and
+        /// every MetaTrader terminal on the machine, so it must never block
+        /// the window from opening) and shows/hides the footer's
+        /// "Uninstall Nutricula" button with the result. Silent either way -
+        /// this is a look-and-decide step, not something the person needs
+        /// to be told is happening.
+        /// </summary>
+        private async void RefreshUninstallButtonVisibilityAsync()
+        {
+            bool found;
+            try { found = await Task.Run(() => UninstallService.AnyTraceFound()); }
+            catch { found = false; }
+
+            if (!IsDisposed && uninstallButton != null) uninstallButton.Visible = found;
+        }
+
+        private void OnUninstallTapped()
+        {
+            DialogResult confirm = MessageBox.Show(
+                this,
+                "This will completely remove Nutricula EA from this computer - the license " +
+                "service/broker, the Expert Advisor, and every installed file. Continue?",
+                "Uninstall Nutricula EA",
+                MessageBoxButtons.YesNo,
+                MessageBoxIcon.Warning);
+            if (confirm != DialogResult.Yes) return;
+
+            // Reuses the exact same "/uninstall" flow Windows "Apps &
+            // Features" launches (Program.cs's RunUninstallFlow) rather than
+            // duplicating its elevation/self-delete handling here - that
+            // flow already does everything this needs (one UAC prompt, stop
+            // Service+Broker, delete everything, report the result).
+            // "/skipconfirm" skips only ITS confirmation dialog, since the
+            // one just above already covers it.
+            try
+            {
+                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+                {
+                    FileName = System.Reflection.Assembly.GetExecutingAssembly().Location,
+                    Arguments = "/uninstall /skipconfirm",
+                    UseShellExecute = true,
+                    Verb = "runas"
+                });
+            }
+            catch (Exception)
+            {
+                MessageBox.Show(
+                    this,
+                    "Administrator rights are required to remove Nutricula EA, and the elevation prompt " +
+                    "was cancelled or failed. Nothing was changed.",
+                    "Uninstall Nutricula EA",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Warning);
+                return;
+            }
+
+            Close();
         }
 
         public static void NotifyUnhandledException(Exception ex)
@@ -219,6 +282,18 @@ namespace NutriculaInstaller
             // Center the subtitle under the (larger) brand title above it.
             title.Location = new Point(brand.Left + (brand.Width - title.Width) / 2, 46);
 
+            Label versionLabel = new Label
+            {
+                AutoSize = true,
+                Text = "v " + AppConfig.Version,
+                Font = UiHelpers.UiFont(7.5f),
+                ForeColor = Color.FromArgb(160, 166, 190),
+                Location = new Point(81, 62)
+            };
+            header.Controls.Add(versionLabel);
+            // Centered the same way as the "Expert Advisor" subtitle above it.
+            versionLabel.Location = new Point(brand.Left + (brand.Width - versionLabel.Width) / 2, 62);
+
             // Right side of the header: a small credit line plus quick links to the
             // website and Telegram support, so that space isn't left empty.
             Label byLabel = new Label
@@ -275,7 +350,7 @@ namespace NutriculaInstaller
                 UseCircularIcon = true,
                 CustomIconDrawer = UiHelpers.DrawPlayGlyph
             };
-            guideButton.Click += delegate { OpenUrl("https://www.youtube.com/"); };
+            guideButton.Click += delegate { OpenUrl(AppConfig.InstallationGuideUrl); };
             footer.Controls.Add(guideButton);
 
             buyButton = new MaterialButton("Buy Premium License", UiHelpers.GlyphShoppingCart, ButtonKind.Text)
@@ -288,6 +363,22 @@ namespace NutriculaInstaller
             };
             buyButton.Click += delegate { OpenUrl("https://www.google.com/"); };
             footer.Controls.Add(buyButton);
+
+            // Bottom-right of the same row, opposite the guide/buy buttons.
+            // Hidden until RefreshUninstallButtonVisibilityAsync's scan (run
+            // from the constructor, right after BuildUi) finds any trace of
+            // Nutricula already on this computer.
+            const int uninstallButtonWidth = 180;
+            uninstallButton = new MaterialButton("Uninstall Nutricula", UiHelpers.GlyphCancel, ButtonKind.Text)
+            {
+                Location = new Point(ClientSize.Width - 28 - uninstallButtonWidth, 14),
+                Size = new Size(uninstallButtonWidth, 40),
+                UseCircularIcon = false,
+                TextColor = UiHelpers.TextMuted,
+                Visible = false
+            };
+            uninstallButton.Click += delegate { OnUninstallTapped(); };
+            footer.Controls.Add(uninstallButton);
         }
 
         private Panel BuildSelectPage()
@@ -635,25 +726,21 @@ namespace NutriculaInstaller
             if (running) return;
             selectedMode = mode;
 
-            if (mode == InstallMode.Free)
-            {
-                // The Free tier never needs the License Service (which
-                // requires Administrator to register) - it always uses the
-                // user-level Broker instead, so there is deliberately no
-                // Administrator check on this path at all. Free installs
-                // must work with a completely ordinary, non-elevated run.
-                StartInstall();
-                return;
-            }
-
-            // Premium activation and License Transfer both eventually need
-            // InstallCoordinatorAsync to attempt a real Windows Service
-            // registration, which requires this process to already be
+            // Every mode now ends up attempting a real Windows Service
+            // registration first, and only falls back to the user-level
+            // Broker if that genuinely can't succeed on this machine (Wine,
+            // or sc.exe failing for any other reason) - see
+            // InstallerService.InstallCoordinatorAsync's own comment. The
+            // Service registration requires this process to already be
             // elevated (Administrator) - see CreateServiceW's own
-            // requirements. Checking here, before even opening the
-            // credentials page, gives a clear, immediate reason rather than
-            // letting the user fill out the whole form only to hit a
-            // confusing failure at the very end.
+            // requirements - which app.manifest (2026 hardening) now
+            // guarantees for every launch of this installer, Free included.
+            // So this check should never actually fail in practice; it is
+            // kept as a defensive, clear-error fallback rather than removed
+            // outright, in case elevation is ever bypassed by something
+            // outside this installer's control (e.g. a very old Windows
+            // version, or the .exe launched in an unusual way that skips
+            // manifest processing).
             if (!IsRunningAsAdministrator())
             {
                 // BUG FIX: this used to only set helperLabel.Text - but
@@ -671,6 +758,12 @@ namespace NutriculaInstaller
                 return;
             }
 
+            if (mode == InstallMode.Free)
+            {
+                StartInstall();
+                return;
+            }
+
             credTitleLabel.Text = mode == InstallMode.Premium ? "Activate Premium License" : "Transfer License to This Computer";
             credSubtitleLabel.Text = mode == InstallMode.Premium
                 ? "Enter your Email and Purchase Key to activate a license on this computer."
@@ -685,9 +778,13 @@ namespace NutriculaInstaller
 
         /// <summary>
         /// True if this process is already running elevated (Administrator).
-        /// Used to gate Premium/Transfer (which need to register a real
-        /// Windows Service) - never used to gate the Free tier, which must
-        /// always work from a completely ordinary, non-elevated run.
+        /// Used to gate every install mode now (2026 hardening - Free,
+        /// Premium and Transfer all attempt a real Windows Service
+        /// registration first; see OnOptionTapped's own comment). Since
+        /// app.manifest requires Administrator for every launch of this
+        /// installer regardless of mode, this should always return true in
+        /// practice - the check is kept as a defensive fallback, not a real
+        /// per-mode gate.
         /// </summary>
         private static bool IsRunningAsAdministrator()
         {

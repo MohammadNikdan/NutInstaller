@@ -32,7 +32,13 @@ namespace NutriculaInstaller
             {
                 Application.EnableVisualStyles();
                 Application.SetCompatibleTextRenderingDefault(false);
-                RunUninstallFlow();
+                // "/skipconfirm" is passed only by this same process when it
+                // relaunches itself elevated a few lines below (or by
+                // MainForm's own "Uninstall Nutricula" button, which already
+                // asked its own confirmation) - it exists purely so the
+                // person is never asked "are you sure?" twice in a row.
+                bool skipConfirm = args.Length > 1 && string.Equals(args[1], "/skipconfirm", StringComparison.OrdinalIgnoreCase);
+                RunUninstallFlow(skipConfirm);
                 return;
             }
 
@@ -90,64 +96,80 @@ namespace NutriculaInstaller
         }
 
         /// <summary>
-        /// The entire "/uninstall" flow: confirm, offer elevation if needed
-        /// (Windows Service / %ProgramFiles% removal both require it - see
-        /// UninstallService.WillNeedAdministrator), perform the removal, and
-        /// report the result. Deliberately simple MessageBox-based UI - this
-        /// is a short one-shot operation launched from Windows "Apps &amp;
-        /// Features", not part of the normal multi-step install wizard.
+        /// The entire "/uninstall" flow: confirm once, elevate immediately
+        /// if needed (no separate "a Windows Service was found, restart as
+        /// Administrator?" question - this always elevates for an
+        /// uninstall, since it is a short one-shot operation where asking
+        /// twice only adds friction), perform the removal, finish the
+        /// uninstaller's own self-delete if it was launched from inside the
+        /// install directory (see UninstallService.ScheduleSelfDelete), and
+        /// report the result. Deliberately simple MessageBox-based UI -
+        /// this is launched from Windows "Apps &amp; Features" (or from
+        /// MainForm's own "Uninstall Nutricula" button), not part of the
+        /// normal multi-step install wizard.
         /// </summary>
-        private static void RunUninstallFlow()
+        private static void RunUninstallFlow(bool skipConfirm)
         {
-            DialogResult confirm = MessageBox.Show(
-                "This will remove Nutricula from MetaTrader on this computer, including the license " +
-                "service/broker and all installed files. Continue?",
-                "Uninstall Nutricula",
-                MessageBoxButtons.YesNo,
-                MessageBoxIcon.Warning);
-            if (confirm != DialogResult.Yes) return;
-
-            if (UninstallService.WillNeedAdministrator())
+            if (!skipConfirm)
             {
-                DialogResult elevate = MessageBox.Show(
-                    "Administrator privileges are needed to fully remove Nutricula (a Windows Service or a " +
-                    "Program Files installation was found). Restart this uninstaller as Administrator now?",
-                    "Administrator Required",
+                DialogResult confirm = MessageBox.Show(
+                    "This will remove Nutricula EA from MetaTrader on this computer, including the " +
+                    "license service/broker and all installed files. Continue?",
+                    "Uninstall Nutricula EA",
                     MessageBoxButtons.YesNo,
-                    MessageBoxIcon.Information);
-                if (elevate == DialogResult.Yes)
+                    MessageBoxIcon.Warning);
+                if (confirm != DialogResult.Yes) return;
+            }
+
+            if (!UninstallService.IsRunningAsAdministrator())
+            {
+                try
                 {
-                    try
+                    Process.Start(new ProcessStartInfo
                     {
-                        Process.Start(new ProcessStartInfo
-                        {
-                            FileName = Assembly.GetExecutingAssembly().Location,
-                            Arguments = "/uninstall",
-                            UseShellExecute = true,
-                            Verb = "runas"
-                        });
-                        return;
-                    }
-                    catch (Exception)
-                    {
-                        // The user cancelled the UAC prompt, or elevation
-                        // otherwise failed - fall through and continue with
-                        // a best-effort, non-elevated removal rather than
-                        // leaving them with nothing at all.
-                    }
+                        FileName = Assembly.GetExecutingAssembly().Location,
+                        Arguments = "/uninstall /skipconfirm",
+                        UseShellExecute = true,
+                        Verb = "runas"
+                    });
                 }
+                catch (Exception)
+                {
+                    // The UAC prompt was cancelled, or elevation otherwise
+                    // failed. Removal genuinely needs admin rights (the
+                    // Windows Service and the Program Files installation
+                    // both require it) - silently doing a partial,
+                    // non-elevated removal the person never agreed to would
+                    // be worse than clearly saying nothing happened yet.
+                    MessageBox.Show(
+                        "Administrator rights are required to remove Nutricula EA, and the elevation " +
+                        "prompt was cancelled or failed. Nothing was changed - run Uninstall again and " +
+                        "accept the prompt to continue.",
+                        "Uninstall Nutricula EA",
+                        MessageBoxButtons.OK,
+                        MessageBoxIcon.Warning);
+                }
+                return;
             }
 
             UninstallService.UninstallOutcome outcome = UninstallService.PerformUninstall();
 
-            string summary = "Nutricula has been uninstalled.";
+            // Must happen before the process exits (the MessageBox below
+            // blocks on the user, which only adds extra margin) - finishes
+            // deleting Uninstall.exe and its folder once this process has
+            // actually released the lock on its own running .exe. A no-op
+            // when PendingSelfDeleteDirectory is null (the common case - not
+            // launched from inside the install directory).
+            UninstallService.ScheduleSelfDelete(outcome.PendingSelfDeleteDirectory);
+
+            string summary = "Nutricula EA has been uninstalled.";
             if (outcome.Warnings.Count > 0)
             {
                 summary += "\n\nSome items could not be fully removed:\n- " + string.Join("\n- ", outcome.Warnings);
             }
             MessageBox.Show(
                 summary,
-                "Nutricula Uninstall",
+                "Nutricula EA Uninstall",
                 MessageBoxButtons.OK,
                 outcome.Warnings.Count > 0 ? MessageBoxIcon.Warning : MessageBoxIcon.Information);
         }

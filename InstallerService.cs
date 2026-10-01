@@ -105,7 +105,7 @@ namespace NutriculaInstaller
                 bool freeSucceeded = freeOutcome.AllSucceeded && deviceIdentityOk;
 
                 result.FilesInstalled = freeOutcome.AllSucceeded;
-                if (freeOutcome.AllSucceeded) RegisterUninstaller(mode, log);
+                if (freeOutcome.AllSucceeded) RegisterUninstaller(log);
                 result.ServerRequestFinished = true;
                 result.LicenseFileOperationFinished = true;
                 result.LicenseSucceeded = freeSucceeded;
@@ -241,7 +241,7 @@ namespace NutriculaInstaller
             }
 
             result.FilesInstalled = fileOutcome.AllSucceeded;
-            if (fileOutcome.AllSucceeded) RegisterUninstaller(mode, log);
+            if (fileOutcome.AllSucceeded) RegisterUninstaller(log);
             result.ServerRequestFinished = serverResult != null && serverResult.Completed;
             result.ServerResponse = serverResult == null ? null : serverResult.RawResponse;
 
@@ -553,7 +553,6 @@ namespace NutriculaInstaller
             try
             {
                 await InstallCoordinatorAsync(
-                    mode,
                     resService32, resService64, resBroker32, resBroker64,
                     resManifest, resEx5, resEx4, resLicenseDll32, resLicenseDll64,
                     resMachineId32, resMachineId64,
@@ -586,13 +585,15 @@ namespace NutriculaInstaller
         /// in a protected, non-per-terminal directory
         /// (%ProgramFiles%\Nutricula\LicenseService\, which Wine transparently
         /// maps to the same relative path inside its own C: drive - no
-        /// separate Wine-specific path logic needed here). On Windows,
-        /// attempts a real Service registration (requires the Installer
-        /// itself to already be elevated). On Wine, or if Service
-        /// registration fails for any reason (locked-down VPS, corporate
-        /// policy, etc.), falls back to launching the Broker as a plain
-        /// background process instead - NEVER to a direct-to-server
-        /// fallback inside the DLL itself (architecture point 100).
+        /// separate Wine-specific path logic needed here). Attempts a real
+        /// Service registration for EVERY install mode now (2026 hardening -
+        /// every mode is elevated via app.manifest, so there is no longer a
+        /// reason to prefer the lighter-weight Broker for Free specifically).
+        /// On Wine, or if Service registration fails for any reason
+        /// (locked-down VPS, corporate policy, etc.), falls back to
+        /// launching the Broker as a plain background process instead -
+        /// NEVER to a direct-to-server fallback inside the DLL itself
+        /// (architecture point 100).
         ///
         /// Architecture selection: picks the 32-bit or 64-bit Service/Broker
         /// binary based on Environment.Is64BitOperatingSystem - the HOST
@@ -612,37 +613,26 @@ namespace NutriculaInstaller
         /// verify itself against.
         /// </summary>
         /// <summary>
-        /// Where the Coordinator (Service or Broker) is installed for a
-        /// given mode.
+        /// Where the Coordinator (Service, or Broker when the Service can't
+        /// be installed) lives - the SAME single path for every install
+        /// mode (Free, Premium, Transfer).
         ///
-        /// BUG FIX (found from a real report: Free installs reported
-        /// "success", yet NutriculaLicenseBroker.exe never showed up in
-        /// Task Manager at all, and no free-tier check-in was ever recorded
-        /// server-side): this used to be a single, hardcoded
-        /// %ProgramFiles%\Nutricula\LicenseService path used for every mode.
-        /// %ProgramFiles% is UAC-protected - writing to it requires
-        /// Administrator. Premium/Transfer are always elevated by this point
-        /// (MainForm.OnOptionTapped gates them on IsRunningAsAdministrator()
-        /// before they ever reach here), so that path was fine for them, but
-        /// Free is deliberately NEVER elevated (see OnOptionTapped's own
-        /// comment - the Free tier must work for a completely ordinary,
-        /// non-elevated run). So for every Free install, EnsureDirectoryAsync
-        /// on that %ProgramFiles% path threw UnauthorizedAccessException -
-        /// and that exception was, at the time, swallowed into a log(...)
-        /// call that is never shown anywhere on screen (see
-        /// FileInstallOutcome.CoordinatorWarning's own comment, added
-        /// alongside this fix, for why that is now also surfaced to the
-        /// user). Free now uses a per-user location that needs no
-        /// elevation at all - consistent with the Broker itself already
-        /// being registered per-user (HKCU Run key, per-user Scheduled
-        /// Task) rather than machine-wide.
+        /// 2026 hardening (project owner's explicit request): this
+        /// Installer's own .exe carries an app.manifest with
+        /// requestedExecutionLevel=requireAdministrator, so EVERY launch,
+        /// every mode included, is elevated before Main() even runs. With
+        /// elevation guaranteed everywhere, there is no reason for more
+        /// than one install location, and no reason for Free to prefer the
+        /// lightweight Broker over a real Windows Service either - see
+        /// InstallCoordinatorAsync, which now attempts the Service for
+        /// every mode and only falls back to the Broker when the Service
+        /// genuinely can't be installed (Wine, or the sc.exe call itself
+        /// failing - e.g. a locked-down VPS/corporate policy).
         /// </summary>
-        private static string GetCoordinatorInstallDir(InstallMode mode)
+        private static string GetCoordinatorInstallDir()
         {
-            Environment.SpecialFolder root = mode == InstallMode.Free
-                ? Environment.SpecialFolder.LocalApplicationData
-                : Environment.SpecialFolder.ProgramFiles;
-            return Path.Combine(Environment.GetFolderPath(root), "Nutricula", "LicenseService");
+            return Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "Nutricula", "LicenseService");
         }
 
         /// <summary>
@@ -652,15 +642,11 @@ namespace NutriculaInstaller
         /// UninstallService.cs for the actual removal logic) - previously
         /// there was no uninstall path at all.
         ///
-        /// Scope matches GetCoordinatorInstallDir's own per-mode split:
-        /// Free writes to HKCU (no elevation needed, consistent with Free
-        /// never being run elevated) and Premium/Transfer write to HKLM
-        /// (already running elevated at this point, and HKLM is the
-        /// conventional scope for a machine-wide Windows Service install).
-        /// Both a HKCU and a HKLM entry can legitimately exist at once (see
-        /// the Free -> Premium/Transfer upgrade case) - that is fine, since
-        /// UninstallService.PerformUninstall always cleans up both scopes
-        /// regardless of which one launched it.
+        /// Scope: always HKLM now (2026 hardening - every install mode is
+        /// elevated via app.manifest, and every mode now shares the same
+        /// %ProgramFiles% install location - see GetCoordinatorInstallDir's
+        /// own comment - so there is no longer a reason for a separate,
+        /// non-elevated HKCU entry for Free).
         ///
         /// The installer's own .exe is copied next to the other Coordinator
         /// files as "Uninstall.exe" because the ORIGINAL downloaded file the
@@ -674,15 +660,12 @@ namespace NutriculaInstaller
         /// logged - the person can still be walked through manual removal by
         /// support if this one small step didn't take.
         /// </summary>
-        private static void RegisterUninstaller(InstallMode mode, Action<string> log)
+        private static void RegisterUninstaller(Action<string> log)
         {
             try
             {
                 string nutriculaRoot = Path.Combine(
-                    Environment.GetFolderPath(mode == InstallMode.Free
-                        ? Environment.SpecialFolder.LocalApplicationData
-                        : Environment.SpecialFolder.ProgramFiles),
-                    "Nutricula");
+                    Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "Nutricula");
                 Directory.CreateDirectory(nutriculaRoot);
 
                 string uninstallExePath = Path.Combine(nutriculaRoot, "Uninstall.exe");
@@ -692,11 +675,19 @@ namespace NutriculaInstaller
                     File.Copy(thisExePath, uninstallExePath, overwrite: true);
                 }
 
-                RegistryKey root = mode == InstallMode.Free ? Registry.CurrentUser : Registry.LocalMachine;
-                using (RegistryKey key = root.CreateSubKey(
+                using (RegistryKey key = Registry.LocalMachine.CreateSubKey(
                     "Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\" + UninstallService.UninstallRegistryKeyName))
                 {
-                    key.SetValue("DisplayName", "Nutricula");
+                    // "Nutricula EA" (not just "Nutricula") is what the
+                    // project owner wants shown in Apps & Features - and
+                    // DisplayIcon points at the Uninstall.exe copy just made
+                    // above, which already carries the real Nutricula icon
+                    // via <ApplicationIcon>icon.ico</ApplicationIcon> in the
+                    // .csproj, so Windows has an icon to show there too
+                    // (previously unset, which is why none appeared).
+                    key.SetValue("DisplayName", "Nutricula EA");
+                    key.SetValue("DisplayIcon", uninstallExePath);
+                    key.SetValue("DisplayVersion", AppConfig.Version);
                     key.SetValue("UninstallString", "\"" + uninstallExePath + "\" /uninstall");
                     key.SetValue("Publisher", "Nutricula");
                     key.SetValue("InstallLocation", nutriculaRoot);
@@ -713,7 +704,6 @@ namespace NutriculaInstaller
         }
 
         private async Task InstallCoordinatorAsync(
-            InstallMode mode,
             ResourceItem resService32, ResourceItem resService64,
             ResourceItem resBroker32, ResourceItem resBroker64,
             ResourceItem resManifest, ResourceItem resEx5, ResourceItem resEx4,
@@ -721,7 +711,37 @@ namespace NutriculaInstaller
             ResourceItem resMachineId32, ResourceItem resMachineId64,
             CancellationToken token, Action<string> log)
         {
-            string installDir = GetCoordinatorInstallDir(mode);
+            string installDir = GetCoordinatorInstallDir();
+
+            // Idempotency check (important scenario: a customer whose license
+            // expired reactivates later - the Coordinator they already have
+            // installed and running must be left alone, not disrupted or
+            // reinstalled). If the Service is already registered, whatever
+            // state it's in (running or not) is left as-is here; only its
+            // absence triggers a fresh install attempt further below. Checked
+            // up front, before touching any files, because it also decides
+            // whether it's safe to run the cleanup step immediately below.
+            bool serviceAlreadyRegistered = IsServiceRegistered("NutriculaLicenseService");
+
+            // 2026 hardening: every install mode now shares ONE install
+            // directory (see GetCoordinatorInstallDir's own comment).
+            // Consequence: ANY install attempt - not just a Premium/Transfer
+            // upgrade over a pre-existing Free install, the only case this
+            // used to matter for - can now land on top of an existing
+            // Broker's own files in the SAME directory the copy step below
+            // is about to write to. Stopping that Broker and clearing its
+            // auto-start registrations must happen BEFORE the copy, not
+            // after, or the copy could be overwriting files a still-running
+            // process has open. Skipped only when a Windows Service is
+            // already registered: that reactivation case above is explicitly
+            // meant to leave an already-installed Service undisturbed, and
+            // deleting its directory out from under an actively-running
+            // Service would be actively harmful, not just unnecessary.
+            if (!serviceAlreadyRegistered)
+            {
+                StopAndDisableExistingBroker(installDir, log);
+            }
+
             await EnsureDirectoryAsync(installDir).ConfigureAwait(true);
 
             bool osIs64Bit = Environment.Is64BitOperatingSystem;
@@ -762,45 +782,29 @@ namespace NutriculaInstaller
             string servicePath = Path.Combine(installDir, "NutriculaLicenseService.exe");
             string brokerPath = Path.Combine(installDir, "NutriculaLicenseBroker.exe");
 
-            // Idempotency check (important scenario: a customer whose license
-            // expired reactivates later - the Coordinator they already have
-            // installed and running must be left alone, not disrupted or
-            // reinstalled). If the Service is already registered, whatever
-            // state it's in (running or not) is left as-is here; only its
-            // absence triggers a fresh install attempt below.
-            bool serviceAlreadyRegistered = IsServiceRegistered("NutriculaLicenseService");
-
-            // mode != InstallMode.Free: a fresh Service install is only ever
-            // attempted for Premium/Transfer, which are always elevated by
-            // this point - attempting it for Free would just burn the full
-            // 15-second timeout on a guaranteed failure (Free is deliberately
-            // never elevated), for no benefit, since Free never wanted a
-            // Service in the first place.
-            if (!isWine && !serviceAlreadyRegistered && mode != InstallMode.Free)
+            // 2026 hardening: a fresh Service install is now attempted for
+            // EVERY mode, including Free - every mode is elevated via
+            // app.manifest (see GetCoordinatorInstallDir's comment), so the
+            // only previous reason to keep Free on the lighter-weight
+            // Broker (avoiding a UAC prompt it couldn't show) no longer
+            // applies, and a real Windows Service is simply more robust
+            // (auto-restart on crash, no per-user Run-key/Scheduled-Task
+            // watchdog needed). The Broker remains purely a fallback for
+            // when the Service genuinely can't be installed - Wine (no
+            // real Windows Service Control Manager to register against),
+            // or the sc.exe call itself failing for any other reason (e.g.
+            // a locked-down VPS or corporate policy) - never a
+            // mode-based choice anymore.
+            //
+            // The Broker-stop-and-cleanup step that used to live here (for
+            // the "free tier installed, then later buys a license" case -
+            // both a Service and a Broker must never end up listening on the
+            // same Named Pipe name at once, architecture point 63) now runs
+            // unconditionally near the top of this function instead, before
+            // any files are copied - see its own comment there for why that
+            // had to move once every mode started sharing one directory.
+            if (!isWine && !serviceAlreadyRegistered)
             {
-                // About to attempt a fresh Service install. If a Broker from
-                // an earlier free-tier install is currently running (or
-                // registered to auto-start), it MUST be stopped and its
-                // auto-start removed first - otherwise both a Service and a
-                // Broker would end up listening on the same Named Pipe name
-                // at once, which is exactly the dual-coordinator conflict
-                // architecture point 63 exists to prevent. This is the
-                // concrete answer to "free tier installed, then later buys a
-                // license" - handled automatically here, no manual cleanup
-                // needed by the customer.
-                //
-                // The Free-tier Broker's OWN files live under a DIFFERENT
-                // directory than this Premium/Transfer install (see
-                // GetCoordinatorInstallDir's comment: Free uses
-                // %LocalAppData%, never %ProgramFiles%), so that old
-                // directory is passed explicitly here - StopAndDisableExistingBroker
-                // matches the running process and registrations by NAME
-                // (works regardless of which directory it ran from), and
-                // also removes that now-orphaned directory so no stale
-                // free-tier copy of the Broker/manifest is left behind.
-                string staleFreeInstallDir = GetCoordinatorInstallDir(InstallMode.Free);
-                StopAndDisableExistingBroker(staleFreeInstallDir, log);
-
                 try
                 {
                     var installProcess = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
@@ -945,24 +949,23 @@ namespace NutriculaInstaller
 
         /// <summary>
         /// Stops any running Broker process and removes its auto-start
-        /// registrations (Run key + Scheduled Task watchdog) before a Service
-        /// installation proceeds - prevents the Service and a leftover
-        /// free-tier Broker from both listening on the same Named Pipe name
-        /// at once (architecture point 63: exactly one Coordinator).
-        /// </summary>
-        /// <summary>
-        /// Stops any running free-tier Broker and removes its auto-start
         /// registrations (Run key + Scheduled Task watchdog), then deletes
-        /// its now-orphaned install directory - called right before a
-        /// Premium/Transfer Service install proceeds. The process kill and
-        /// registration cleanup match by NAME (Process.GetProcessesByName,
-        /// and the fixed Run-key/Scheduled-Task names), so they work
-        /// regardless of which directory the Broker actually ran from;
-        /// staleFreeInstallDir only needs to be exactly right for the final
-        /// directory-delete step, and callers pass
-        /// GetCoordinatorInstallDir(InstallMode.Free) for that.
+        /// brokerInstallDir - prevents a leftover Broker from ever competing
+        /// with a Service on the same Named Pipe name (architecture point
+        /// 63: exactly one Coordinator), and - since the 2026 path
+        /// consolidation - also clears the way before copying fresh files
+        /// into the shared install directory an old Broker might still be
+        /// running from and have open (see InstallCoordinatorAsync's own
+        /// comment on its call site, near the top of that function, before
+        /// any files are copied).
+        ///
+        /// The process kill and registration cleanup match by NAME
+        /// (Process.GetProcessesByName, and the fixed Run-key/Scheduled-Task
+        /// names), so they work regardless of which directory the Broker
+        /// actually ran from; brokerInstallDir only needs to be exactly
+        /// right for the final directory-delete step.
         /// </summary>
-        private static void StopAndDisableExistingBroker(string staleFreeInstallDir, Action<string> log)
+        private static void StopAndDisableExistingBroker(string brokerInstallDir, Action<string> log)
         {
             try
             {
@@ -994,23 +997,24 @@ namespace NutriculaInstaller
             // open for a brief moment after Kill() returns - WaitForExit(5000)
             // above already gives it time to release its own files, so this
             // is best-effort but should normally succeed. Never fatal to the
-            // Service install proceeding either way (a leftover, inert old
-            // folder is harmless clutter, not a functional problem).
+            // install proceeding either way (a leftover, inert old folder is
+            // harmless clutter, not a functional problem) - the fresh copy
+            // right after this call recreates whatever is actually needed.
             try
             {
-                if (!string.IsNullOrEmpty(staleFreeInstallDir) && Directory.Exists(staleFreeInstallDir))
+                if (!string.IsNullOrEmpty(brokerInstallDir) && Directory.Exists(brokerInstallDir))
                 {
-                    Directory.Delete(staleFreeInstallDir, recursive: true);
-                    log("Removed the leftover free-tier License Broker folder (" + staleFreeInstallDir + ").");
+                    Directory.Delete(brokerInstallDir, recursive: true);
+                    log("Removed the leftover License Broker folder (" + brokerInstallDir + ").");
                 }
             }
             catch (Exception ex)
             {
-                log("WARNING: could not remove the leftover free-tier License Broker folder (" + ex.Message +
+                log("WARNING: could not remove the leftover License Broker folder (" + ex.Message +
                     "). This is harmless clutter, not a functional problem.");
             }
 
-            log("Stopped and disabled any existing free-tier License Broker before installing the License Service.");
+            log("Stopped and disabled any existing License Broker before installing fresh Coordinator files.");
         }
 
         /// <summary>
