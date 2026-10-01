@@ -1,26 +1,23 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  app.manifest - 2026 hardening (project owner's explicit request).
+  app.manifest
 
-  requireAdministrator makes Windows show the UAC elevation prompt
-  immediately on every launch of this .exe - double-clicking it in
-  Explorer, launching it from "Apps & Features" as Uninstall.exe, or
-  running it any other way - before Main() ever executes. This replaces
-  the previous code-based "start normally, then relaunch yourself with
-  Process.Start(..., Verb="runas")" dance for the uninstall flow, which
-  worked but always involved one extra (if invisible) non-elevated
-  process start-and-exit first.
-
-  CONSEQUENCE (deliberate, discussed with the project owner): because
-  install and uninstall are the exact same .exe, this one manifest setting
-  applies to both - there is no way to make only the uninstall path
-  require elevation while leaving a normal install launch unelevated.
-  The Free install mode used to deliberately avoid needing elevation (it
-  only wrote to %LocalAppData%) - now that every launch already requires
-  Administrator regardless of mode, Free's install location was moved to
-  match Premium/Transfer's (see InstallerService.GetCoordinatorInstallDir)
-  so there is exactly one install location for every mode, rather than
-  two that happened to no longer need to differ.
+  requestedExecutionLevel = asInvoker: this installer runs as a normal
+  (non-elevated) process - NO UAC prompt, ever, for either install or
+  uninstall (install and uninstall are the same .exe). This is correct
+  because the whole product is a per-user install that needs no
+  Administrator rights at all:
+    - the Coordinator is the user-session Broker, installed under
+      %LocalAppData% (not %ProgramFiles%) - see
+      InstallerService.GetCoordinatorInstallDir,
+    - the "Apps & Features" entry is registered in HKCU, not HKLM - see
+      InstallerService.RegisterUninstaller,
+    - there is no Windows Service to register (the Service host was removed
+      in 2026; the Broker is the sole Coordinator),
+    - the EA/DLL files are written into MetaTrader's own per-user data
+      folders, the device key and license file into the user's %APPDATA%,
+      and auto-start uses the HKCU Run key + a per-user Scheduled Task.
+  Nothing here crosses into a machine-wide, elevation-requiring location.
 -->
 <assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
   <assemblyIdentity version="1.0.0.0" name="NutriculaExpertInstaller"/>
@@ -28,7 +25,7 @@
   <trustInfo xmlns="urn:schemas-microsoft-com:asm.v2">
     <security>
       <requestedPrivileges xmlns="urn:schemas-microsoft-com:asm.v3">
-        <requestedExecutionLevel level="requireAdministrator" uiAccess="false"/>
+        <requestedExecutionLevel level="asInvoker" uiAccess="false"/>
       </requestedPrivileges>
     </security>
   </trustInfo>

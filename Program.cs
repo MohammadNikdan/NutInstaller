@@ -1,6 +1,5 @@
 using System;
 using System.Diagnostics;
-using System.Reflection;
 using System.Windows.Forms;
 
 namespace NutriculaInstaller
@@ -32,11 +31,10 @@ namespace NutriculaInstaller
             {
                 Application.EnableVisualStyles();
                 Application.SetCompatibleTextRenderingDefault(false);
-                // "/skipconfirm" is passed only by this same process when it
-                // relaunches itself elevated a few lines below (or by
-                // MainForm's own "Uninstall Nutricula" button, which already
-                // asked its own confirmation) - it exists purely so the
-                // person is never asked "are you sure?" twice in a row.
+                // "/skipconfirm" is passed by MainForm's own "Uninstall
+                // Nutricula" button (which already asked its own
+                // confirmation) - it exists purely so the person is never
+                // asked "are you sure?" twice in a row.
                 bool skipConfirm = args.Length > 1 && string.Equals(args[1], "/skipconfirm", StringComparison.OrdinalIgnoreCase);
                 RunUninstallFlow(skipConfirm);
                 return;
@@ -96,14 +94,16 @@ namespace NutriculaInstaller
         }
 
         /// <summary>
-        /// The entire "/uninstall" flow: confirm once, elevate immediately
-        /// if needed (no separate "a Windows Service was found, restart as
-        /// Administrator?" question - this always elevates for an
-        /// uninstall, since it is a short one-shot operation where asking
-        /// twice only adds friction), perform the removal, finish the
+        /// The entire "/uninstall" flow: confirm once, make sure MetaTrader
+        /// is closed (its running terminal holds the EA's DLLs locked, so
+        /// they cannot be deleted while it is open - the person is asked to
+        /// close it and run Uninstall again), perform the removal, finish the
         /// uninstaller's own self-delete if it was launched from inside the
         /// install directory (see UninstallService.ScheduleSelfDelete), and
-        /// report the result. Deliberately simple MessageBox-based UI -
+        /// report the result. No elevation step is needed any more - the
+        /// whole product is a per-user, non-elevated install (the Coordinator
+        /// is the user-session Broker under %LocalAppData%, with a per-user
+        /// HKCU uninstall entry). Deliberately simple MessageBox-based UI -
         /// this is launched from Windows "Apps &amp; Features" (or from
         /// MainForm's own "Uninstall Nutricula" button), not part of the
         /// normal multi-step install wizard.
@@ -114,41 +114,29 @@ namespace NutriculaInstaller
             {
                 DialogResult confirm = MessageBox.Show(
                     "This will remove Nutricula EA from MetaTrader on this computer, including the " +
-                    "license service/broker and all installed files. Continue?",
+                    "license Broker and all installed files. Continue?",
                     "Uninstall Nutricula EA",
                     MessageBoxButtons.YesNo,
                     MessageBoxIcon.Warning);
                 if (confirm != DialogResult.Yes) return;
             }
 
-            if (!UninstallService.IsRunningAsAdministrator())
+            // MetaTrader must be closed first: while a terminal is running it
+            // keeps the Nutricula DLLs (NutriculaLicenseCheck*.dll /
+            // MachineId*.dll) loaded and locked in its MQL5/Libraries folder,
+            // so they cannot be deleted and the uninstall would leave files
+            // behind. Rather than do a partial removal, stop and tell the
+            // person exactly what to do, then let them run Uninstall again.
+            string runningTerminals;
+            if (AnyMetaTraderRunning(out runningTerminals))
             {
-                try
-                {
-                    Process.Start(new ProcessStartInfo
-                    {
-                        FileName = Assembly.GetExecutingAssembly().Location,
-                        Arguments = "/uninstall /skipconfirm",
-                        UseShellExecute = true,
-                        Verb = "runas"
-                    });
-                }
-                catch (Exception)
-                {
-                    // The UAC prompt was cancelled, or elevation otherwise
-                    // failed. Removal genuinely needs admin rights (the
-                    // Windows Service and the Program Files installation
-                    // both require it) - silently doing a partial,
-                    // non-elevated removal the person never agreed to would
-                    // be worse than clearly saying nothing happened yet.
-                    MessageBox.Show(
-                        "Administrator rights are required to remove Nutricula EA, and the elevation " +
-                        "prompt was cancelled or failed. Nothing was changed - run Uninstall again and " +
-                        "accept the prompt to continue.",
-                        "Uninstall Nutricula EA",
-                        MessageBoxButtons.OK,
-                        MessageBoxIcon.Warning);
-                }
+                MessageBox.Show(
+                    "Please close MetaTrader (" + runningTerminals + ") first, then run Uninstall " +
+                    "again.\n\nMetaTrader keeps Nutricula's files open while it is running, so they " +
+                    "cannot be removed until it is fully closed. Nothing was changed.",
+                    "Close MetaTrader to Continue",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Warning);
                 return;
             }
 
@@ -172,6 +160,26 @@ namespace NutriculaInstaller
                 "Nutricula EA Uninstall",
                 MessageBoxButtons.OK,
                 outcome.Warnings.Count > 0 ? MessageBoxIcon.Warning : MessageBoxIcon.Information);
+        }
+
+        /// <summary>
+        /// True if any MetaTrader terminal is currently running. MT4's
+        /// process is "terminal.exe" and MT5's is "terminal64.exe" (checked
+        /// without the ".exe" suffix, as Process.GetProcessesByName expects).
+        /// Sets a human-readable list of which were found ("MetaTrader 4",
+        /// "MetaTrader 5", or both) for the message shown to the person.
+        /// </summary>
+        private static bool AnyMetaTraderRunning(out string runningTerminals)
+        {
+            bool mt4 = false, mt5 = false;
+            try { mt4 = Process.GetProcessesByName("terminal").Length > 0; } catch { /* best-effort */ }
+            try { mt5 = Process.GetProcessesByName("terminal64").Length > 0; } catch { /* best-effort */ }
+
+            if (mt4 && mt5) runningTerminals = "MetaTrader 4 and MetaTrader 5";
+            else if (mt4) runningTerminals = "MetaTrader 4";
+            else if (mt5) runningTerminals = "MetaTrader 5";
+            else runningTerminals = "";
+            return mt4 || mt5;
         }
     }
 }

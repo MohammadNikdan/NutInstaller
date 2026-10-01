@@ -2,7 +2,6 @@ using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Drawing2D;
-using System.Security.Principal;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
@@ -113,27 +112,28 @@ namespace NutriculaInstaller
 
             // Reuses the exact same "/uninstall" flow Windows "Apps &
             // Features" launches (Program.cs's RunUninstallFlow) rather than
-            // duplicating its elevation/self-delete handling here - that
-            // flow already does everything this needs (one UAC prompt, stop
-            // Service+Broker, delete everything, report the result).
-            // "/skipconfirm" skips only ITS confirmation dialog, since the
-            // one just above already covers it.
+            // duplicating its handling here - that flow already does
+            // everything this needs (stop the Broker, delete everything,
+            // report the result). No elevation is needed any more: the whole
+            // product is a per-user, non-elevated install (see
+            // InstallerService.GetCoordinatorInstallDir), so this launches
+            // as an ordinary process (no "runas"/UAC). "/skipconfirm" skips
+            // only ITS confirmation dialog, since the one just above already
+            // covers it.
             try
             {
                 System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
                 {
                     FileName = System.Reflection.Assembly.GetExecutingAssembly().Location,
                     Arguments = "/uninstall /skipconfirm",
-                    UseShellExecute = true,
-                    Verb = "runas"
+                    UseShellExecute = true
                 });
             }
-            catch (Exception)
+            catch (Exception ex)
             {
                 MessageBox.Show(
                     this,
-                    "Administrator rights are required to remove Nutricula EA, and the elevation prompt " +
-                    "was cancelled or failed. Nothing was changed.",
+                    "The uninstaller could not be started (" + ex.Message + "). Nothing was changed.",
                     "Uninstall Nutricula EA",
                     MessageBoxButtons.OK,
                     MessageBoxIcon.Warning);
@@ -726,37 +726,13 @@ namespace NutriculaInstaller
             if (running) return;
             selectedMode = mode;
 
-            // Every mode now ends up attempting a real Windows Service
-            // registration first, and only falls back to the user-level
-            // Broker if that genuinely can't succeed on this machine (Wine,
-            // or sc.exe failing for any other reason) - see
-            // InstallerService.InstallCoordinatorAsync's own comment. The
-            // Service registration requires this process to already be
-            // elevated (Administrator) - see CreateServiceW's own
-            // requirements - which app.manifest (2026 hardening) now
-            // guarantees for every launch of this installer, Free included.
-            // So this check should never actually fail in practice; it is
-            // kept as a defensive, clear-error fallback rather than removed
-            // outright, in case elevation is ever bypassed by something
-            // outside this installer's control (e.g. a very old Windows
-            // version, or the .exe launched in an unusual way that skips
-            // manifest processing).
-            if (!IsRunningAsAdministrator())
-            {
-                // BUG FIX: this used to only set helperLabel.Text - but
-                // helperLabel is a child control of credentialsCard, which
-                // lives inside pageCredentials, and pageCredentials was never
-                // made visible on this path (ShowPage(pageCredentials) is
-                // only called further below, which this early return skips).
-                // So the message was written to a label sitting on a hidden
-                // page - nothing appeared to happen at all, exactly matching
-                // the reported symptom. A dedicated dialog is shown instead
-                // of relying on a label on the still-visible pageSelect,
-                // since it is guaranteed to be visible regardless of which
-                // page is currently shown, and needs no extra layout work.
-                ShowAdministratorRequiredDialog();
-                return;
-            }
+            // No Administrator / elevation check any more: the whole product
+            // is a per-user, non-elevated install (the Coordinator runs as
+            // the user-session Broker, installed under %LocalAppData% with a
+            // per-user HKCU uninstall entry - see
+            // InstallerService.GetCoordinatorInstallDir / RegisterUninstaller),
+            // so no install mode needs admin at all. The app.manifest now
+            // requests asInvoker, so there is never a UAC prompt to gate on.
 
             if (mode == InstallMode.Free)
             {
@@ -774,35 +750,6 @@ namespace NutriculaInstaller
                 : "Required for license transfer.";
             LayoutCredentialsFields(mode);
             ShowPage(pageCredentials);
-        }
-
-        /// <summary>
-        /// True if this process is already running elevated (Administrator).
-        /// Used to gate every install mode now (2026 hardening - Free,
-        /// Premium and Transfer all attempt a real Windows Service
-        /// registration first; see OnOptionTapped's own comment). Since
-        /// app.manifest requires Administrator for every launch of this
-        /// installer regardless of mode, this should always return true in
-        /// practice - the check is kept as a defensive fallback, not a real
-        /// per-mode gate.
-        /// </summary>
-        private static bool IsRunningAsAdministrator()
-        {
-            try
-            {
-                using (var identity = WindowsIdentity.GetCurrent())
-                {
-                    var principal = new WindowsPrincipal(identity);
-                    return principal.IsInRole(WindowsBuiltInRole.Administrator);
-                }
-            }
-            catch
-            {
-                // If we can't even determine elevation status, treat as
-                // "not elevated" - the safer default, since proceeding
-                // would just fail later with a less clear error anyway.
-                return false;
-            }
         }
 
         private async Task OnInstallTappedAsync()
@@ -933,123 +880,7 @@ namespace NutriculaInstaller
             return tcs.Task;
         }
 
-        /// <summary>
-        /// Shown when Premium/Transfer is picked without Administrator
-        /// rights (see OnOptionTapped above). Built as a small custom Form,
-        /// like ShowConfirmationDialogAsync above, rather than a plain
-        /// MessageBox: a MessageBox can't give the headline its own larger,
-        /// bold, colored styling, and this message needs to be readable at a
-        /// glance for a first-time, non-technical user - a bold red
-        /// headline stating exactly what is needed, then a short numbered
-        /// list of the exact clicks to make.
-        /// </summary>
-        private void ShowAdministratorRequiredDialog()
-        {
-            using (var dialog = new Form())
-            {
-                dialog.Text = "Administrator Access Required";
-                dialog.FormBorderStyle = FormBorderStyle.FixedDialog;
-                dialog.StartPosition = FormStartPosition.CenterParent;
-                dialog.MinimizeBox = false;
-                dialog.MaximizeBox = false;
-                dialog.ClientSize = new Size(460, 300);
-                dialog.BackColor = UiHelpers.Surface;
-
-                var iconBadge = new Panel { Location = new Point(20, 22), Size = new Size(44, 44), BackColor = Color.Transparent };
-                iconBadge.Paint += delegate (object sender, PaintEventArgs e)
-                {
-                    // Drawn in two steps instead of one UiHelpers.DrawGlyphBadge
-                    // call: the Segoe MDL2 Assets shield glyph carries its own
-                    // internal padding that is NOT symmetric (see
-                    // MaterialButton.CustomIconDrawer's own comment on this
-                    // same font quirk elsewhere in this file), so centering it
-                    // with a plain StringFormat.Center reads as sitting too far
-                    // up-and-left inside its circle. The circle is drawn at
-                    // full size as before; the glyph itself is then drawn in a
-                    // rectangle nudged slightly right and down so it lands
-                    // visually centered.
-                    e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
-                    using (Brush bg = new SolidBrush(UiHelpers.ErrorSoft))
-                        e.Graphics.FillEllipse(bg, iconBadge.ClientRectangle);
-                    Rectangle glyphRect = iconBadge.ClientRectangle;
-                    glyphRect.Offset(2, 2);
-                    using (Font f = UiHelpers.IconFont(20f))
-                    using (Brush fg = new SolidBrush(UiHelpers.Error))
-                    using (StringFormat sf = new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center })
-                    {
-                        e.Graphics.DrawString(UiHelpers.GlyphShield, f, fg, glyphRect, sf);
-                    }
-                };
-                dialog.Controls.Add(iconBadge);
-
-                var headline = new Label
-                {
-                    Text = "Administrator Access Required",
-                    AutoSize = false,
-                    Location = new Point(76, 24),
-                    Size = new Size(364, 44),
-                    Font = new Font("Segoe UI Semibold", 14f),
-                    ForeColor = UiHelpers.Error
-                };
-                dialog.Controls.Add(headline);
-
-                var body = new Label
-                {
-                    Text = "This installation option needs administrator permissions on this computer.",
-                    AutoSize = false,
-                    Location = new Point(20, 82),
-                    Size = new Size(420, 36),
-                    Font = UiHelpers.UiFont(9.5f),
-                    ForeColor = UiHelpers.TextDark
-                };
-                dialog.Controls.Add(body);
-
-                var stepsTitle = new Label
-                {
-                    Text = "To continue:",
-                    AutoSize = true,
-                    Location = new Point(20, 122),
-                    Font = UiHelpers.UiFont(9.5f, FontStyle.Bold),
-                    ForeColor = UiHelpers.TextDark
-                };
-                dialog.Controls.Add(stepsTitle);
-
-                var steps = new Label
-                {
-                    Text =
-                        "1.  Close this installer window.\n" +
-                        "2.  Right-click the Nutricula installer file.\n" +
-                        "3.  Select \"Run as administrator\" from the menu.\n" +
-                        "4.  Open it again and choose this option.",
-                    AutoSize = false,
-                    Location = new Point(20, 148),
-                    Size = new Size(420, 96),
-                    Font = UiHelpers.UiFont(9.5f),
-                    ForeColor = UiHelpers.TextDark
-                };
-                dialog.Controls.Add(steps);
-
-                // MaterialButton (the same style used for Back/Finish/Try
-                // Again elsewhere in this app) instead of a plain Button -
-                // the plain Button's hover feedback on Windows is a very
-                // faint border/tint change that is easy to miss; MaterialButton
-                // already paints a clearly different fill on hover, matching
-                // every other button in this installer.
-                var okButton = new MaterialButton("OK", null, ButtonKind.Filled)
-                {
-                    Size = new Size(420, 40),
-                    Location = new Point(20, 248)
-                };
-                okButton.Click += delegate { dialog.Close(); };
-                dialog.Controls.Add(okButton);
-                dialog.CancelButton = null;
-
-                dialog.ShowDialog(this);
-            }
-        }
-
         private void ShowResult(bool success, string message, int mt4Count, int mt5Count)
-
         {
             progressBar.StopAnimating();
             runningPanel.Visible = false;

@@ -20,8 +20,6 @@ NutriculaLicenseCheck32.dll
 NutriculaLicenseCheck64.dll
 MachineId32.dll
 MachineId64.dll
-NutriculaLicenseService32.exe
-NutriculaLicenseService64.exe
 NutriculaLicenseBroker32.exe
 NutriculaLicenseBroker64.exe
 manifest.txt

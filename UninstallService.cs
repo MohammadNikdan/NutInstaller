@@ -2,27 +2,27 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
-using System.Linq;
 using System.Reflection;
-using System.ServiceProcess;
 using Microsoft.Win32;
 
 namespace NutriculaInstaller
 {
     /// <summary>
     /// Full removal of everything the Installer (in any mode - Free,
-    /// Premium, or Transfer) may have put on this computer: the Windows
-    /// Service (if that's what got installed on this machine), the
-    /// user-level Broker and its HKCU Run-key / Scheduled Task auto-start
-    /// registrations (if that's what it fell back to instead - see
-    /// InstallerService.InstallCoordinatorAsync's own comment), the single
-    /// Coordinator install directory under %ProgramFiles% that every mode
-    /// shares (see InstallerService.GetCoordinatorInstallDir's own
-    /// comment), the EA/DLL files copied into every detected MetaTrader
-    /// terminal, the local device key and shared license files, and
-    /// finally the "Apps & Features" registry entries this same Installer
-    /// registers at the end of a successful install (see
-    /// InstallerService.RegisterUninstaller).
+    /// Premium, or Transfer) may have put on this computer: the user-session
+    /// License Broker and its HKCU Run-key / Scheduled Task auto-start
+    /// registrations (the Broker is the sole Coordinator host - the Windows
+    /// Service was removed in 2026), the single per-user Coordinator install
+    /// directory under %LocalAppData% that every mode shares (see
+    /// InstallerService.GetCoordinatorInstallDir's own comment), the EA/DLL
+    /// files copied into every detected MetaTrader terminal, the local device
+    /// key and shared license files, and finally the per-user "Apps &
+    /// Features" registry entry (HKCU) this same Installer registers at the
+    /// end of a successful install (see InstallerService.RegisterUninstaller).
+    ///
+    /// No Administrator rights are needed for any of this - the whole product
+    /// is a per-user, non-elevated install (nothing under %ProgramFiles%, no
+    /// HKLM, no Windows Service).
     ///
     /// Entirely synchronous and self-contained on purpose: this runs from
     /// Program.Main when launched with a single "/uninstall" argument (see
@@ -38,9 +38,9 @@ namespace NutriculaInstaller
     internal static class UninstallService
     {
         /// <summary>
-        /// Registry key name under both HKCU\...\Uninstall and
-        /// HKLM\...\Uninstall - shared with InstallerService.RegisterUninstaller
-        /// so both sides always agree on where the entry lives.
+        /// Registry key name under HKCU\...\Uninstall - shared with
+        /// InstallerService.RegisterUninstaller so both sides always agree on
+        /// where the per-user "Apps & Features" entry lives.
         /// </summary>
         public const string UninstallRegistryKeyName = "NutriculaExpert";
 
@@ -48,13 +48,6 @@ namespace NutriculaInstaller
         {
             public List<string> Log { get; } = new List<string>();
             public List<string> Warnings { get; } = new List<string>();
-
-            /// <summary>
-            /// True if something that needs Administrator rights (the
-            /// Windows Service, or files under %ProgramFiles%) could not be
-            /// removed because the CURRENT process is not elevated.
-            /// </summary>
-            public bool NeedsAdministratorForRemainder { get; set; }
 
             /// <summary>
             /// Set when a Nutricula root directory contained this process's
@@ -70,28 +63,11 @@ namespace NutriculaInstaller
             public string PendingSelfDeleteDirectory { get; set; }
         }
 
-        public static bool IsRunningAsAdministrator()
-        {
-            try
-            {
-                using (var identity = System.Security.Principal.WindowsIdentity.GetCurrent())
-                {
-                    var principal = new System.Security.Principal.WindowsPrincipal(identity);
-                    return principal.IsInRole(System.Security.Principal.WindowsBuiltInRole.Administrator);
-                }
-            }
-            catch
-            {
-                return false;
-            }
-        }
-
         public static UninstallOutcome PerformUninstall()
         {
             var outcome = new UninstallOutcome();
             Action<string> log = outcome.Log.Add;
 
-            RemoveWindowsService(outcome, log);
             RemoveBroker(log);
             RemoveCoordinatorDirectories(outcome, log);
             RemoveTerminalFiles(outcome, log);
@@ -101,105 +77,11 @@ namespace NutriculaInstaller
             return outcome;
         }
 
-        private static void RemoveWindowsService(UninstallOutcome outcome, Action<string> log)
-        {
-            try
-            {
-                bool serviceExists = ServiceController.GetServices().Any(s =>
-                    string.Equals(s.ServiceName, "NutriculaLicenseService", StringComparison.OrdinalIgnoreCase));
-                if (!serviceExists) return;
-
-                if (!IsRunningAsAdministrator())
-                {
-                    outcome.NeedsAdministratorForRemainder = true;
-                    outcome.Warnings.Add(
-                        "The Nutricula License Service is still installed - restart this uninstaller " +
-                        "as Administrator to remove it.");
-                    return;
-                }
-
-                // Actually WAIT for the service to stop (rather than firing
-                // "sc stop" and immediately moving on) - this used to be the
-                // root cause of "Access to the path ...MachineId64.dll is
-                // denied": sc.exe's stop command returns as soon as the
-                // request is accepted, not once the underlying
-                // NutriculaLicenseService.exe process has actually exited
-                // and released the DLLs it had loaded (MachineId64.dll in
-                // particular), so the very next step - deleting the
-                // Program Files\Nutricula folder - could run while that
-                // process (and its loaded DLL) was still shutting down.
-                try
-                {
-                    using (var sc = new ServiceController("NutriculaLicenseService"))
-                    {
-                        sc.Refresh();
-                        if (sc.Status != ServiceControllerStatus.Stopped)
-                        {
-                            sc.Stop();
-                            sc.WaitForStatus(ServiceControllerStatus.Stopped, TimeSpan.FromSeconds(15));
-                        }
-                    }
-                }
-                catch
-                {
-                    // The service may already be stopping, refuse the stop
-                    // command, or have gone away mid-call - the forced
-                    // process wait/kill below and the sc.exe delete that
-                    // follows are the real guarantees either way.
-                }
-
-                // Belt-and-suspenders beyond the SCM's own bookkeeping above:
-                // give the actual process a short grace period to fully
-                // unload, then force it if it is somehow still alive.
-                WaitForProcessExit("NutriculaLicenseService", TimeSpan.FromSeconds(5));
-
-                RunHidden("sc.exe", "delete NutriculaLicenseService", 15000);
-                log("Removed the Nutricula License Service.");
-            }
-            catch (Exception ex)
-            {
-                outcome.Warnings.Add("Could not remove the Nutricula License Service: " + ex.Message);
-            }
-        }
-
-        private static void WaitForProcessExit(string processName, TimeSpan timeout)
-        {
-            try
-            {
-                DateTime deadline = DateTime.UtcNow + timeout;
-                while (DateTime.UtcNow < deadline)
-                {
-                    Process[] procs = Process.GetProcessesByName(processName);
-                    if (procs.Length == 0) return;
-                    foreach (Process p in procs)
-                    {
-                        try { p.WaitForExit(500); }
-                        finally { p.Dispose(); }
-                    }
-                }
-
-                // Still alive after the grace period - stop waiting politely.
-                foreach (Process p in Process.GetProcessesByName(processName))
-                {
-                    try { p.Kill(); p.WaitForExit(2000); }
-                    catch { /* best-effort */ }
-                    finally { p.Dispose(); }
-                }
-            }
-            catch { /* best-effort */ }
-        }
-
         /// <summary>
-        /// Stops the License Broker and removes its automatic-startup
-        /// registrations - run unconditionally, regardless of install mode.
-        /// 2026 hardening: the Broker is no longer a Free-specific thing: it
-        /// is whatever Coordinator mechanism InstallerService fell back to
-        /// when a real Windows Service couldn't be installed on THIS
-        /// machine (Wine, or sc.exe failing for any other reason), so any
-        /// of Free/Premium/Transfer could in principle have ended up with
-        /// it running. Best-effort and harmless to run even when a Service
-        /// was installed instead - there is simply nothing here to remove
-        /// in that case.
+        /// Stops the License Broker (the sole Coordinator host) and removes
+        /// its automatic-startup registrations (HKCU Run key + per-user
+        /// Scheduled Task watchdog). Best-effort and needs no elevation -
+        /// everything it touches is per-user.
         /// </summary>
         private static void RemoveBroker(Action<string> log)
         {
@@ -231,31 +113,17 @@ namespace NutriculaInstaller
 
         private static void RemoveCoordinatorDirectories(UninstallOutcome outcome, Action<string> log)
         {
-            // Program Files\Nutricula is EVERY mode's root now (2026 path
-            // consolidation - see InstallerService.GetCoordinatorInstallDir's
-            // own comment: Free, Premium and Transfer all install here,
-            // since every install mode is elevated via app.manifest). This
-            // uninstaller is launched from the exact same .exe, with the
-            // exact same manifest, so IsRunningAsAdministrator() below is
-            // always true in practice - the check and its warning are kept
-            // only as a defensive fallback, not a real per-mode branch.
-            string programFilesNutricula = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "Nutricula");
-            if (Directory.Exists(programFilesNutricula))
+            // %LocalAppData%\Nutricula is EVERY mode's root (see
+            // InstallerService.GetCoordinatorInstallDir's own comment: Free,
+            // Premium and Transfer all install the user-session Broker here,
+            // per-user, no elevation). It holds the Broker, its MachineId
+            // dependency DLL, the signed manifest, and the Uninstall.exe copy.
+            string localAppDataNutricula = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Nutricula");
+            if (Directory.Exists(localAppDataNutricula))
             {
-                if (IsRunningAsAdministrator())
-                {
-                    DeleteDirectoryBestEffort(programFilesNutricula, outcome, log);
-                }
-                else
-                {
-                    outcome.NeedsAdministratorForRemainder = true;
-                    outcome.Warnings.Add(
-                        "Files under Program Files\\Nutricula could not be removed - restart this " +
-                        "uninstaller as Administrator to remove them.");
-                }
+                DeleteDirectoryBestEffort(localAppDataNutricula, outcome, log);
             }
-
         }
 
         private static void RemoveTerminalFiles(UninstallOutcome outcome, Action<string> log)
@@ -313,21 +181,16 @@ namespace NutriculaInstaller
 
         private static void RemoveUninstallRegistryEntries(Action<string> log)
         {
-            // HKLM is where every CURRENT install mode registers (2026 path
-            // consolidation - see InstallerService.RegisterUninstaller's own
-            // comment). IsRunningAsAdministrator() is always true here in
-            // practice (same app.manifest as the installer itself), so this
-            // is a defensive fallback, not a real branch.
-            if (IsRunningAsAdministrator())
+            // HKCU is where the install registers its per-user "Apps &
+            // Features" entry (see InstallerService.RegisterUninstaller's own
+            // comment) - no elevation needed to remove it.
+            try
             {
-                try
-                {
-                    Registry.LocalMachine.DeleteSubKeyTree(
-                        "Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\" + UninstallRegistryKeyName,
-                        throwOnMissingSubKey: false);
-                }
-                catch { /* best-effort */ }
+                Registry.CurrentUser.DeleteSubKeyTree(
+                    "Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\" + UninstallRegistryKeyName,
+                    throwOnMissingSubKey: false);
             }
+            catch { /* best-effort */ }
 
             log("Removed Nutricula from Apps & Features.");
         }
@@ -459,18 +322,7 @@ namespace NutriculaInstaller
         {
             try
             {
-                if (ServiceController.GetServices().Any(s =>
-                    string.Equals(s.ServiceName, "NutriculaLicenseService", StringComparison.OrdinalIgnoreCase)))
-                {
-                    return true;
-                }
-            }
-            catch { /* best-effort */ }
-
-            try
-            {
                 if (Process.GetProcessesByName("NutriculaLicenseBroker").Length > 0) return true;
-                if (Process.GetProcessesByName("NutriculaLicenseService").Length > 0) return true;
             }
             catch { /* best-effort */ }
 
@@ -478,23 +330,9 @@ namespace NutriculaInstaller
                 Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Nutricula");
             if (Directory.Exists(localAppDataNutricula)) return true;
 
-            string programFilesNutricula = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "Nutricula");
-            if (Directory.Exists(programFilesNutricula)) return true;
-
             try
             {
                 if (Registry.CurrentUser.OpenSubKey(
-                    "Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\" + UninstallRegistryKeyName) != null)
-                {
-                    return true;
-                }
-            }
-            catch { /* best-effort */ }
-
-            try
-            {
-                if (Registry.LocalMachine.OpenSubKey(
                     "Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\" + UninstallRegistryKeyName) != null)
                 {
                     return true;
@@ -563,8 +401,8 @@ namespace NutriculaInstaller
             }
             catch
             {
-                // Best-effort - e.g. sc.exe/schtasks.exe missing on an
-                // unusual system, or the target was already gone.
+                // Best-effort - e.g. schtasks.exe missing on an unusual
+                // system, or the target was already gone.
             }
         }
     }

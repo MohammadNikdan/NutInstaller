@@ -14,8 +14,6 @@ Assets/NutriculaLicenseCheck32.dll
 Assets/NutriculaLicenseCheck64.dll
 Assets/MachineId32.dll
 Assets/MachineId64.dll
-Assets/NutriculaLicenseService32.exe
-Assets/NutriculaLicenseService64.exe
 Assets/NutriculaLicenseBroker32.exe
 Assets/NutriculaLicenseBroker64.exe
 Assets/manifest.txt

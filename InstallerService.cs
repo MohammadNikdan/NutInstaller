@@ -1,6 +1,5 @@
 using System;
 using Microsoft.Win32;
-using System.ServiceProcess;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -434,12 +433,13 @@ namespace NutriculaInstaller
             ResourceItem resMachineId32 = new ResourceItem("MachineId32.dll", "NutriculaInstaller.Assets.MachineId32.dll");
             ResourceItem resMachineId64 = new ResourceItem("MachineId64.dll", "NutriculaInstaller.Assets.MachineId64.dll");
 
-            // --- The Coordinator (Service/Broker) + its signed manifest -
-            // installed ONCE per machine (not per-terminal, per
+            // --- The Coordinator (the user-session Broker) + its signed
+            // manifest - installed ONCE per machine (not per-terminal, per
             // architecture point 63: exactly one Coordinator process total),
             // into a protected, non-per-terminal location. See
-            // InstallCoordinatorAsync below for the exact path and the
-            // Windows-Service-vs-Broker-fallback decision.
+            // InstallCoordinatorAsync below for the exact path and for why
+            // the Windows Service hosting was removed in favor of the Broker
+            // for every mode.
             // Both 32-bit and 64-bit builds of the Coordinator are needed -
             // unlike the DLLs above (which must match the TERMINAL's
             // bitness, since MT4 is a 32-bit process and can only load
@@ -450,9 +450,9 @@ namespace NutriculaInstaller
             // a 64-bit exe simply cannot run at all on a 32-bit Windows
             // install (e.g. 32-bit Windows tablets, a real customer case).
             // See InstallCoordinatorAsync below for the OS-bitness-based
-            // selection logic.
-            ResourceItem resService32 = new ResourceItem("NutriculaLicenseService32.exe", "NutriculaInstaller.Assets.NutriculaLicenseService32.exe");
-            ResourceItem resService64 = new ResourceItem("NutriculaLicenseService64.exe", "NutriculaInstaller.Assets.NutriculaLicenseService64.exe");
+            // selection logic. (The Windows Service binaries were removed
+            // entirely in 2026 - the Broker is the sole Coordinator host -
+            // so they are no longer embedded, constructed, or installed.)
             ResourceItem resBroker32 = new ResourceItem("NutriculaLicenseBroker32.exe", "NutriculaInstaller.Assets.NutriculaLicenseBroker32.exe");
             ResourceItem resBroker64 = new ResourceItem("NutriculaLicenseBroker64.exe", "NutriculaInstaller.Assets.NutriculaLicenseBroker64.exe");
             ResourceItem resManifest = new ResourceItem("manifest.txt", "NutriculaInstaller.Assets.manifest.txt");
@@ -541,8 +541,8 @@ namespace NutriculaInstaller
             await Task.WhenAll(tasks).ConfigureAwait(true);
             bool allSucceeded = Interlocked.CompareExchange(ref allSucceededFlag, 0, 0) == 1;
 
-            // --- New: one-time Coordinator (Service/Broker) install -
-            // architecture point 63: exactly ONE Coordinator per machine,
+            // --- New: one-time Coordinator (the user-session Broker) install
+            // - architecture point 63: exactly ONE Coordinator per machine,
             // never one per terminal. Deliberately best-effort: a failure
             // here does not fail the overall install outcome (the EA/DLL
             // files are already correctly placed either way), but IS
@@ -553,7 +553,7 @@ namespace NutriculaInstaller
             try
             {
                 await InstallCoordinatorAsync(
-                    resService32, resService64, resBroker32, resBroker64,
+                    resBroker32, resBroker64,
                     resManifest, resEx5, resEx4, resLicenseDll32, resLicenseDll64,
                     resMachineId32, resMachineId64,
                     token, log).ConfigureAwait(true);
@@ -581,58 +581,31 @@ namespace NutriculaInstaller
         }
 
         /// <summary>
-        /// Installs the License Coordinator - exactly ONE copy per machine,
-        /// in a protected, non-per-terminal directory
-        /// (%ProgramFiles%\Nutricula\LicenseService\, which Wine transparently
-        /// maps to the same relative path inside its own C: drive - no
-        /// separate Wine-specific path logic needed here). Attempts a real
-        /// Service registration for EVERY install mode now (2026 hardening -
-        /// every mode is elevated via app.manifest, so there is no longer a
-        /// reason to prefer the lighter-weight Broker for Free specifically).
-        /// On Wine, or if Service registration fails for any reason
-        /// (locked-down VPS, corporate policy, etc.), falls back to
-        /// launching the Broker as a plain background process instead -
-        /// NEVER to a direct-to-server fallback inside the DLL itself
-        /// (architecture point 100).
+        /// Where the Coordinator (always the user-session Broker - see
+        /// InstallCoordinatorAsync's own comment for why the Windows Service
+        /// hosting was removed) lives - the SAME single PER-USER path for
+        /// every install mode (Free, Premium, Transfer) on every platform.
         ///
-        /// Architecture selection: picks the 32-bit or 64-bit Service/Broker
-        /// binary based on Environment.Is64BitOperatingSystem - the HOST
-        /// OS's bitness, never the terminal's (MT4 vs MT5) and never this
-        /// Installer process's own bitness (which is always 32-bit, but
-        /// Environment.Is64BitOperatingSystem correctly reports the real OS
-        /// bitness even from a 32-bit process running under WOW64 - this is
-        /// exactly what that .NET API is designed for). The selected binary
-        /// is installed under a FIXED name (NutriculaLicenseService.exe /
-        /// NutriculaLicenseBroker.exe) regardless of which architecture was
-        /// chosen, so the rest of the system (manifest file-name matching,
-        /// CoordinatorProtocol's COORDINATOR_SERVICE_FILE_NAME constant,
-        /// the Registry Run key, the Scheduled Task watchdog) never needs
-        /// to know or care which architecture is actually running - only
-        /// the Coordinator binary itself, via #ifdef _WIN64 at compile
-        /// time, knows which of the manifest's per-architecture hashes to
-        /// verify itself against.
-        /// </summary>
-        /// <summary>
-        /// Where the Coordinator (Service, or Broker when the Service can't
-        /// be installed) lives - the SAME single path for every install
-        /// mode (Free, Premium, Transfer).
+        /// %LocalAppData%\Nutricula\LicenseService\. This is a per-user,
+        /// NON-elevated location on purpose (2026): the whole product is now
+        /// per-user (the Broker runs in the user's session, the device key
+        /// and license file live under the user's own %APPDATA%), so there is
+        /// nothing left that needs Administrator at all - no Windows Service
+        /// to register, no %ProgramFiles% write, no HKLM write. The Installer
+        /// therefore runs as a normal (asInvoker) process with no UAC prompt.
         ///
-        /// 2026 hardening (project owner's explicit request): this
-        /// Installer's own .exe carries an app.manifest with
-        /// requestedExecutionLevel=requireAdministrator, so EVERY launch,
-        /// every mode included, is elevated before Main() even runs. With
-        /// elevation guaranteed everywhere, there is no reason for more
-        /// than one install location, and no reason for Free to prefer the
-        /// lightweight Broker over a real Windows Service either - see
-        /// InstallCoordinatorAsync, which now attempts the Service for
-        /// every mode and only falls back to the Broker when the Service
-        /// genuinely can't be installed (Wine, or the sc.exe call itself
-        /// failing - e.g. a locked-down VPS/corporate policy).
+        /// %LocalAppData% (unlike %ProgramFiles%) is NOT split into a 32-bit
+        /// "(x86)" variant, so a 32-bit MT4 DLL and a 64-bit MT5 DLL both
+        /// resolve LOCALAPPDATA to the exact same folder the (32-bit)
+        /// Installer wrote to - see NutriculaLicenseCheckThin.cpp
+        /// EnsureCoordinatorRunning, which derives this same path. On Wine,
+        /// LOCALAPPDATA maps inside the prefix, so the identical logic covers
+        /// Wine on macOS/Linux with no special case.
         /// </summary>
         private static string GetCoordinatorInstallDir()
         {
             return Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "Nutricula", "LicenseService");
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Nutricula", "LicenseService");
         }
 
         /// <summary>
@@ -642,11 +615,12 @@ namespace NutriculaInstaller
         /// UninstallService.cs for the actual removal logic) - previously
         /// there was no uninstall path at all.
         ///
-        /// Scope: always HKLM now (2026 hardening - every install mode is
-        /// elevated via app.manifest, and every mode now shares the same
-        /// %ProgramFiles% install location - see GetCoordinatorInstallDir's
-        /// own comment - so there is no longer a reason for a separate,
-        /// non-elevated HKCU entry for Free).
+        /// Scope: HKCU, per-user (2026) - the whole product is now a per-user,
+        /// non-elevated install (see GetCoordinatorInstallDir's own comment),
+        /// so the "Apps & Features" entry is registered in the current user's
+        /// own HKCU\...\Uninstall rather than machine-wide HKLM. It shows up
+        /// in Settings > Apps for the user who installed, which is exactly the
+        /// user who should be able to remove it - and needs no Administrator.
         ///
         /// The installer's own .exe is copied next to the other Coordinator
         /// files as "Uninstall.exe" because the ORIGINAL downloaded file the
@@ -665,7 +639,7 @@ namespace NutriculaInstaller
             try
             {
                 string nutriculaRoot = Path.Combine(
-                    Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "Nutricula");
+                    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Nutricula");
                 Directory.CreateDirectory(nutriculaRoot);
 
                 string uninstallExePath = Path.Combine(nutriculaRoot, "Uninstall.exe");
@@ -675,7 +649,7 @@ namespace NutriculaInstaller
                     File.Copy(thisExePath, uninstallExePath, overwrite: true);
                 }
 
-                using (RegistryKey key = Registry.LocalMachine.CreateSubKey(
+                using (RegistryKey key = Registry.CurrentUser.CreateSubKey(
                     "Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\" + UninstallService.UninstallRegistryKeyName))
                 {
                     // "Nutricula EA" (not just "Nutricula") is what the
@@ -704,7 +678,6 @@ namespace NutriculaInstaller
         }
 
         private async Task InstallCoordinatorAsync(
-            ResourceItem resService32, ResourceItem resService64,
             ResourceItem resBroker32, ResourceItem resBroker64,
             ResourceItem resManifest, ResourceItem resEx5, ResourceItem resEx4,
             ResourceItem resLicenseDll32, ResourceItem resLicenseDll64,
@@ -713,47 +686,51 @@ namespace NutriculaInstaller
         {
             string installDir = GetCoordinatorInstallDir();
 
-            // Idempotency check (important scenario: a customer whose license
-            // expired reactivates later - the Coordinator they already have
-            // installed and running must be left alone, not disrupted or
-            // reinstalled). If the Service is already registered, whatever
-            // state it's in (running or not) is left as-is here; only its
-            // absence triggers a fresh install attempt further below. Checked
-            // up front, before touching any files, because it also decides
-            // whether it's safe to run the cleanup step immediately below.
-            bool serviceAlreadyRegistered = IsServiceRegistered("NutriculaLicenseService");
+            // 2026 decision (project owner, after a full cross-component
+            // audit): the Coordinator runs as the user-session BROKER for
+            // EVERY mode (Free/Premium/Transfer) on EVERY platform (real
+            // Windows and Wine alike). The Windows Service hosting was
+            // removed entirely because it is structurally incompatible with
+            // this product's per-user identity model - a Service runs as
+            // NT AUTHORITY\LocalService, a different account/profile, and:
+            //   1. the device key is DPAPI user-scoped and stored under the
+            //      user's %APPDATA% (MachineId DLL GetDeviceKeyPath),
+            //   2. the license file lives under the user's %APPDATA% too,
+            //   3. the IPC handshake requires the connecting EA to have the
+            //      SAME user SID as the Coordinator (NamedPipeIpc.h
+            //      VerifyConnectedClientIdentity).
+            // So a LocalService Coordinator could neither read the user's
+            // device key / license file nor pass the same-user pipe
+            // handshake - it would leave even a paid Premium license stuck
+            // at TIER_FREE. The Broker always runs in the user's own session
+            // (started here at install, restarted by the HKCU Run key at
+            // login and by the Scheduled Task watchdog if it crashes, and
+            // launched on demand by the DLL itself the instant an EA
+            // attaches; see NutriculaLicenseCheckThin.cpp
+            // EnsureCoordinatorRunning), so it always runs as exactly the
+            // right user. Real-world security is unchanged: the decisive
+            // checks (the DLL's own anti-tamper hardening and the server's
+            // RSA signature, re-verified independently inside the DLL) do
+            // not depend on which account hosts the Coordinator. Because the
+            // Broker needs no elevation and this install location is per-user
+            // (%LocalAppData%), the whole install runs without Administrator.
 
-            // 2026 hardening: every install mode now shares ONE install
-            // directory (see GetCoordinatorInstallDir's own comment).
-            // Consequence: ANY install attempt - not just a Premium/Transfer
-            // upgrade over a pre-existing Free install, the only case this
-            // used to matter for - can now land on top of an existing
-            // Broker's own files in the SAME directory the copy step below
-            // is about to write to. Stopping that Broker and clearing its
-            // auto-start registrations must happen BEFORE the copy, not
-            // after, or the copy could be overwriting files a still-running
-            // process has open. Skipped only when a Windows Service is
-            // already registered: that reactivation case above is explicitly
-            // meant to leave an already-installed Service undisturbed, and
-            // deleting its directory out from under an actively-running
-            // Service would be actively harmful, not just unnecessary.
-            if (!serviceAlreadyRegistered)
-            {
-                StopAndDisableExistingBroker(installDir, log);
-            }
+            // Stop any existing Broker and clear its auto-start registrations
+            // BEFORE copying fresh files into the install directory an old
+            // Broker might still be running from and have open (see
+            // StopAndDisableExistingBroker).
+            StopAndDisableExistingBroker(installDir, log);
 
             await EnsureDirectoryAsync(installDir).ConfigureAwait(true);
 
             bool osIs64Bit = Environment.Is64BitOperatingSystem;
-            ResourceItem selectedService = osIs64Bit ? resService64 : resService32;
             ResourceItem selectedBroker = osIs64Bit ? resBroker64 : resBroker32;
-            log("Host OS is " + (osIs64Bit ? "64-bit" : "32-bit") + " - selecting the matching Coordinator build.");
+            log("Host OS is " + (osIs64Bit ? "64-bit" : "32-bit") + " - selecting the matching Coordinator (Broker) build.");
 
-            // Install the OS-bitness-selected binaries under FIXED names -
-            // see the method doc comment above for why.
-            await CopyEmbeddedResourceAsync(selectedService, installDir, token, overrideFileName: "NutriculaLicenseService.exe").ConfigureAwait(true);
+            // Install the OS-bitness-selected Broker under a FIXED name (see
+            // the method doc comment). The Windows Service binary is no
+            // longer installed - the Broker is the sole Coordinator host.
             await CopyEmbeddedResourceAsync(selectedBroker, installDir, token, overrideFileName: "NutriculaLicenseBroker.exe").ConfigureAwait(true);
-            VerifyInstalledFile(Path.Combine(installDir, "NutriculaLicenseService.exe"));
             VerifyInstalledFile(Path.Combine(installDir, "NutriculaLicenseBroker.exe"));
 
             // CRITICAL: MachineIdBridge::Load() (called by the Coordinator
@@ -762,8 +739,8 @@ namespace NutriculaInstaller
             // architecture (never the terminal's MT4/MT5 architecture)
             // sitting right next to it - required for the Coordinator to
             // generate a machine_id or sign a challenge at all. Installed
-            // under its own real name (not overridden, unlike
-            // Service/Broker) since MachineIdBridge.cpp looks for exactly
+            // under its own real name (not overridden, unlike the Broker)
+            // since MachineIdBridge.cpp looks for exactly
             // "MachineId32.dll" / "MachineId64.dll" via #ifdef _WIN64.
             ResourceItem selectedMachineId = osIs64Bit ? resMachineId64 : resMachineId32;
             await CopyEmbeddedResourceAsync(selectedMachineId, installDir, token).ConfigureAwait(true);
@@ -779,100 +756,26 @@ namespace NutriculaInstaller
             log("Copied License Coordinator files -> " + installDir);
 
             bool isWine = MachineIdService.IsWineEnvironment();
-            string servicePath = Path.Combine(installDir, "NutriculaLicenseService.exe");
             string brokerPath = Path.Combine(installDir, "NutriculaLicenseBroker.exe");
 
-            // 2026 hardening: a fresh Service install is now attempted for
-            // EVERY mode, including Free - every mode is elevated via
-            // app.manifest (see GetCoordinatorInstallDir's comment), so the
-            // only previous reason to keep Free on the lighter-weight
-            // Broker (avoiding a UAC prompt it couldn't show) no longer
-            // applies, and a real Windows Service is simply more robust
-            // (auto-restart on crash, no per-user Run-key/Scheduled-Task
-            // watchdog needed). The Broker remains purely a fallback for
-            // when the Service genuinely can't be installed - Wine (no
-            // real Windows Service Control Manager to register against),
-            // or the sc.exe call itself failing for any other reason (e.g.
-            // a locked-down VPS or corporate policy) - never a
-            // mode-based choice anymore.
-            //
-            // The Broker-stop-and-cleanup step that used to live here (for
-            // the "free tier installed, then later buys a license" case -
-            // both a Service and a Broker must never end up listening on the
-            // same Named Pipe name at once, architecture point 63) now runs
-            // unconditionally near the top of this function instead, before
-            // any files are copied - see its own comment there for why that
-            // had to move once every mode started sharing one directory.
-            if (!isWine && !serviceAlreadyRegistered)
-            {
-                try
-                {
-                    var installProcess = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
-                    {
-                        FileName = servicePath,
-                        Arguments = "--install",
-                        UseShellExecute = false,
-                        CreateNoWindow = true,
-                        RedirectStandardOutput = true,
-                        RedirectStandardError = true,
-                    });
-                    installProcess.WaitForExit(15000);
-                    if (installProcess.ExitCode == 0)
-                    {
-                        // Recovery options: if the Service process ever
-                        // crashes, Windows itself restarts it automatically -
-                        // this is what answers "what if the Service isn't
-                        // running for some reason" for the Service path (the
-                        // Broker path's answer is the Scheduled Task watchdog
-                        // further below). "reset= 86400" means the failure
-                        // count resets after a full day of continuous good
-                        // health, so a single crash long ago doesn't count
-                        // against a future one.
-                        RunHidden("sc.exe",
-                            "failure NutriculaLicenseService reset= 86400 actions= restart/5000/restart/5000/restart/60000",
-                            15000);
-
-                        // SERVICE_AUTO_START (set at registration) only takes
-                        // effect from the NEXT system start otherwise - start
-                        // it immediately too.
-                        RunHidden("sc.exe", "start NutriculaLicenseService", 15000);
-                        log("License Service installed, configured to auto-restart on failure, and started.");
-                        return;
-                    }
-                    log("Service registration did not succeed (exit code " + installProcess.ExitCode +
-                        ") - falling back to the user-level Broker instead.");
-                }
-                catch (Exception ex)
-                {
-                    log("Service registration failed (" + ex.Message + ") - falling back to the user-level Broker instead.");
-                }
-            }
-            else if (serviceAlreadyRegistered)
-            {
-                // Already installed from an earlier run (e.g. this is a
-                // reactivation, not a first install) - leave it running
-                // undisturbed. Just make sure it's actually started (a
-                // no-op, harmless call if it already is).
-                RunHidden("sc.exe", "start NutriculaLicenseService", 15000);
-                log("License Service was already installed - left running, not reinstalled.");
-                return;
-            }
-
-            // Wine, or Windows Service registration unavailable/failed:
-            // launch the Broker as a plain background process AND register
-            // it for automatic startup going forward (architecture
-            // requirement: the Coordinator must stay available across
-            // reboots/logins, not just for the current session). HKCU Run
-            // needs no elevation (works even on the locked-down VPS case
-            // Service registration itself might fail on) and is read by
-            // the standard Windows startup sequence at every user login -
-            // and by Wine's own explorer.exe equivalent at Wine session
-            // start, so the SAME mechanism covers both hosting modes
-            // without any Wine-specific branch. A duplicate trigger (e.g.
-            // this Run key firing while the Broker we just started above is
-            // still alive) is harmless: the Broker's own singleton mutex
-            // (see NutriculaLicenseBroker.cpp) makes any second instance
-            // exit immediately rather than compete.
+            // The Coordinator must stay available across reboots/logins, and
+            // must also come up the instant an EA attaches. Three cooperating
+            // mechanisms, all pointing at the SAME user-session Broker:
+            //   (a) HKCU Run key  - starts it at every user login,
+            //   (b) immediate launch below - starts it right now, at install,
+            //   (c) Scheduled Task watchdog - restarts it if it ever crashes,
+            // plus the DLL's own on-demand launch the moment an EA attaches
+            // (NutriculaLicenseCheckThin.cpp EnsureCoordinatorRunning), which
+            // needs no registry at all - it derives this same install path
+            // from %ProgramFiles(x86)%/%ProgramFiles%. HKCU Run needs no
+            // elevation and is read by the standard Windows startup sequence
+            // at every login - and by Wine's own explorer.exe equivalent at
+            // Wine session start, so the SAME mechanism covers Windows and
+            // Wine (macOS/Linux) without any Wine-specific branch. A
+            // duplicate trigger (e.g. the Run key firing while the Broker is
+            // already alive) is harmless: the Broker's own singleton mutex
+            // (see NutriculaLicenseBroker.cpp) makes any second instance exit
+            // immediately rather than compete.
             try
             {
                 using (RegistryKey runKey = Registry.CurrentUser.OpenSubKey(
@@ -897,7 +800,7 @@ namespace NutriculaInstaller
                     CreateNoWindow = true,
                     WindowStyle = System.Diagnostics.ProcessWindowStyle.Hidden,
                 });
-                log("License Broker started (" + (isWine ? "Wine" : "Windows fallback") + " mode).");
+                log("License Broker started (" + (isWine ? "Wine" : "Windows") + " mode).");
             }
             catch (Exception ex)
             {
@@ -926,25 +829,6 @@ namespace NutriculaInstaller
                 log("WARNING: could not register the License Broker watchdog (" + ex.Message +
                     "). The Broker will still restart at next login via the Run key, just not automatically if it crashes mid-session.");
             }
-        }
-
-        /// <summary>
-        /// True if a Windows Service with this name is already registered
-        /// (in any state - running, stopped, etc.) - used to make Coordinator
-        /// installation idempotent (architecture requirement: reactivating an
-        /// expired license must not disturb an already-installed Service).
-        /// </summary>
-        private static bool IsServiceRegistered(string serviceName)
-        {
-            try
-            {
-                foreach (var sc in System.ServiceProcess.ServiceController.GetServices())
-                {
-                    if (string.Equals(sc.ServiceName, serviceName, StringComparison.OrdinalIgnoreCase)) return true;
-                }
-            }
-            catch { /* if we can't even enumerate services, treat as "not registered" and let the normal install attempt proceed/fail on its own */ }
-            return false;
         }
 
         /// <summary>
@@ -1020,8 +904,8 @@ namespace NutriculaInstaller
         /// <summary>
         /// Runs a process hidden and waits for it to exit, ignoring its exit
         /// code (callers that care about the result use Process.Start
-        /// directly instead - this helper is for fire-and-forget admin
-        /// commands like sc.exe/schtasks.exe where "best effort" is enough).
+        /// directly instead - this helper is for fire-and-forget commands
+        /// like schtasks.exe where "best effort" is enough).
         /// </summary>
         private static void RunHidden(string fileName, string arguments, int timeoutMs)
         {

@@ -93,14 +93,6 @@
       <LogicalName>NutriculaInstaller.Assets.MachineId64.dll</LogicalName>
     </EmbeddedResource>
 
-    <EmbeddedResource Include="Assets\NutriculaLicenseService32.exe">
-      <LogicalName>NutriculaInstaller.Assets.NutriculaLicenseService32.exe</LogicalName>
-    </EmbeddedResource>
-
-    <EmbeddedResource Include="Assets\NutriculaLicenseService64.exe">
-      <LogicalName>NutriculaInstaller.Assets.NutriculaLicenseService64.exe</LogicalName>
-    </EmbeddedResource>
-
     <EmbeddedResource Include="Assets\NutriculaLicenseBroker32.exe">
       <LogicalName>NutriculaInstaller.Assets.NutriculaLicenseBroker32.exe</LogicalName>
     </EmbeddedResource>
@@ -133,8 +125,6 @@
     <Error Condition="!Exists('$(MSBuildProjectDirectory)\Assets\NutriculaLicenseCheck64.dll')" Text="Required file missing: Assets\NutriculaLicenseCheck64.dll" />
     <Error Condition="!Exists('$(MSBuildProjectDirectory)\Assets\MachineId32.dll')" Text="Required file missing: Assets\MachineId32.dll" />
     <Error Condition="!Exists('$(MSBuildProjectDirectory)\Assets\MachineId64.dll')" Text="Required file missing: Assets\MachineId64.dll" />
-    <Error Condition="!Exists('$(MSBuildProjectDirectory)\Assets\NutriculaLicenseService32.exe')" Text="Required file missing: Assets\NutriculaLicenseService32.exe" />
-    <Error Condition="!Exists('$(MSBuildProjectDirectory)\Assets\NutriculaLicenseService64.exe')" Text="Required file missing: Assets\NutriculaLicenseService64.exe" />
     <Error Condition="!Exists('$(MSBuildProjectDirectory)\Assets\NutriculaLicenseBroker32.exe')" Text="Required file missing: Assets\NutriculaLicenseBroker32.exe" />
     <Error Condition="!Exists('$(MSBuildProjectDirectory)\Assets\NutriculaLicenseBroker64.exe')" Text="Required file missing: Assets\NutriculaLicenseBroker64.exe" />
     <Error Condition="!Exists('$(MSBuildProjectDirectory)\Assets\manifest.txt')" Text="Required file missing: Assets\manifest.txt" />
