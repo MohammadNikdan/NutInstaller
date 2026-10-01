@@ -204,6 +204,33 @@ std::atomic<bool> g_hsLastAttemptOk{false};
 std::atomic<bool> g_pollEverCompleted{false};
 std::atomic<bool> g_lastPollOutcomeOk{false};
 
+// Consecutive-failure tolerance for ONE specific, narrow failure mode:
+// Nutricula_Poll() being unable to reach the Coordinator over the LOCAL
+// named pipe on THIS machine (QueryCoordinatorStatus returning false).
+// This is deliberately tracked SEPARATELY from g_lastPollOutcomeOk (which
+// stays zero-tolerance for every other failure type - missing public key,
+// an invalid server signature, a TIER_FAILED verdict) because a local pipe
+// miss can be a harmless, momentary hiccup (Coordinator service briefly
+// busy/restarting, the machine waking from sleep) rather than a security
+// signal - unlike a bad signature, which is always worth treating as
+// serious immediately. Deliberately a project-owner decision (2026): the
+// owner explicitly rejected a long, minutes-scale grace period for this -
+// NUT_PIPE_FAIL_TOLERANCE consecutive misses is meant to absorb exactly
+// one or two fleeting hiccups, not to hide a genuinely dead/killed/blocked
+// Coordinator for any meaningful length of time. At the default OnTimer
+// cadence of 15s used by this project's MQL side, this tolerates roughly
+// NUT_PIPE_FAIL_TOLERANCE * 15 seconds of sustained local-pipe failure
+// before Check_Core_Integrity reports -2.
+//
+// Deliberately placed and enforced ENTIRELY inside this compiled DLL, not
+// in MQL: any attempt-counting logic written in MQL would live inside the
+// compiled .ex4/.ex5, which the project owner can patch/decompile far more
+// easily than this native binary - counting here, instead, means a cracked
+// EA cannot simply strip out "wait for 5 failures" and keep running
+// forever against a killed Coordinator.
+constexpr int NUT_PIPE_FAIL_TOLERANCE = 5;
+std::atomic<int> g_pipeFailStreak{0};
+
 inline bool HandshakeValid()
 {
     unsigned long long tick = g_hsTick.load();
@@ -1738,7 +1765,8 @@ int __stdcall Check_Core_Integrity() {
     if (!g_hsLastAttemptOk.load()) return -2;   // most recent attempt was wrong - immediate, regardless of any earlier grant still technically valid
     if (!HandshakeValid()) return -2;           // was right before, but that grant has since lapsed with no fresh attempt
     if (!g_pollEverCompleted.load()) return -1; // handshake is fine, just no answer from the Coordinator/server yet
-    if (!g_lastPollOutcomeOk.load()) return -2; // last poll cycle: Coordinator unreachable/unverified, or signature invalid
+    if (!g_lastPollOutcomeOk.load()) return -2; // zero-tolerance problem: missing public key, invalid server signature, or a TIER_FAILED verdict - never a local-pipe miss (see g_pipeFailStreak's own comment)
+    if (g_pipeFailStreak.load() >= NUT_PIPE_FAIL_TOLERANCE) return -2; // local pipe to Coordinator has failed too many times IN A ROW - a one-off hiccup is tolerated, a sustained one is not
     int t = g_tier.load();
     if (t == TIER_FAILED) return -2;            // server exhausted its own verification attempts - folded into -2 as requested
     return t;                                    // TIER_FREE, TIER_LICENSED, TIER_UPDATE_REQUIRED, or TIER_BLOCKED pass through unchanged
@@ -5921,6 +5949,12 @@ extern "C" __declspec(dllexport) void __cdecl Nutricula_Poll()
         // repeatedly, or - the case explicitly worth suspecting - someone
         // deliberately tampering with it), the license state degrades to
         // TIER_FREE rather than staying licensed forever on stale trust.
+        // NOTE (2026): this specific degrade path only affects the raw
+        // g_tier value read by the legacy Nutricula_GetLicenseTier(); it is
+        // no longer what gates Check_Core_Integrity() for this failure mode
+        // at all - see g_pipeFailStreak below, which fires on a much
+        // shorter, bounded timescale (a handful of consecutive attempts,
+        // not minutes).
         unsigned long long lastVerifiedTick = g_lastVerifiedTierTickMs.load();
         if (lastVerifiedTick != 0 && (GetTickCount64() - lastVerifiedTick) > static_cast<unsigned long long>(STALE_COORDINATOR_DEGRADE_SECONDS) * 1000ULL)
         {
@@ -5928,10 +5962,24 @@ extern "C" __declspec(dllexport) void __cdecl Nutricula_Poll()
         }
         g_pending.store(PENDING_COMM_FAIL);
         g_pollEverCompleted.store(true);
-        g_lastPollOutcomeOk.store(false); // layer 1 failure
+        // Deliberately NOT g_lastPollOutcomeOk.store(false) here (2026): a
+        // local-pipe miss, in isolation, is not treated as the same kind of
+        // zero-tolerance problem as a bad signature or a missing public key
+        // - its own tolerance is g_pipeFailStreak, checked separately by
+        // Check_Core_Integrity, so a single transient hiccup doesn't
+        // immediately look identical to a real security failure. A
+        // genuinely sustained pipe outage still reaches -2 once the streak
+        // below crosses NUT_PIPE_FAIL_TOLERANCE.
+        g_lastPollOutcomeOk.store(true);
+        g_pipeFailStreak.fetch_add(1);
         g_pollInFlight.store(false);
         return;
     }
+
+    // Reached only when the local pipe to Coordinator just succeeded -
+    // reset the consecutive-failure streak immediately (a single success
+    // fully clears any prior run of hiccups).
+    g_pipeFailStreak.store(0);
 
     // Ask the Coordinator to ensure a refresh happens if one is due - a
     // no-op if one is already active or not yet due (architecture point 99).
