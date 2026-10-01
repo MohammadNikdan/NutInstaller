@@ -1,4 +1,4 @@
 # Nutricula Installer configuration
 
 VERSION=3.1
-INSTALLATION_GUIDE_URL=https://www.youtube.com/
+INSTALLATION_GUIDE_URL=https://www.facebook.com/
