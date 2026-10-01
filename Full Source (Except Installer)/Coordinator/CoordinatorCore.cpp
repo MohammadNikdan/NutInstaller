@@ -47,7 +47,7 @@ constexpr long long MAX_RANDOM_OFFSET_SEC = 900;   // 15:00
 // failures (DNS/connect/timeout - NOT a real, signed Reject, which is an
 // authentic answer, not silence), the cached lease stops being trusted at
 // all, regardless of how much of its own natural validity remains.
-constexpr long long MAX_SERVER_SILENCE_SEC = 3600; // 1:00:00
+constexpr long long MAX_SERVER_SILENCE_SEC = 21 * 60; // 21:00
 
 // Free-tier telemetry only (2026): how often an ACTUAL network free_checkin
 // request is sent when there is no lease at all. Deliberately much longer
