@@ -8,7 +8,7 @@
 // The actual key comes from Keys/TransportKey.txt - just a raw 64-hex-
 // character string, EXACTLY what `openssl rand -hex 32` outputs directly
 // (no manual formatting needed). KeyBaker.exe (run automatically as the
-// first step of every build_Service_*/Broker_*.bat) reads that file and
+// first step of every build_Broker_*.bat) reads that file and
 // generates TransportKey_Generated.h, which this file #includes.
 //
 // Must also match license_config.php's transport_key_hex on the server -

@@ -8,10 +8,9 @@
 // KeyBaker.exe generates ServerLicenseSigningKey_Public_Generated.h from
 // it automatically as the first step of every build_*.bat.
 //
-// After any future key rotation, every NutriculaLicenseCheck32/64.dll,
-// NutriculaLicenseService.exe, and NutriculaLicenseBroker.exe must be
-// rebuilt and redistributed - this is a compile-time constant, not a file
-// that can be swapped post-build.
+// After any future key rotation, every NutriculaLicenseCheck32/64.dll and
+// NutriculaLicenseBroker.exe must be rebuilt and redistributed - this is a
+// compile-time constant, not a file that can be swapped post-build.
 //
 
 namespace ServerSignatureVerify {

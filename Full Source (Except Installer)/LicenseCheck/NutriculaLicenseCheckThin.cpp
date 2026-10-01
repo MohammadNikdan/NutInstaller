@@ -5902,6 +5902,95 @@ bool EnsurePublicKeyLoaded()
     return ok;
 }
 
+// Reads an environment variable into a std::wstring (empty if unset).
+std::wstring GetEnvVarW(const wchar_t* name)
+{
+    DWORD n = GetEnvironmentVariableW(name, nullptr, 0);
+    if (n == 0) return std::wstring();
+    std::wstring buf(n, L'\0');
+    DWORD got = GetEnvironmentVariableW(name, &buf[0], n);
+    if (got == 0 || got >= n) return std::wstring();
+    buf.resize(got);
+    return buf;
+}
+
+// Best-effort, throttled on-demand launch of the user-session Broker (the
+// Coordinator) when the DLL cannot reach it over the pipe. This is what
+// makes the Coordinator come up "the moment an EA attaches" even if it is
+// not already running - normally it IS (the installer starts it, the HKCU
+// Run key restarts it at every login, and a Scheduled Task watchdog
+// restarts it if it ever crashes), but this covers the gaps: right after a
+// first install before the next login, or if the user manually killed it.
+//
+// Entirely best-effort and FAIL-SAFE: if the Broker can't be found or
+// launched, the caller just keeps returning false exactly as before - no
+// license is ever granted as a side effect (never the reverse). The
+// Broker's own singleton mutex makes a redundant launch (one already
+// running or starting) a harmless immediate no-op, so there is no race
+// risk in launching speculatively. Throttled so a tight Poll loop that
+// can't reach the Coordinator doesn't spawn attempts back to back.
+//
+// The Coordinator is the SOLE authority on tier (architecture point 100:
+// the DLL has no direct-to-server fallback), so this only ever helps the
+// legitimate case; it grants nothing on its own.
+std::atomic<unsigned long long> g_lastCoordinatorLaunchMs{0};
+constexpr unsigned long long COORDINATOR_LAUNCH_THROTTLE_MS = 15000; // ~once / 15s at most
+
+void EnsureCoordinatorRunning()
+{
+    unsigned long long nowMs = GetTickCount64();
+    unsigned long long last = g_lastCoordinatorLaunchMs.load();
+    if (last != 0 && (nowMs - last) < COORDINATOR_LAUNCH_THROTTLE_MS) return;
+    g_lastCoordinatorLaunchMs.store(nowMs);
+
+    // The Installer places the Coordinator (Broker) under
+    // %LocalAppData%\Nutricula\LicenseService (a per-user, non-elevated
+    // location - see InstallerService.GetCoordinatorInstallDir). %LocalAppData%
+    // is NOT split into a 32-bit "(x86)" variant, so a 32-bit MT4 DLL and a
+    // 64-bit MT5 DLL both resolve it to the exact same folder the Installer
+    // wrote to - no bitness juggling needed. On Wine, LOCALAPPDATA maps
+    // inside the prefix, so the identical logic covers Wine on macOS/Linux
+    // without a special case. (LOCALAPPDATA is read first; APPDATA\..\Local
+    // is a defensive fallback for the rare case LOCALAPPDATA is unset.)
+    const wchar_t* subPath = L"\\Nutricula\\LicenseService\\NutriculaLicenseBroker.exe";
+    std::wstring roots[2];
+    roots[0] = GetEnvVarW(L"LOCALAPPDATA");
+    std::wstring appData = GetEnvVarW(L"APPDATA"); // ...\Roaming - its parent holds Local
+    if (!appData.empty())
+    {
+        size_t slash = appData.find_last_of(L"\\/");
+        if (slash != std::wstring::npos) roots[1] = appData.substr(0, slash) + L"\\Local";
+    }
+    for (int i = 0; i < 2; ++i)
+    {
+        if (roots[i].empty()) continue;
+        std::wstring path = roots[i] + subPath;
+        if (GetFileAttributesW(path.c_str()) == INVALID_FILE_ATTRIBUTES) continue;
+
+        STARTUPINFOW si;
+        ZeroMemory(&si, sizeof(si));
+        si.cb = sizeof(si);
+        si.dwFlags = STARTF_USESHOWWINDOW;
+        si.wShowWindow = SW_HIDE;
+        PROCESS_INFORMATION pi;
+        ZeroMemory(&pi, sizeof(pi));
+
+        // lpCommandLine must be writable, and std::wstring is guaranteed
+        // null-terminated and contiguous (C++11+), so &cmd[0] is valid.
+        std::wstring cmd = L"\"" + path + L"\"";
+        // lpCurrentDirectory = nullptr: the Broker resolves its own
+        // directory via GetModuleFileName, so the working directory is
+        // irrelevant to it.
+        if (CreateProcessW(path.c_str(), &cmd[0], nullptr, nullptr, FALSE,
+                           CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi))
+        {
+            CloseHandle(pi.hThread);
+            CloseHandle(pi.hProcess);
+        }
+        return; // found the install dir; one attempt is enough this cycle
+    }
+}
+
 // One IPC round-trip: connect, verify the Coordinator's identity, ask for
 // status, disconnect. Returns false if the Coordinator is unavailable OR
 // failed the identity handshake - both cases are handled identically by
@@ -5909,7 +5998,14 @@ bool EnsurePublicKeyLoaded()
 bool QueryCoordinatorStatus(CoordinatorProtocol::StatusReplyMsg& outStatus)
 {
     HANDLE pipe = NamedPipeIpc::ConnectAndVerify(CoordinatorIdentity::PublicKeyXY(), 2000);
-    if (pipe == INVALID_HANDLE_VALUE) return false;
+    if (pipe == INVALID_HANDLE_VALUE)
+    {
+        // Coordinator not reachable right now - best-effort, throttled
+        // attempt to start it so it comes up the moment this EA attaches.
+        // Fail-safe: returns false regardless, exactly as before.
+        EnsureCoordinatorRunning();
+        return false;
+    }
 
     CoordinatorProtocol::GetStatusMsg req;
     DWORD written = 0;
