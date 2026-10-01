@@ -1,14 +1,4 @@
 # Nutricula Installer configuration
 # -----------------------------------
-# Edit the two values below, save this file, and rebuild the installer.
-# No source-code changes are needed for either of these.
-# Lines starting with # are comments and are ignored.
-
-# Shown under "Expert Advisor" in the installer's header (as "v 3.1"), and
-# used as the version number registered for Nutricula EA in Windows
-# "Programs & Features" / "Apps & Features".
 VERSION=3.1
-
-# Opened when the person clicks the "Installation Guide" button at the
-# bottom of the installer window.
 INSTALLATION_GUIDE_URL=https://www.youtube.com/
