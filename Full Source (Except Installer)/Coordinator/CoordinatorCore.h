@@ -69,11 +69,10 @@ class CoordinatorCore
 public:
     // Starts the background worker thread. Idempotent - calling twice has
     // no additional effect. coordinatorFileName is this Coordinator's OWN
-    // binary file name (e.g. "NutriculaLicenseService.exe" or
-    // "NutriculaLicenseBroker.exe") - used for its own artifact integrity
-    // self-check (architecture point 92/38), separate from the EX5/DLL
-    // names which are always the same regardless of which Coordinator
-    // variant is running.
+    // binary file name (always "NutriculaLicenseBroker.exe" - the Broker is
+    // the sole Coordinator host since the Windows Service was removed) -
+    // used for its own artifact integrity self-check (architecture point
+    // 92/38), separate from the EX5/DLL names.
     void Start(const std::wstring& coordinatorFileName);
 
     // Called when a client (via IPC) asks for a refresh. This is

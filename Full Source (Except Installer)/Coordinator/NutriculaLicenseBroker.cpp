@@ -1,14 +1,15 @@
 //
-// NutriculaLicenseBroker.cpp - user-level Coordinator process. Runs as a
-// plain background process, with NO dependency on the Windows Service
-// Control Manager - this is what runs on Wine (architecture point 59/60),
-// and is also the fallback on Windows when installing a real Service isn't
-// possible (locked-down VPS, corporate policy, etc. - see the session's
-// architecture discussion). The actual coordination logic (CoordinatorCore)
-// and the wire protocol (CoordinatorProtocol.h) are IDENTICAL to what
-// NutriculaLicenseService.exe uses - only the hosting/startup mechanism
-// differs, per architecture point 60: "Wine نباید معماری Windows را خراب
-// کند... فقط Layer hosting... تفاوت داشته باشد."
+// NutriculaLicenseBroker.cpp - the user-session Coordinator process, and the
+// SOLE Coordinator host on every platform (Windows and Wine alike). Runs as
+// a plain per-user background process with NO dependency on the Windows
+// Service Control Manager and NO elevation. Running in the SAME session as
+// the EA is exactly what this product's per-user identity model requires:
+// the device key (DPAPI user-scoped) and license file live under the user's
+// own profile, and the IPC handshake requires the connecting EA to share the
+// Coordinator's user SID - all of which only hold when the Coordinator runs
+// as the user, i.e. as this Broker. (The Windows Service host was removed in
+// 2026 after it was found structurally incompatible with that model - see
+// InstallerService.InstallCoordinatorAsync's own comment.)
 //
 
 #include "CoordinatorCore.h"

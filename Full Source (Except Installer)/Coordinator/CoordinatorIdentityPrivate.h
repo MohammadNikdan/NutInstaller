@@ -4,12 +4,13 @@
 // CoordinatorIdentity.h's public key. ECDSA P-256.
 //
 // !!! MUST NEVER BE INCLUDED IN, OR SHIPPED AS PART OF, THE CLIENT DLL !!!
-// Compiled ONLY into NutriculaLicenseService.exe / NutriculaLicenseBroker.exe.
+// Compiled ONLY into NutriculaLicenseBroker.exe (the sole Coordinator host;
+// the Windows Service was removed in 2026).
 //
 // The actual key comes from Keys/CoordinatorIdentityKey_Private.pem - a
 // GENUINE, unmodified PEM file exactly as openssl produces it.
 // KeyBaker.exe generates CoordinatorIdentityKey_Private_Generated.h from
-// it automatically as the first step of every build_Service_*/Broker_*.bat.
+// it automatically as the first step of every build_Broker_*.bat.
 //
 // SECURITY NOTE ON THIS KEY'S SCOPE: unlike the Vendor Signing Key (never
 // leaves the build machine) or the Server Signing Key (never leaves the

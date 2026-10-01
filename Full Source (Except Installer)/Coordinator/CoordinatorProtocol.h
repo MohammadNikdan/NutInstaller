@@ -49,17 +49,16 @@ inline const wchar_t* ARTIFACT_DLL64_NAME = L"NutriculaLicenseCheck64.dll";
 // needing its own matching MachineId DLL to be genuine.
 inline const wchar_t* ARTIFACT_MACHINEID32_NAME = L"MachineId32.dll";
 inline const wchar_t* ARTIFACT_MACHINEID64_NAME = L"MachineId64.dll";
-// The Coordinator's own file name differs between the Windows Service and
-// the Wine/fallback Broker - each binary should pass its OWN file name to
-// ManifestVerify, not a shared constant, since a Service checking a
-// Broker's hash (or vice versa) would never match.
-inline const wchar_t* COORDINATOR_SERVICE_FILE_NAME = L"NutriculaLicenseService.exe";
+// The Coordinator's own file name - the Broker is the sole Coordinator host
+// on every platform (Windows and Wine alike; the Windows Service host was
+// removed in 2026). It passes this name to ManifestVerify so the integrity
+// check measures the exact binary that is actually running.
 inline const wchar_t* COORDINATOR_BROKER_FILE_NAME = L"NutriculaLicenseBroker.exe";
 
-// Must match the pipe name used by both the Windows Service and the Wine
-// Broker - this is intentionally the SAME name on both platforms (the
-// hosting mechanism differs, the protocol does not). See point 60 of the
-// architecture notes: "Wine نباید معماری Windows را خراب کند."
+// The Coordinator pipe name - identical on every platform (the host process
+// is always the Broker; only WHERE it is launched from differs between
+// Windows and Wine, never the protocol). See point 60 of the architecture
+// notes: "Wine نباید معماری Windows را خراب کند."
 inline const wchar_t* PIPE_NAME = L"\\\\.\\pipe\\NutriculaLicenseCoordinator";
 
 enum class MessageType : uint32_t {

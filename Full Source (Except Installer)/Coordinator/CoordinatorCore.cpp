@@ -603,19 +603,19 @@ void CoordinatorCore::WorkerLoop()
             // nothing was ever published.
             std::wstring ownDir = GetOwnModuleDirectory();
             ManifestVerify::ManifestData manifest = ManifestVerify::LoadAndVerifyManifest(ownDir);
-            bool isService = (m_coordinatorFileName == CoordinatorProtocol::COORDINATOR_SERVICE_FILE_NAME);
-            // Both 32-bit and 64-bit builds of the Coordinator genuinely
-            // ship to customers now (32-bit Windows tablets are a real,
+            // Both 32-bit and 64-bit builds of the Coordinator (the Broker)
+            // genuinely ship to customers (32-bit Windows tablets are a real,
             // supported case), so the manifest carries a separate expected
-            // hash per architecture. This exact compiled binary is only
-            // ever ONE architecture - #ifdef _WIN64 is resolved once, at
-            // compile time, by the compiler itself (defined by both MSVC
-            // and MinGW-w64 for 64-bit targets) - never a runtime guess.
+            // hash per architecture. This exact compiled binary is only ever
+            // ONE architecture - #ifdef _WIN64 is resolved once, at compile
+            // time, by the compiler itself (defined by both MSVC and
+            // MinGW-w64 for 64-bit targets) - never a runtime guess. (The
+            // Windows Service host was removed in 2026; the Broker is now the
+            // sole Coordinator, so m_coordinatorFileName is always the
+            // Broker's own file name.)
 #ifdef _WIN64
-            const std::string& expectedServiceHash = manifest.service64Sha256;
             const std::string& expectedBrokerHash = manifest.broker64Sha256;
 #else
-            const std::string& expectedServiceHash = manifest.service32Sha256;
             const std::string& expectedBrokerHash = manifest.broker32Sha256;
 #endif
             bool artifactsOk = manifest.valid && ManifestVerify::VerifyArtifactsMatchManifest(
@@ -626,8 +626,7 @@ void CoordinatorCore::WorkerLoop()
                 CoordinatorProtocol::ARTIFACT_DLL64_NAME,
                 CoordinatorProtocol::ARTIFACT_MACHINEID32_NAME,
                 CoordinatorProtocol::ARTIFACT_MACHINEID64_NAME,
-                isService ? m_coordinatorFileName : L"", expectedServiceHash,   // only check whichever of Service/Broker this actually is
-                isService ? L"" : m_coordinatorFileName, expectedBrokerHash);
+                m_coordinatorFileName, expectedBrokerHash);
             if (!artifactsOk)
             {
                 // Do NOT touch m_state.tier here - an already-published
@@ -844,7 +843,6 @@ void CoordinatorCore::WorkerLoop()
                     "|dll64_hash=" + manifest.dll64Sha256 +
                     "|machineid32_hash=" + manifest.machineid32Sha256 +
                     "|machineid64_hash=" + manifest.machineid64Sha256 +
-                    "|service_hash=" + expectedServiceHash +
                     "|broker_hash=" + expectedBrokerHash;
                 std::string signatureB64;
                 if (!MachineIdBridge::SignChallenge(message, signatureB64)) { if (attempt < MAX_ATTEMPTS) Sleep(2000); continue; }
@@ -864,7 +862,6 @@ void CoordinatorCore::WorkerLoop()
                 verifyFields["dll64_hash"] = manifest.dll64Sha256;
                 verifyFields["machineid32_hash"] = manifest.machineid32Sha256;
                 verifyFields["machineid64_hash"] = manifest.machineid64Sha256;
-                verifyFields["service_hash"] = expectedServiceHash;
                 verifyFields["broker_hash"] = expectedBrokerHash;
                 verifyFields["signature"] = signatureB64;
                 // Send whatever refresh token we currently have locally

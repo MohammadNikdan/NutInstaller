@@ -135,7 +135,6 @@ ManifestData LoadAndVerifyManifest(const std::wstring& directory)
     if (!fields.count("build_id") || !fields.count("version") || !fields.count("protocol_version") ||
         !fields.count("ex5_sha256") || !fields.count("ex4_sha256") || !fields.count("dll32_sha256") ||
         !fields.count("dll64_sha256") || !fields.count("machineid32_sha256") || !fields.count("machineid64_sha256") ||
-        !fields.count("service32_sha256") || !fields.count("service64_sha256") ||
         !fields.count("broker32_sha256") || !fields.count("broker64_sha256"))
     {
         return result; // signature verified but the manifest is incomplete - still not trusted
@@ -150,8 +149,6 @@ ManifestData LoadAndVerifyManifest(const std::wstring& directory)
     result.dll64Sha256 = fields["dll64_sha256"];
     result.machineid32Sha256 = fields["machineid32_sha256"];
     result.machineid64Sha256 = fields["machineid64_sha256"];
-    result.service32Sha256 = fields["service32_sha256"];
-    result.service64Sha256 = fields["service64_sha256"];
     result.broker32Sha256 = fields["broker32_sha256"];
     result.broker64Sha256 = fields["broker64_sha256"];
     result.valid = true;
@@ -162,7 +159,6 @@ bool VerifyArtifactsMatchManifest(const ManifestData& manifest, const std::wstri
     const std::wstring& ex5FileName, const std::wstring& ex4FileName,
     const std::wstring& dll32FileName, const std::wstring& dll64FileName,
     const std::wstring& machineid32FileName, const std::wstring& machineid64FileName,
-    const std::wstring& serviceFileName, const std::string& expectedServiceSha256,
     const std::wstring& brokerFileName, const std::string& expectedBrokerSha256)
 {
     if (!manifest.valid) return false;
@@ -178,7 +174,6 @@ bool VerifyArtifactsMatchManifest(const ManifestData& manifest, const std::wstri
         { dll64FileName, manifest.dll64Sha256 },
         { machineid32FileName, manifest.machineid32Sha256 },
         { machineid64FileName, manifest.machineid64Sha256 },
-        { serviceFileName, expectedServiceSha256 },
         { brokerFileName, expectedBrokerSha256 },
     };
 

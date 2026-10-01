@@ -28,18 +28,17 @@ struct ManifestData
     std::string dll32Sha256;
     std::string dll64Sha256;
     // MachineId32.dll / MachineId64.dll - loaded by BOTH the thin License
-    // Check DLL and the Coordinator itself (MachineIdBridge). Unconditional
-    // like dll32/dll64 above (both always required, both always checked),
-    // not conditional like service/broker below - see the comment on
+    // Check DLL and the Coordinator itself (MachineIdBridge). Both always
+    // required, both always checked - see the comment on
     // CoordinatorProtocol::ARTIFACT_MACHINEID32_NAME for why.
     std::string machineid32Sha256;
     std::string machineid64Sha256;
-    // Both architectures of the Coordinator genuinely ship to customers now
-    // (32-bit Windows tablets are a real, supported case - see the
-    // Installer's OS-bitness-based selection logic) - so each needs its
-    // own separately verifiable hash, not one shared value.
-    std::string service32Sha256; // NutriculaLicenseService32.exe
-    std::string service64Sha256; // NutriculaLicenseService64.exe
+    // Both architectures of the Coordinator (the Broker) genuinely ship to
+    // customers (32-bit Windows tablets are a real, supported case - see the
+    // Installer's OS-bitness-based selection logic) - so each needs its own
+    // separately verifiable hash, not one shared value. (The Windows Service
+    // host was removed in 2026 - the Broker is the sole Coordinator - so
+    // there are no longer any service32/64 hashes.)
     std::string broker32Sha256;  // NutriculaLicenseBroker32.exe
     std::string broker64Sha256;  // NutriculaLicenseBroker64.exe
 };
@@ -59,26 +58,23 @@ std::string HashFileSha256(const std::wstring& path);
 
 // The actual integrity decision: given a verified manifest and the
 // Coordinator's own directory (where it expects to find the EX4/EX5/DLL/
-// Service/Broker artifacts alongside itself), measure each actual file and
-// compare against the expected hash. Returns true only if EVERY artifact
-// whose file name is non-empty is present AND its hash matches exactly.
-// Deliberately does NOT special-case "file missing" as a pass - a missing
-// artifact that the manifest expected to exist is itself a failure. Pass
-// an empty wstring for any file name parameter to skip checking that
-// particular artifact this call.
+// Broker artifacts alongside itself), measure each actual file and compare
+// against the expected hash. Returns true only if EVERY artifact whose file
+// name is non-empty is present AND its hash matches exactly. Deliberately
+// does NOT special-case "file missing" as a pass - a missing artifact that
+// the manifest expected to exist is itself a failure. Pass an empty wstring
+// for any file name parameter to skip checking that particular artifact.
 //
-// expectedServiceSha256/expectedBrokerSha256 are passed explicitly (not
-// read from manifest.service32Sha256/64/broker32Sha256/64 internally)
-// because the CALLER must pick which one is correct for ITS OWN
-// architecture, via #ifdef _WIN64 at compile time - see CoordinatorCore.cpp.
-// A given running Coordinator binary only ever needs to verify the single
-// file actually sitting next to it, never the other architecture's file
-// (which may not even be present on this machine).
+// expectedBrokerSha256 is passed explicitly (not read from
+// manifest.broker32Sha256/64 internally) because the CALLER must pick which
+// one is correct for ITS OWN architecture, via #ifdef _WIN64 at compile
+// time - see CoordinatorCore.cpp. A given running Coordinator binary only
+// ever needs to verify the single Broker file actually sitting next to it,
+// never the other architecture's file (which may not even be present).
 bool VerifyArtifactsMatchManifest(const ManifestData& manifest, const std::wstring& artifactDirectory,
     const std::wstring& ex5FileName, const std::wstring& ex4FileName,
     const std::wstring& dll32FileName, const std::wstring& dll64FileName,
     const std::wstring& machineid32FileName, const std::wstring& machineid64FileName,
-    const std::wstring& serviceFileName, const std::string& expectedServiceSha256,
     const std::wstring& brokerFileName, const std::string& expectedBrokerSha256);
 
 } // namespace ManifestVerify
