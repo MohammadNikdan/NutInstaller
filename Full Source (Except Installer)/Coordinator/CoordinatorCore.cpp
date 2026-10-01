@@ -29,6 +29,26 @@ constexpr int MAX_ATTEMPTS = 10;
 constexpr long long MIN_RANDOM_OFFSET_SEC = 240;   // 4:00
 constexpr long long MAX_RANDOM_OFFSET_SEC = 900;   // 15:00
 
+// Hard cap on trusting a cached, not-yet-expired lease through total
+// network silence to the real license server (2026, project owner's
+// explicit request - closes a real gap: without this, someone could
+// firewall this machine's outbound access to the license server
+// indefinitely and keep running on a still-valid-looking cached lease for
+// its entire remaining natural lifetime - months, potentially - with no
+// way for the server to ever detect clone/abuse on this install, since
+// detection depends entirely on this same refresh channel. Measured from
+// the last time this machine received ANY genuinely signature-verified
+// response from the real server (Lease OR Reject both count - either one
+// proves the server was actually reached) - reusing the existing Clock
+// Anchor timestamp (see ClockAnchor above) rather than tracking a new,
+// separate value, since that timestamp already means exactly this and is
+// already hardened against wall-clock rollback and Coordinator/machine
+// restarts. Once this many seconds pass with nothing but transport
+// failures (DNS/connect/timeout - NOT a real, signed Reject, which is an
+// authentic answer, not silence), the cached lease stops being trusted at
+// all, regardless of how much of its own natural validity remains.
+constexpr long long MAX_SERVER_SILENCE_SEC = 3600; // 1:00:00
+
 // Free-tier telemetry only (2026): how often an ACTUAL network free_checkin
 // request is sent when there is no lease at all. Deliberately much longer
 // than the paid-tier verify window above - this is pure statistics (which
@@ -729,7 +749,35 @@ void CoordinatorCore::WorkerLoop()
             // the server can still override this via a real break below;
             // only genuine network SILENCE now correctly means "keep
             // trusting what we already verified," not "assume the worst."
-            bool localLeaseStillGood = local.hasLease && !local.licenseCurrentlyExpired;
+            //
+            // MAX_SERVER_SILENCE_SEC cap (2026, project owner's explicit
+            // request): the above fix, left unbounded, reopened a worse
+            // problem than the one it closed - someone could firewall this
+            // machine's access to the real server forever and coast on a
+            // "genuine silence -> trust the cache" verdict for the lease's
+            // entire remaining natural lifetime, with the server never
+            // getting a chance to detect clone/abuse on this install (that
+            // detection lives entirely in this same refresh exchange). So
+            // "still good" now ALSO requires a real, signature-verified
+            // response (Lease or Reject - either proves the server was
+            // actually reached) within the last MAX_SERVER_SILENCE_SEC,
+            // using the existing Clock Anchor timestamp (tamper/restart
+            // resistant - see ClockAnchor above) as "last proven contact".
+            // Past that cap, silence no longer defaults to trusting the
+            // cache, regardless of how much of the lease's own validity
+            // remains.
+            ClockAnchor silenceAnchor;
+            bool haveSilenceAnchor = LoadClockAnchor(silenceAnchor);
+            // No anchor at all only happens before this machine has EVER
+            // had one genuinely verified server response - but a lease can
+            // only exist on disk because a past successful verify wrote it,
+            // which itself would have created an anchor at that same
+            // moment. So !haveSilenceAnchor is a defensive fallback, not a
+            // real path, when local.hasLease is already true; treat it as
+            // "no information yet" rather than as silence.
+            bool withinServerSilenceTolerance = !haveSilenceAnchor ||
+                ((now - silenceAnchor.wallClockUnix) <= MAX_SERVER_SILENCE_SEC);
+            bool localLeaseStillGood = local.hasLease && !local.licenseCurrentlyExpired && withinServerSilenceTolerance;
             long finalStable = localLeaseStillGood ? TIER_LICENSED : TIER_FAILED;
             std::string finalCanonical = localLeaseStillGood ? local.canonical : std::string();
             std::string finalSignatureB64 = localLeaseStillGood ? local.signatureB64 : std::string();
