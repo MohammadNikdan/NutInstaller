@@ -6094,7 +6094,12 @@ int AntiTamperCheckedTier(int rawTier)
 
 } // namespace
 
-extern "C" __declspec(dllexport) int __cdecl Nutricula_Initialize()
+// Renamed from Nutricula_Initialize (2026 hardening): the old name told
+// anyone running dumpbin/objdump on this DLL ALONE - no EA, no
+// decompilation needed - exactly which exports exist for license
+// lifecycle management, for free. Functionally identical; MQL's #import
+// must use this exact new name.
+extern "C" __declspec(dllexport) int __cdecl Vela_Boot_84()
 {
     return EnsurePublicKeyLoaded() ? 1 : 0;
 }
@@ -6103,7 +6108,9 @@ extern "C" __declspec(dllexport) int __cdecl Nutricula_Initialize()
 // rate-limited signature reverification) now lives in AntiTamperCheckedTier,
 // shared with EffectiveTier()/Check_Core_Integrity() - see that function's
 // own comment, just above the closing of the anonymous namespace above.
-extern "C" __declspec(dllexport) int __cdecl Nutricula_GetLicenseTier()
+// Renamed from Nutricula_GetLicenseTier (2026 hardening) - see Vela_Boot_84's
+// own comment just above for why.
+extern "C" __declspec(dllexport) int __cdecl Phoenix_State_87()
 {
     return AntiTamperCheckedTier(GetTierRaw());
 }
@@ -6119,21 +6126,24 @@ extern "C" __declspec(dllexport) int __cdecl Nutricula_GetLicenseTier()
 //   - N>0 => TIER_LICENSED right now, with N whole days remaining before
 //           licenseExpiresAt (the independently signature-verified expiry
 //           timestamp already tracked above, NOT a locally-editable value).
-// Deliberately routed through Nutricula_GetLicenseTier() first so this
-// inherits that function's full anti-tamper treatment (debugger check +
-// rate-limited real re-verification against the last genuinely-signed
-// canonical) rather than trusting the cached g_tier/g_verifiedLicenseExpiresAt
-// on its own - a days-remaining readout is exactly the kind of value worth
-// spoofing (e.g. to make an expired trial look perpetually far from
-// expiring), so it gets the same scrutiny as the tier check itself.
+// Deliberately routed through Phoenix_State_87() (formerly
+// Nutricula_GetLicenseTier) first so this inherits that function's full
+// anti-tamper treatment (debugger check + rate-limited real
+// re-verification against the last genuinely-signed canonical) rather
+// than trusting the cached g_tier/g_verifiedLicenseExpiresAt on its own -
+// a days-remaining readout is exactly the kind of value worth spoofing
+// (e.g. to make an expired trial look perpetually far from expiring), so
+// it gets the same scrutiny as the tier check itself.
 // Rounds UP (ceiling), so any remaining partial day still reads as at
 // least 1 - only an actually-reached-or-passed expiry reads as 0. This is
-// a plain informational readout (like Nutricula_GetLicenseTier itself),
-// not part of the calculation-function IP, so it is NOT routed through the
+// a plain informational readout (like Phoenix_State_87 itself), not part
+// of the calculation-function IP, so it is NOT routed through the
 // EA-binding handshake/EffectiveTier gate.
-extern "C" __declspec(dllexport) int __cdecl Nutricula_GetDaysRemaining()
+// Renamed from Nutricula_GetDaysRemaining (2026 hardening) - see
+// Vela_Boot_84's own comment for why.
+extern "C" __declspec(dllexport) int __cdecl Carina_Span_89()
 {
-    if (Nutricula_GetLicenseTier() != TIER_LICENSED) return 0;
+    if (Phoenix_State_87() != TIER_LICENSED) return 0;
 
     unsigned long long expiresAt;
     {
@@ -6151,7 +6161,9 @@ extern "C" __declspec(dllexport) int __cdecl Nutricula_GetDaysRemaining()
     return static_cast<int>(days);
 }
 
-extern "C" __declspec(dllexport) int __cdecl Nutricula_GetLicensePending()
+// Renamed from Nutricula_GetLicensePending (2026 hardening) - see
+// Vela_Boot_84's own comment for why.
+extern "C" __declspec(dllexport) int __cdecl Dorado_Flag_88()
 {
     return g_pending.load();
 }
@@ -6163,7 +6175,9 @@ extern "C" __declspec(dllexport) int __cdecl Nutricula_GetLicensePending()
 // simultaneous GetStatus calls, NOT what prevents duplicate server
 // requests (that guarantee comes entirely from the Coordinator being a
 // singleton - see architecture point 63).
-extern "C" __declspec(dllexport) void __cdecl Nutricula_Poll()
+// Renamed from Nutricula_Poll (2026 hardening) - see Vela_Boot_84's own
+// comment for why.
+extern "C" __declspec(dllexport) void __cdecl Pavo_Sync_85()
 {
     bool expected = false;
     if (!g_pollInFlight.compare_exchange_strong(expected, true)) return;
@@ -7401,7 +7415,9 @@ extern "C" __declspec(dllexport) long long __cdecl NxW(
 // matches, the tier gate opens for NUT_HS_VALID_MS. nonce/response are carried
 // as signed 64-bit on the ABI purely as bit-patterns - the math is unsigned on
 // both sides.
-extern "C" __declspec(dllexport) int __cdecl Nutricula_Handshake(long long nonce, long long response)
+// Renamed from Nutricula_Handshake (2026 hardening) - see Vela_Boot_84's
+// own comment for why.
+extern "C" __declspec(dllexport) int __cdecl Indus_Auth_86(long long nonce, long long response)
 {
     g_hsEverAttempted.store(true);
     unsigned long long expected = NutHsMix((unsigned long long)nonce);
