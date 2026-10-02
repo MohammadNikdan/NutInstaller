@@ -17,13 +17,13 @@ REM WINDRES (which need their own quotes for use as commands) so it can
 REM also be prepended to PATH further down without embedding stray quote
 REM characters into PATH itself (a quoted PATH segment is not a valid
 REM directory entry and would silently break PATH lookups).
-set GPPBIN=C:\Program Files (x86)\Embarcadero\Dev-Cpp\TDM-GCC-64\bin
+set GPPBIN=C:\mingw32\bin
 set GPP32="%GPPBIN%\g++.exe"
 set WINDRES="%GPPBIN%\windres.exe"
 
 if not exist %GPP32% (
     echo ERROR: g++.exe not found at %GPP32%
-    echo Edit this script and set GPPBIN to your actual 32-bit Dev-C++ compiler folder.
+    echo Edit this script and set GPPBIN to your actual 32-bit WinLibs compiler folder.
     exit /b 1
 )
 
@@ -108,7 +108,7 @@ REM     .rsrc icon and the .pdata/.xdata exception-unwind tables fully intact
 REM     (all three verified), so runtime behavior is completely unchanged.
 REM     NOTE: this changes the binary's SHA-256, so the manifest MUST be
 REM     regenerated with NutriculaSignTool after rebuilding.
-%GPP32% -m32 -D_WIN32_WINNT=0x0601 -std=c++17 -O2 -s -static-libgcc -static-libstdc++ ^
+%GPP32% -D_WIN32_WINNT=0x0601 -std=c++17 -O2 -s -static -static-libgcc -static-libstdc++ ^
     -I ..\Coordinator -I ..\LicenseCheck ^
     ..\Coordinator\NutriculaLicenseBroker.cpp ^
     ..\Coordinator\CoordinatorCore.cpp ^
@@ -128,20 +128,4 @@ if %ERRORLEVEL% NEQ 0 (
 echo BUILD SUCCEEDED: %OUT_DIR%\NutriculaLicenseBroker32.exe
 del /f /q "%RES_OBJ%" >nul 2>&1
 echo REMINDER: delete ..\Coordinator\CoordinatorIdentityPrivate.h AND ..\LicenseCheck\TransportKeyPrivate.h now.
-endlocalREM !!! Compiler: using TDM-GCC-64 with the -m32 flag to cross-compile to
-REM     32-bit. The REAL TDM-GCC project (unlike a plain single-arch
-REM     mingw-w64 build) is usually multilib-capable, meaning its 64-bit
-REM     g++.exe can ALSO produce 32-bit output when given -m32 - this is
-REM     why the same TDM-GCC-64 path is reused here.
-REM
-REM     IF THIS SCRIPT FAILS with an error like:
-REM       "cannot open linker script file ldscripts/i386pe.x"
-REM     that means this specific TDM-GCC-64 install is NOT multilib-
-REM     capable, and -m32 cannot work with it at all. In that case, you
-REM     need a genuinely separate 32-bit-targeting compiler installed
-REM     (e.g. Dev-C++'s older/32-bit MinGW package, if available), and
-REM     should point GPP32 at THAT g++.exe instead, removing the -m32
-REM     flag below (a 32-bit-only compiler already only ever produces
-REM     32-bit output, so -m32 becomes unnecessary/redundant with one).
-REM
-
+endlocal

@@ -1,18 +1,18 @@
 @echo off
 REM ============================================================================
-REM Builds MachineId32.dll using Dev-C++'s MinGW/g++.
+REM Builds MachineId32.dll using the 32-bit WinLibs MinGW-w64 g++.
 REM
-REM !!! Compiler: using TDM-GCC-64 with the -m32 flag - see
-REM     build_LicenseCheck_x86.bat's comment for the full explanation and
-REM     what to do if this fails with an "ldscripts/i386pe.x" error. !!!
+REM !!! Compiler: GPP32 points at the 32-bit WinLibs i686 / POSIX-threads
+REM     toolchain at C:\mingw32. No -m32 is used (the compiler is already
+REM     32-bit-only). !!!
 REM ============================================================================
 
 setlocal
-set GPP32="C:\Program Files (x86)\Embarcadero\Dev-Cpp\TDM-GCC-64\bin\g++.exe"
+set GPP32="C:\mingw32\bin\g++.exe"
 
 if not exist %GPP32% (
     echo ERROR: g++.exe not found at %GPP32%
-    echo Edit this script and set GPP32 to your actual 32-bit Dev-C++ compiler path.
+    echo Edit this script and set GPP32 to your actual 32-bit WinLibs compiler path.
     exit /b 1
 )
 
@@ -41,7 +41,7 @@ REM     .rsrc icon and the .pdata/.xdata exception-unwind tables fully intact
 REM     (all three verified), so runtime behavior is completely unchanged.
 REM     NOTE: this changes the binary's SHA-256, so the manifest MUST be
 REM     regenerated with NutriculaSignTool after rebuilding.
-%GPP32% -m32 -D_WIN32_WINNT=0x0601 -std=c++17 -O2 -s -shared -static-libgcc -static-libstdc++ ^
+%GPP32% -D_WIN32_WINNT=0x0601 -std=c++17 -O2 -s -shared -static -static-libgcc -static-libstdc++ ^
     -I ..\MachineID ^
     ..\MachineID\NutriculaMachineId.cpp ^
     -o %OUT_DIR%\MachineId32.dll ^

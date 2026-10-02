@@ -17,13 +17,13 @@ REM WINDRES (which need their own quotes for use as commands) so it can
 REM also be prepended to PATH further down without embedding stray quote
 REM characters into PATH itself (a quoted PATH segment is not a valid
 REM directory entry and would silently break PATH lookups).
-set GPPBIN=C:\Program Files (x86)\Embarcadero\Dev-Cpp\TDM-GCC-64\bin
+set GPPBIN=C:\mingw64\bin
 set GPP64="%GPPBIN%\g++.exe"
 set WINDRES="%GPPBIN%\windres.exe"
 
 if not exist %GPP64% (
     echo ERROR: g++.exe not found at %GPP64%
-    echo Edit this script and set GPPBIN to your actual 64-bit Dev-C++ compiler folder.
+    echo Edit this script and set GPPBIN to your actual 64-bit WinLibs compiler folder.
     exit /b 1
 )
 
@@ -108,7 +108,7 @@ REM     .rsrc icon and the .pdata/.xdata exception-unwind tables fully intact
 REM     (all three verified), so runtime behavior is completely unchanged.
 REM     NOTE: this changes the binary's SHA-256, so the manifest MUST be
 REM     regenerated with NutriculaSignTool after rebuilding.
-%GPP64% -D_WIN32_WINNT=0x0601 -std=c++17 -O2 -s -static-libgcc -static-libstdc++ ^
+%GPP64% -D_WIN32_WINNT=0x0601 -std=c++17 -O2 -s -static -static-libgcc -static-libstdc++ ^
     -I ..\Coordinator -I ..\LicenseCheck ^
     ..\Coordinator\NutriculaLicenseBroker.cpp ^
     ..\Coordinator\CoordinatorCore.cpp ^

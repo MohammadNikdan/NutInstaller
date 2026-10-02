@@ -12,11 +12,11 @@ REM     genuinely 64-bit-targeting g++.exe always works instead.
 REM ============================================================================
 
 setlocal
-set GPP64="C:\Program Files (x86)\Embarcadero\Dev-Cpp\TDM-GCC-64\bin\g++.exe"
+set GPP64="C:\mingw64\bin\g++.exe"
 
 if not exist %GPP64% (
     echo ERROR: g++.exe not found at %GPP64%
-    echo Edit this script and set GPP64 to your actual 64-bit Dev-C++ compiler path.
+    echo Edit this script and set GPP64 to your actual 64-bit WinLibs compiler path.
     exit /b 1
 )
 
@@ -51,7 +51,7 @@ REM     .rsrc icon and the .pdata/.xdata exception-unwind tables fully intact
 REM     (all three verified), so runtime behavior is completely unchanged.
 REM     NOTE: this changes the binary's SHA-256, so the manifest MUST be
 REM     regenerated with NutriculaSignTool after rebuilding.
-%GPP64% -D_WIN32_WINNT=0x0601 -std=c++17 -O2 -s -shared -static-libgcc -static-libstdc++ ^
+%GPP64% -D_WIN32_WINNT=0x0601 -std=c++17 -O2 -s -shared -static -static-libgcc -static-libstdc++ ^
     -I %SRC_DIR% -I ..\Coordinator ^
     %SRC_DIR%\NutriculaLicenseCheckThin.cpp ^
     %SRC_DIR%\ServerSignatureVerify.cpp ^

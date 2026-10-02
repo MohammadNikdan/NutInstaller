@@ -7,11 +7,11 @@ REM     have real values in Keys\ - see Keys\README.txt if they're empty. !!!
 REM ============================================================================
 
 setlocal
-set GPP64="C:\Program Files (x86)\Embarcadero\Dev-Cpp\TDM-GCC-64\bin\g++.exe"
+set GPP64="C:\mingw64\bin\g++.exe"
 
 if not exist %GPP64% (
     echo ERROR: g++.exe not found at %GPP64%
-    echo Edit this script and set GPP64 to your actual 64-bit Dev-C++ compiler path.
+    echo Edit this script and set GPP64 to your actual 64-bit WinLibs compiler path.
     exit /b 1
 )
 
@@ -30,7 +30,7 @@ if %ERRORLEVEL% NEQ 0 (
 set OUT_DIR=Builds
 if not exist %OUT_DIR% mkdir %OUT_DIR%
 
-%GPP64% -D_WIN32_WINNT=0x0601 -std=c++17 -O2 -static-libgcc -static-libstdc++ ^
+%GPP64% -D_WIN32_WINNT=0x0601 -std=c++17 -O2 -static -static-libgcc -static-libstdc++ ^
     ..\SignTool\NutriculaSignTool.cpp ^
     ..\Coordinator\ManifestVerify.cpp ^
     -o %OUT_DIR%\NutriculaSignTool.exe ^

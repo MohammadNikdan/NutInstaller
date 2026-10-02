@@ -1,31 +1,22 @@
 @echo off
 REM ============================================================================
-REM Builds NutriculaLicenseCheck32.dll using Dev-C++'s MinGW/g++.
+REM Builds NutriculaLicenseCheck32.dll using the 32-bit WinLibs MinGW-w64 g++.
 REM
-REM !!! Compiler: using TDM-GCC-64 with the -m32 flag to cross-compile to
-REM     32-bit. The REAL TDM-GCC project (unlike a plain single-arch
-REM     mingw-w64 build) is usually multilib-capable, meaning its 64-bit
-REM     g++.exe can ALSO produce 32-bit output when given -m32 - this is
-REM     why the same TDM-GCC-64 path is reused here.
+REM !!! Compiler: GPP32 points at a genuinely 32-bit-targeting g++.exe (the
+REM     WinLibs i686 / POSIX-threads toolchain at C:\mingw32). Because that
+REM     compiler is already 32-bit-only, NO -m32 flag is used (and none is
+REM     needed) - it always produces 32-bit output on its own.
 REM
-REM     IF THIS SCRIPT FAILS with an error like:
-REM       "cannot open linker script file ldscripts/i386pe.x"
-REM     that means this specific TDM-GCC-64 install is NOT multilib-
-REM     capable, and -m32 cannot work with it at all. In that case, you
-REM     need a genuinely separate 32-bit-targeting compiler installed
-REM     (e.g. Dev-C++'s older/32-bit MinGW package, if available), and
-REM     should point GPP32 at THAT g++.exe instead, removing the -m32
-REM     flag below (a 32-bit-only compiler already only ever produces
-REM     32-bit output, so -m32 becomes unnecessary/redundant with one).
-REM
+REM     If GPP32 is ever pointed at a 64-bit-only g++ by mistake, this build
+REM     will fail; make sure C:\mingw32\bin\g++.exe is the i686 WinLibs build.
 REM ============================================================================
 
 setlocal
-set GPP32="C:\Program Files (x86)\Embarcadero\Dev-Cpp\TDM-GCC-64\bin\g++.exe"
+set GPP32="C:\mingw32\bin\g++.exe"
 
 if not exist %GPP32% (
     echo ERROR: g++.exe not found at %GPP32%
-    echo Edit this script and set GPP32 to your actual 32-bit Dev-C++ compiler path.
+    echo Edit this script and set GPP32 to your actual 32-bit WinLibs compiler path.
     exit /b 1
 )
 
@@ -60,7 +51,7 @@ REM     .rsrc icon and the .pdata/.xdata exception-unwind tables fully intact
 REM     (all three verified), so runtime behavior is completely unchanged.
 REM     NOTE: this changes the binary's SHA-256, so the manifest MUST be
 REM     regenerated with NutriculaSignTool after rebuilding.
-%GPP32% -m32 -D_WIN32_WINNT=0x0601 -std=c++17 -O2 -s -shared -static-libgcc -static-libstdc++ ^
+%GPP32% -D_WIN32_WINNT=0x0601 -std=c++17 -O2 -s -shared -static -static-libgcc -static-libstdc++ ^
     -I %SRC_DIR% -I ..\Coordinator ^
     %SRC_DIR%\NutriculaLicenseCheckThin.cpp ^
     %SRC_DIR%\ServerSignatureVerify.cpp ^
