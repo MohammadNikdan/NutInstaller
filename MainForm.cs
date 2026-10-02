@@ -279,20 +279,31 @@ namespace NutriculaInstaller
                 Location = new Point(81, 46)
             };
             header.Controls.Add(title);
-            // Center the subtitle under the (larger) brand title above it.
-            title.Location = new Point(brand.Left + (brand.Width - title.Width) / 2, 46);
 
+            // Version now sits inline right after "Expert Advisor" on the
+            // same line ("Expert Advisor - v X.X"), at its own smaller
+            // font, rather than on a separate line below - a plain Label
+            // cannot mix two font sizes in one Text, so this is two Labels
+            // placed side by side and centered together as one group under
+            // the (larger) brand title above them, the same grouping
+            // technique used for the web/chat icon buttons further down.
             Label versionLabel = new Label
             {
                 AutoSize = true,
-                Text = "v " + AppConfig.Version,
+                Text = " - v " + AppConfig.Version,
                 Font = UiHelpers.UiFont(7.5f),
                 ForeColor = Color.FromArgb(160, 166, 190),
-                Location = new Point(81, 62)
+                Location = new Point(0, 46)
             };
             header.Controls.Add(versionLabel);
-            // Centered the same way as the "Expert Advisor" subtitle above it.
-            versionLabel.Location = new Point(brand.Left + (brand.Width - versionLabel.Width) / 2, 62);
+
+            int subtitleGroupWidth = title.Width + versionLabel.Width;
+            int subtitleGroupLeft = brand.Left + (brand.Width - subtitleGroupWidth) / 2;
+            title.Location = new Point(subtitleGroupLeft, 46);
+            // Vertically center the smaller version text against the taller
+            // "Expert Advisor" text instead of sharing its exact Top, so the
+            // two different font sizes still read as one aligned line.
+            versionLabel.Location = new Point(title.Right, title.Top + (title.Height - versionLabel.Height) / 2);
 
             // Right side of the header: a small credit line plus quick links to the
             // website and Telegram support, so that space isn't left empty.
