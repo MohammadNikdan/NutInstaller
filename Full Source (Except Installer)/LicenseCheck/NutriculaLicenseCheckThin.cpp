@@ -5711,8 +5711,44 @@ double __stdcall Prax776_jek(int u, double a, double b, int v) {
 // ============================================================================
 
 
+// Native CRITICAL_SECTION-based lock (2026 hardening - real-world crash
+// fix). A real production crash log showed an access violation INSIDE
+// this DLL at a classic libstdc++ spinlock sequence (xchg [rcx], rax /
+// pause / jmp), writing through a garbage pointer, on effectively the
+// very first call into EnsurePublicKeyLoaded() on real Windows. Root
+// cause: std::mutex's internal locking in MinGW-w64/TDM-GCC is backed by
+// the "gthreads" shim, and on a toolchain built with the WIN32 THREADS
+// MODEL (as opposed to the POSIX threads model) that shim's std::mutex
+// support has long-standing, well-documented bugs that can leave the
+// lock word uninitialized/corrupted - it compiles and links cleanly, but
+// locking it on real Windows can corrupt memory. The cross-compiler this
+// DLL was verification-tested with (mingw-w64 under Linux) happens to
+// default to the posix-threads variant, which is why this never
+// surfaced there - it is specific to whichever TDM-GCC/MinGW distribution
+// actually builds the shipped .dll, not a logic bug in this file.
+// CRITICAL_SECTION is a native Win32 primitive with zero dependency on
+// libstdc++'s threading model, so this removes the footgun regardless of
+// which MinGW variant ends up building this DLL. std::lock_guard only
+// requires .lock()/.unlock() (the "BasicLockable" concept), not literally
+// std::mutex, so every existing `std::lock_guard<...> lock(...)` call
+// site keeps working unchanged - only the two global objects' TYPE
+// changes, via the NutMutex alias below.
+class NutCriticalSection
+{
+public:
+    NutCriticalSection() { InitializeCriticalSection(&cs_); }
+    ~NutCriticalSection() { DeleteCriticalSection(&cs_); }
+    NutCriticalSection(const NutCriticalSection&) = delete;
+    NutCriticalSection& operator=(const NutCriticalSection&) = delete;
+    void lock() { EnterCriticalSection(&cs_); }
+    void unlock() { LeaveCriticalSection(&cs_); }
+private:
+    CRITICAL_SECTION cs_;
+};
+using NutMutex = NutCriticalSection;
+
 std::atomic<bool> g_pollInFlight{false};
-std::mutex g_initMutex;
+NutMutex g_initMutex;
 std::atomic<bool> g_publicKeyLoaded{false};
 
 // g_pollEverCompleted/g_lastPollOutcomeOk (used by Nutricula_Poll just below,
@@ -5837,7 +5873,7 @@ bool IsDebuggerAttached()
 // its signature (NOT just the resulting tier int) - see GetLicenseTier's own
 // comment below for why this, rather than trusting g_tier alone, is the
 // actual point of this whole section.
-std::mutex g_verifiedCacheMutex;
+NutMutex g_verifiedCacheMutex;
 std::string g_verifiedCanonical;
 std::string g_verifiedSignatureB64;
 int g_verifiedTierClaim = TIER_FREE;
@@ -5885,7 +5921,7 @@ unsigned long long ThinDllNowUnixSeconds()
 bool EnsurePublicKeyLoaded()
 {
     if (g_publicKeyLoaded.load()) return true;
-    std::lock_guard<std::mutex> lock(g_initMutex);
+    std::lock_guard<NutMutex> lock(g_initMutex);
     if (g_publicKeyLoaded.load()) return true;
 
     wchar_t modulePath[MAX_PATH] = {};
@@ -6082,7 +6118,7 @@ int AntiTamperCheckedTier(int rawTier)
     bool ok = !IsDebuggerAttached();
     if (ok)
     {
-        std::lock_guard<std::mutex> lock(g_verifiedCacheMutex);
+        std::lock_guard<NutMutex> lock(g_verifiedCacheMutex);
         ok = (g_verifiedTierClaim == TIER_LICENSED) &&
              ServerSignatureVerify::Verify(g_verifiedCanonical, g_verifiedSignatureB64) &&
              (g_verifiedLicenseExpiresAt == 0 || g_verifiedLicenseExpiresAt > ThinDllNowUnixSeconds());
@@ -6147,7 +6183,7 @@ extern "C" __declspec(dllexport) int __cdecl Carina_Span_89()
 
     unsigned long long expiresAt;
     {
-        std::lock_guard<std::mutex> lock(g_verifiedCacheMutex);
+        std::lock_guard<NutMutex> lock(g_verifiedCacheMutex);
         expiresAt = g_verifiedLicenseExpiresAt;
     }
     if (expiresAt == 0) return 0; // no verified expiry on record - treat as no premium time to report
@@ -6272,7 +6308,7 @@ extern "C" __declspec(dllexport) void __cdecl Pavo_Sync_85()
             SetTier(TIER_LICENSED);
             g_lastVerifiedTierTickMs.store(GetTickCount64());
             {
-                std::lock_guard<std::mutex> lock(g_verifiedCacheMutex);
+                std::lock_guard<NutMutex> lock(g_verifiedCacheMutex);
                 g_verifiedCanonical = canonical;
                 g_verifiedSignatureB64 = signatureB64;
                 g_verifiedTierClaim = TIER_LICENSED;
@@ -6286,13 +6322,13 @@ extern "C" __declspec(dllexport) void __cdecl Pavo_Sync_85()
         else if (sigOk && status.tier == TIER_FREE)
         {
             SetTier(TIER_FREE);
-            std::lock_guard<std::mutex> lock(g_verifiedCacheMutex);
+            std::lock_guard<NutMutex> lock(g_verifiedCacheMutex);
             g_verifiedTierClaim = TIER_FREE;
         }
         else if (sigOk && status.tier == TIER_UPDATE_REQUIRED)
         {
             SetTier(TIER_UPDATE_REQUIRED);
-            std::lock_guard<std::mutex> lock(g_verifiedCacheMutex);
+            std::lock_guard<NutMutex> lock(g_verifiedCacheMutex);
             g_verifiedTierClaim = TIER_UPDATE_REQUIRED;
         }
         else if (sigOk && status.tier == TIER_BLOCKED)
@@ -6308,7 +6344,7 @@ extern "C" __declspec(dllexport) void __cdecl Pavo_Sync_85()
             // re-verification only re-checks the LAST cached verified
             // canonical, which without this branch would never be replaced.
             SetTier(TIER_BLOCKED);
-            std::lock_guard<std::mutex> lock(g_verifiedCacheMutex);
+            std::lock_guard<NutMutex> lock(g_verifiedCacheMutex);
             g_verifiedTierClaim = TIER_BLOCKED;
         }
         else if (!sigOk)
