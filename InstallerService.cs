@@ -114,11 +114,11 @@ namespace NutriculaInstaller
                     : (!freeOutcome.AllSucceeded
                         ? Messages.ForFileFailure(freeOutcome.FailureKind)
                         : Messages.FreeDeviceIdentityFailure);
-                // See FileInstallOutcome.CoordinatorWarning's own comment -
-                // this used to be swallowed into a log line nobody ever saw.
-                result.FinalMessage = freeOutcome.CoordinatorWarning != null
-                    ? freeBaseMessage + "\n\n" + freeOutcome.CoordinatorWarning
-                    : freeBaseMessage;
+                // See FileInstallOutcome.CoordinatorWarning / TerminalWarning -
+                // both used to be swallowed into a log line nobody ever saw.
+                if (freeOutcome.CoordinatorWarning != null) freeBaseMessage += "\n\n" + freeOutcome.CoordinatorWarning;
+                if (freeOutcome.TerminalWarning != null) freeBaseMessage += "\n\n" + freeOutcome.TerminalWarning;
+                result.FinalMessage = freeBaseMessage;
                 return result;
             }
 
@@ -328,9 +328,12 @@ namespace NutriculaInstaller
             // refresh/verify it afterward, so this must not be silently
             // dropped from the message the user sees.
             string successMessage = mode == InstallMode.Premium ? Messages.PremiumSuccess : Messages.TransferSuccess;
-            return fileOutcome.CoordinatorWarning != null
-                ? successMessage + "\n\n" + fileOutcome.CoordinatorWarning
-                : successMessage;
+            if (fileOutcome.CoordinatorWarning != null) successMessage += "\n\n" + fileOutcome.CoordinatorWarning;
+            // Write-protected terminals that were skipped (see
+            // FileInstallOutcome.TerminalWarning) - the install still succeeded
+            // overall, but tell the user which terminals need extra steps.
+            if (fileOutcome.TerminalWarning != null) successMessage += "\n\n" + fileOutcome.TerminalWarning;
+            return successMessage;
         }
 
         /// <summary>
@@ -460,9 +463,11 @@ namespace NutriculaInstaller
             int totalOperations = terminals.Count * 3 + 1; // +1 for the one-time Coordinator install (not per-terminal)
             int completed = 0;
             int allSucceededFlag = 1;
+            int succeededCount = 0;
             object progressLock = new object();
             object failureLock = new object();
             LocalFileFailureKind worstFailure = LocalFileFailureKind.None;
+            var inaccessibleTerminals = new List<string>();
 
             var tasks = terminals.Select(async terminal =>
             {
@@ -512,6 +517,7 @@ namespace NutriculaInstaller
                     }
 
                     log("Installed " + terminal.Type + " files -> " + terminal.TerminalPath);
+                    Interlocked.Increment(ref succeededCount);
                 }
                 catch (OperationCanceledException)
                 {
@@ -519,27 +525,77 @@ namespace NutriculaInstaller
                 }
                 catch (Exception ex)
                 {
-                    Interlocked.Exchange(ref allSucceededFlag, 0);
                     LocalFileFailureKind kind = ClassifyLocalFileException(ex);
-                    lock (failureLock)
+                    if (kind == LocalFileFailureKind.AccessDenied)
                     {
-                        // Keep the first-seen, most-specific failure kind so the
-                        // final message reflects a real, diagnosable cause
-                        // rather than just "something went wrong" whenever
-                        // possible - Unknown is the lowest priority and only
-                        // wins if nothing more specific was ever classified.
-                        if (worstFailure == LocalFileFailureKind.None ||
-                            (worstFailure == LocalFileFailureKind.Unknown && kind != LocalFileFailureKind.Unknown))
+                        // Non-elevated (asInvoker) install: a terminal whose
+                        // folder is write-protected (classically a portable
+                        // MetaTrader under %ProgramFiles%) genuinely cannot be
+                        // written without Administrator. Do NOT fail the whole
+                        // install for this - the license still activates and
+                        // every user-writable terminal still gets its files.
+                        // Record it as a per-terminal warning; if it turns out
+                        // NO terminal succeeded at all, this is promoted to a
+                        // real AccessDenied failure after the loop.
+                        lock (failureLock)
                         {
-                            worstFailure = kind;
+                            inaccessibleTerminals.Add(terminal.Type + " - " + terminal.TerminalPath);
                         }
+                        log("SKIPPED " + terminal.Type + " -> " + terminal.TerminalPath +
+                            " | folder is write-protected (needs Administrator, or reinstall MetaTrader outside Program Files)");
                     }
-                    log("FAILED " + terminal.Type + " -> " + terminal.TerminalPath + " | " + ex.Message);
+                    else
+                    {
+                        Interlocked.Exchange(ref allSucceededFlag, 0);
+                        lock (failureLock)
+                        {
+                            // Keep the first-seen, most-specific failure kind so the
+                            // final message reflects a real, diagnosable cause
+                            // rather than just "something went wrong" whenever
+                            // possible - Unknown is the lowest priority and only
+                            // wins if nothing more specific was ever classified.
+                            if (worstFailure == LocalFileFailureKind.None ||
+                                (worstFailure == LocalFileFailureKind.Unknown && kind != LocalFileFailureKind.Unknown))
+                            {
+                                worstFailure = kind;
+                            }
+                        }
+                        log("FAILED " + terminal.Type + " -> " + terminal.TerminalPath + " | " + ex.Message);
+                    }
                 }
             }).ToArray();
 
             await Task.WhenAll(tasks).ConfigureAwait(true);
             bool allSucceeded = Interlocked.CompareExchange(ref allSucceededFlag, 0, 0) == 1;
+
+            // Resolve the write-protected (AccessDenied) terminals, if any,
+            // into either a soft warning (at least one terminal DID get its
+            // files) or a hard failure (nothing could be written anywhere).
+            string terminalWarning = null;
+            if (inaccessibleTerminals.Count > 0)
+            {
+                if (succeededCount == 0)
+                {
+                    // Every discovered terminal was write-protected - nothing
+                    // was installed, so this is a genuine failure, not a
+                    // partial-success warning.
+                    allSucceeded = false;
+                    lock (failureLock)
+                    {
+                        if (worstFailure == LocalFileFailureKind.None) worstFailure = LocalFileFailureKind.AccessDenied;
+                    }
+                }
+                else
+                {
+                    terminalWarning =
+                        "Some MetaTrader terminals could not be set up because their folder is write-protected " +
+                        "(typically a portable MetaTrader installed under Program Files):\n- " +
+                        string.Join("\n- ", inaccessibleTerminals) +
+                        "\n\nThe other terminal(s) were set up correctly and your license is active. To add " +
+                        "Nutricula to the terminal(s) above as well, either run this installer as Administrator, " +
+                        "or reinstall that MetaTrader somewhere inside your user profile (not under Program Files).";
+                }
+            }
 
             // --- New: one-time Coordinator (the user-session Broker) install
             // - architecture point 63: exactly ONE Coordinator per machine,
@@ -576,7 +632,8 @@ namespace NutriculaInstaller
 
             return new FileInstallOutcome(allSucceeded, allSucceeded ? LocalFileFailureKind.None : worstFailure)
             {
-                CoordinatorWarning = coordinatorWarning
+                CoordinatorWarning = coordinatorWarning,
+                TerminalWarning = terminalWarning
             };
         }
 
@@ -767,7 +824,7 @@ namespace NutriculaInstaller
             // plus the DLL's own on-demand launch the moment an EA attaches
             // (NutriculaLicenseCheckThin.cpp EnsureCoordinatorRunning), which
             // needs no registry at all - it derives this same install path
-            // from %ProgramFiles(x86)%/%ProgramFiles%. HKCU Run needs no
+            // from %LocalAppData% (see GetCoordinatorInstallDir). HKCU Run needs no
             // elevation and is read by the standard Windows startup sequence
             // at every login - and by Wine's own explorer.exe equivalent at
             // Wine session start, so the SAME mechanism covers Windows and
@@ -1357,6 +1414,19 @@ namespace NutriculaInstaller
             /// instead.
             /// </summary>
             public string CoordinatorWarning { get; set; }
+            /// <summary>
+            /// Null when every discovered terminal received its files.
+            /// Otherwise a user-facing note listing terminals that were
+            /// SKIPPED because their folder is write-protected (e.g. a
+            /// portable MetaTrader under %ProgramFiles%, which a non-elevated
+            /// asInvoker install cannot write to). This is deliberately NOT a
+            /// hard failure as long as at least one terminal succeeded - the
+            /// license still activates and the other terminals work - so it is
+            /// surfaced as a warning rather than masking the whole install as
+            /// "failed". If NO terminal could be written, that becomes a real
+            /// AccessDenied failure instead (AllSucceeded=false).
+            /// </summary>
+            public string TerminalWarning { get; set; }
             public FileInstallOutcome(bool allSucceeded, LocalFileFailureKind failureKind)
             {
                 AllSucceeded = allSucceeded;
@@ -1513,8 +1583,14 @@ namespace NutriculaInstaller
                         return "Nutricula could not be installed because there is not enough free disk space. " +
                                "Please free up some space and try again.";
                     case LocalFileFailureKind.AccessDenied:
-                        return "Nutricula could not be installed because access to the MetaTrader folder was denied. " +
-                               "Please run this installer as Administrator and try again.";
+                        // Reached only when EVERY discovered terminal's folder is
+                        // write-protected (see InstallFilesAsync) - i.e. all are in
+                        // a location like Program Files. Admin IS a valid remedy
+                        // here, but so is moving MetaTrader into the user profile
+                        // (the installer itself needs no admin otherwise).
+                        return "Nutricula could not be installed because the MetaTrader folder is write-protected " +
+                               "(this usually means MetaTrader is installed under Program Files). Please either run " +
+                               "this installer as Administrator, or reinstall MetaTrader inside your user profile, then try again.";
                     case LocalFileFailureKind.FileInUse:
                         return "Nutricula could not be installed because one of its files is currently in use. " +
                                "Please close MetaTrader completely and try again.";
@@ -1707,10 +1783,15 @@ namespace NutriculaInstaller
             // saved" - that phrasing confirms a two-stage process (server
             // verification succeeds, THEN a separate local-save step can
             // fail), which is more architectural detail than a user needs to
-            // act on the problem (retry, or run as Administrator).
+            // act on the problem.
+            // The license file is saved under the user's own
+            // %APPDATA%\MetaQuotes\...\Common\Files, a per-user location, so
+            // running as Administrator would NOT help - the only useful advice
+            // is to close MetaTrader (in case it has the file locked) and
+            // retry. (Previously this wrongly suggested running as Admin.)
             public const string LicenseFileSaveFailed =
-                "The installation could not be completed on this computer. Please try again, " +
-                "or run this installer as Administrator.";
+                "The installation could not be completed on this computer. Please close MetaTrader " +
+                "completely and try again. If this keeps happening, contact Nutricula support.";
         }
     }
 

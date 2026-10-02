@@ -167,6 +167,31 @@ namespace NutriculaInstaller
             DeleteFileBestEffort(Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Nutricula", "DeviceKey.bin"), log);
 
+            // Wine device key: under Wine, NutriculaMachineId.cpp's
+            // GetDeviceKeyPath stores the key at $HOME/.nutricula/DeviceKey.bin
+            // (host-level, not per-WINEPREFIX - same place the Wine license
+            // file lives), reached from Windows-side code via the Z:\ mapping.
+            // The %APPDATA% delete above does NOT cover this, so a Wine
+            // uninstall would otherwise leave the device key behind. Mirror
+            // InstallerService.GetCommonLicensePath's own Wine branch.
+            try
+            {
+                if (MachineIdService.IsWineEnvironment())
+                {
+                    string home = Environment.GetEnvironmentVariable("HOME");
+                    if (!string.IsNullOrWhiteSpace(home) && home.StartsWith("/", StringComparison.Ordinal))
+                    {
+                        string wineMappedHome = "Z:" + home.Replace('/', '\\');
+                        DeleteFileBestEffort(Path.Combine(wineMappedHome, ".nutricula", "DeviceKey.bin"), log);
+                    }
+                }
+            }
+            catch
+            {
+                // Best-effort - an unusual Wine setup with no readable $HOME
+                // is not fatal to the rest of removal.
+            }
+
             try
             {
                 string licensePath = new InstallerService().GetCommonLicensePath();
