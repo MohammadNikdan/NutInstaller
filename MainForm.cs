@@ -270,40 +270,19 @@ namespace NutriculaInstaller
             };
             header.Controls.Add(brand);
 
+            // Subtitle is the product line plus the version as ONE plain
+            // label ("Expert Advisor 3.1"), same font/size/style throughout,
+            // centered under the (larger) brand title above it.
             Label title = new Label
             {
                 AutoSize = true,
-                Text = "Expert Advisor",
+                Text = "Expert Advisor " + AppConfig.Version,
                 Font = UiHelpers.UiFont(9.5f),
                 ForeColor = Color.FromArgb(206, 211, 228),
                 Location = new Point(81, 46)
             };
             header.Controls.Add(title);
-
-            // Version now sits inline right after "Expert Advisor" on the
-            // same line ("Expert Advisor - v X.X"), at its own smaller
-            // font, rather than on a separate line below - a plain Label
-            // cannot mix two font sizes in one Text, so this is two Labels
-            // placed side by side and centered together as one group under
-            // the (larger) brand title above them, the same grouping
-            // technique used for the web/chat icon buttons further down.
-            Label versionLabel = new Label
-            {
-                AutoSize = true,
-                Text = " - v " + AppConfig.Version,
-                Font = UiHelpers.UiFont(7.5f),
-                ForeColor = Color.FromArgb(160, 166, 190),
-                Location = new Point(0, 46)
-            };
-            header.Controls.Add(versionLabel);
-
-            int subtitleGroupWidth = title.Width + versionLabel.Width;
-            int subtitleGroupLeft = brand.Left + (brand.Width - subtitleGroupWidth) / 2;
-            title.Location = new Point(subtitleGroupLeft, 46);
-            // Vertically center the smaller version text against the taller
-            // "Expert Advisor" text instead of sharing its exact Top, so the
-            // two different font sizes still read as one aligned line.
-            versionLabel.Location = new Point(title.Right, title.Top + (title.Height - versionLabel.Height) / 2);
+            title.Location = new Point(brand.Left + (brand.Width - title.Width) / 2, 46);
 
             // Right side of the header: a small credit line plus quick links to the
             // website and Telegram support, so that space isn't left empty.
