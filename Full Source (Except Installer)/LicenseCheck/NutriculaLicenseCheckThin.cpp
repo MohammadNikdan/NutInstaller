@@ -6238,7 +6238,16 @@ extern "C" __declspec(dllexport) void __cdecl Nutricula_Poll()
     // security-critical step. The Coordinator's own tier/pending numbers
     // are NOT trusted directly for Tier 2; only a genuinely re-verified
     // signature can move g_tier to TIER_LICENSED.
-    if (status.canonicalLen > 0 && status.signatureLen > 0)
+    // Bound the lengths to the actual fixed buffer sizes before constructing
+    // std::strings from them. The genuine Broker always writes values well
+    // under these caps, but a malformed or hostile reply (e.g. a same-user
+    // process answering the pipe) could otherwise set canonicalLen/signatureLen
+    // to an enormous value and cause a multi-GB over-read of these 4096/800-byte
+    // buffers. A reply that violates the caps is treated as "no usable signed
+    // state this cycle" - fail-safe, never TIER_LICENSED.
+    if (status.canonicalLen > 0 && status.signatureLen > 0 &&
+        status.canonicalLen <= sizeof(status.canonical) &&
+        status.signatureLen <= sizeof(status.signatureB64))
     {
         std::string canonical(status.canonical, status.canonicalLen);
         std::string signatureB64(status.signatureB64, status.signatureLen);
