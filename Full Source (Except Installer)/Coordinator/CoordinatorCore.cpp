@@ -531,26 +531,42 @@ void CoordinatorCore::WorkerLoop()
             // the old multi-process DLL design. Just do the refresh.
             m_state.pending.store(PENDING_REFRESH_IN_PROGRESS);
 
-            // If we have a locally cached lease whose machine_id doesn't
-            // match (Layer 1 catch), anchor from "now" instead of the
-            // stale/foreign requested_at - this machine has no legitimate
-            // claim to that lease's schedule at all, so it should behave
-            // exactly like a fresh install (wait one fresh random window
-            // from right now, same as never having had a lease).
-            long long anchor = (local.hasLease && machineMatches) ? local.requestedAt : now;
-            long long offsetToUse = (local.hasLease && machineMatches) ? randomOffset : MIN_RANDOM_OFFSET_SEC;
-            long long target = anchor + offsetToUse;
-            long long waitSeconds = target - EstimatedNow();
-            if (waitSeconds > 0)
+            // Anchored wait applies ONLY to a real, matching lease that has
+            // its own deterministic schedule: wait until requested_at + the
+            // token-derived random offset, anchored to the lease's FIXED,
+            // persisted requested_at.
+            //
+            // BUG FIX (2026): this used to also run for the lease-free and
+            // Layer-1-mismatch cases, anchored to a MOVING `now`
+            // (target = now + MIN_RANDOM_OFFSET_SEC). Because `now` is
+            // recomputed at the top of every iteration, waitSeconds stayed
+            // perpetually ~MIN_RANDOM_OFFSET_SEC, so those cases waited,
+            // continued, and re-waited forever - NEVER falling through to the
+            // EA-activity gate, the free-tier telemetry (free_checkin), or the
+            // explicit TIER_FREE publish below. Two real consequences: (a)
+            // free_checkin was dead code - a free install never reported usage
+            // at all; (b) when a Premium lease expired and was deleted above,
+            // this became the lease-free case, so m_state.tier was never
+            // updated and the Coordinator kept publishing the STALE
+            // TIER_LICENSED + its now-expired signed canonical indefinitely.
+            // The lease-free / mismatch cases must fall straight through; their
+            // pacing comes from the EA-activity gate's own wait, the free-tier
+            // block's wait, and the terminal pause at the bottom of the loop.
+            if (local.hasLease && machineMatches)
             {
-                // Wait, but wake up early (and re-evaluate from the top) if
-                // RequestRefreshIfDue() signals us - architecture point 99:
-                // this does NOT itself start an extra request, it only
-                // shortens how long we wait before the SAME single-owner
-                // loop re-checks whether a refresh is genuinely due yet.
-                ResetEvent(m_wakeEvent);
-                WaitForSingleObject(m_wakeEvent, static_cast<DWORD>(waitSeconds * 1000));
-                continue;
+                long long target = local.requestedAt + randomOffset;
+                long long waitSeconds = target - EstimatedNow();
+                if (waitSeconds > 0)
+                {
+                    // Wait, but wake up early (and re-evaluate from the top) if
+                    // RequestRefreshIfDue() signals us - architecture point 99:
+                    // this does NOT itself start an extra request, it only
+                    // shortens how long we wait before the SAME single-owner
+                    // loop re-checks whether a refresh is genuinely due yet.
+                    ResetEvent(m_wakeEvent);
+                    WaitForSingleObject(m_wakeEvent, static_cast<DWORD>(waitSeconds * 1000));
+                    continue;
+                }
             }
 
             // EA-activity gate (2026): everything from here down is either
@@ -723,6 +739,14 @@ void CoordinatorCore::WorkerLoop()
                 }
                 m_state.tier.store(TIER_FREE);
                 m_state.pending.store(PENDING_IDLE);
+                // Pace the free-tier cycle: re-evaluate locally about every
+                // MIN_RANDOM_OFFSET_SEC (the actual network free_checkin above
+                // is independently throttled to FREE_CHECKIN_INTERVAL_SEC).
+                // Without this wait, falling through to here would spin the
+                // loop (the bottom Sleep is skipped by the continue). Wakes
+                // early if NoteEaActivity signals the event.
+                ResetEvent(m_wakeEvent);
+                WaitForSingleObject(m_wakeEvent, static_cast<DWORD>(MIN_RANDOM_OFFSET_SEC) * 1000);
                 continue;
             }
 

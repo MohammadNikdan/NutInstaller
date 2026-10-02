@@ -123,6 +123,19 @@ int main()
         // would only matter under far higher concurrency than N MT4/MT5
         // charts polling every few seconds.
         HANDLE t = (HANDLE)_beginthreadex(nullptr, 0, ServeOneClient, pipe, 0, nullptr);
-        if (t) CloseHandle(t);
+        if (t)
+        {
+            CloseHandle(t);
+        }
+        else
+        {
+            // Thread spawn failed: ServeOneClient (which normally owns and
+            // closes this pipe) will never run, so disconnect and close it
+            // here - otherwise this pipe instance is leaked for the life of
+            // the process and the connected client hangs waiting for a reply
+            // that will never come.
+            DisconnectNamedPipe(pipe);
+            CloseHandle(pipe);
+        }
     }
 }
