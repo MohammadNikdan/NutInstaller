@@ -265,10 +265,16 @@ try {
                 ? 'device_already_licensed' : 'machine_already_licensed');
         }
         $finalMachineIdToUse = $newEffectiveMachineIdAlt;
+        // RAW counterpart for the signed lease canonical (the client's Layer-1
+        // check recomputes the raw machine_id and cannot compute the IP-bound
+        // hash) - mirrors verify's $matchedRawMachineId. DB keeps the
+        // effective value above; only the lease carries this raw one.
+        $finalRawMachineIdToUse = $newMachineIdAlt;
     } else {
         $conflictPrimary = nutricula_find_conflicting_license($conn, $productId, $newEffectiveMachineId, $purchaseKey);
         if ($conflictPrimary === null) {
             $finalMachineIdToUse = $newEffectiveMachineId;
+            $finalRawMachineIdToUse = $newMachineId; // raw counterpart for the lease canonical
         } elseif (hash_equals((string)$conflictPrimary['device_public_key_hash'], $newDeviceKeyHash)) {
             // Proven to be THIS SAME (new/destination) computer - hard
             // reject, never offer the alt fallback for a same-device
@@ -427,7 +433,7 @@ try {
         'v=3' .
         '|license_id=' . $newLicenseUuid .
         '|product_id=' . $productId .
-        '|machine_id=' . $finalMachineIdToUse .
+        '|machine_id=' . $finalRawMachineIdToUse .
         '|device_key_hash=' . $newDeviceKeyHash .
         '|license_expires_at=' . $licenseExpires .
         '|requested_at=' . $finalNow .

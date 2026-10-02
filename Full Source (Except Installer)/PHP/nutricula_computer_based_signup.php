@@ -180,8 +180,19 @@ try {
         }
 
         $licenseId = (int)$existing['id'];
-        $finalMachineIdUsed = hash_equals((string)$existing['machine_id'], $effectiveMachineId)
-            ? $effectiveMachineId : $effectiveMachineIdAlt;
+        $matchedOnPrimary = hash_equals((string)$existing['machine_id'], $effectiveMachineId);
+        // Stored in the DB column (what the server matches against on every
+        // future request): the EFFECTIVE value (for VPS this is the IP-bound
+        // hash; for everything else it equals the raw value).
+        $finalMachineIdUsed = $matchedOnPrimary ? $effectiveMachineId : $effectiveMachineIdAlt;
+        // Carried in the signed LEASE canonical sent back to the client: the
+        // RAW value, matching exactly what the verify stage does with
+        // $matchedRawMachineId (see license_check.php). The client's own
+        // Layer-1 check recomputes the raw machine_id locally and compares it
+        // to the lease's machine_id - it cannot compute the IP-bound hash, so
+        // the lease MUST carry the raw value or a VPS lease would fail that
+        // check immediately. For non-VPS, raw == effective anyway.
+        $finalRawMachineId = $matchedOnPrimary ? $machineId : $machineIdAlt;
 
         if ($existing['status'] !== 'active') {
             $conn->rollback();
@@ -296,6 +307,7 @@ try {
                     ? 'device_already_licensed' : 'machine_already_licensed');
             }
             $finalMachineIdUsed = $effectiveMachineIdAlt;
+            $finalRawMachineId = $machineIdAlt; // raw counterpart for the lease canonical (see the existing-license branch above)
         } else {
             $conflictPrimary = nutricula_find_conflicting_license($conn, $productId, $effectiveMachineId, $purchaseKey);
             if ($conflictPrimary === null) {
@@ -303,6 +315,7 @@ try {
                 // previous license has expired - proceed immediately, no
                 // confirmation dialog needed.
                 $finalMachineIdUsed = $effectiveMachineId;
+                $finalRawMachineId = $machineId; // raw counterpart for the lease canonical
             } elseif (hash_equals((string)$conflictPrimary['device_public_key_hash'], $deviceKeyHash)) {
                 // Proven to be THIS SAME computer (device_key matches) -
                 // hard reject, never offer the alt fallback for a
@@ -416,7 +429,7 @@ try {
         'v=3' .
         '|license_id=' . $licenseUuid .
         '|product_id=' . $productId .
-        '|machine_id=' . $finalMachineIdUsed .
+        '|machine_id=' . $finalRawMachineId .
         '|device_key_hash=' . $deviceKeyHash .
         '|license_expires_at=' . $licenseExpires .
         '|requested_at=' . $now .

@@ -141,8 +141,13 @@ try {
            roughly every 30 minutes is completely normal and unaffected,
            while someone scripting rapid-fire fake check-ins to inflate the
            free-tier count gets throttled the same way any other endpoint
-           here already throttles abuse. */
-        $conn = nutricula_db($config);
+           here already throttles abuse.
+           Reuse the connection opened above (which already ran
+           SET time_zone='+00:00' at line 99) - a previous version reopened a
+           SECOND connection here, which leaked the first and, more
+           importantly, ran without the UTC session tz, so the NOW() writes in
+           nutricula_track_unlicensed_checkin below landed in the server's
+           default timezone instead of UTC. */
         nutricula_rate_limit_check($conn, $config, 'free_checkin');
 
         nutricula_track_unlicensed_checkin($conn, $checkinMachineId, $checkinDeviceKeyHash);
@@ -292,7 +297,10 @@ try {
 
         if (!nutricula_challenge_rate_ok($conn, $licenseDbId, $now)) {
             nutricula_log_activity($conn, $licenseDbId, $machineId, $deviceKeyHash, $localIp, $observedIp, 'challenge', 'challenge_rate_limited', $riskScore);
-            $conn->close();
+            // Do NOT close $conn here: $rejectTracked records a free-tier
+            // check-in (nutricula_track_unlicensed_checkin) that needs the
+            // connection open; nutricula_reject exits immediately afterward
+            // and PHP closes the connection on exit anyway.
             $rejectTracked('challenge_rate_limited', 60);
         }
 
@@ -507,13 +515,14 @@ try {
         if (!$lockedLicense || $lockedLicense['status'] !== 'active') {
             $conn->rollback();
             nutricula_log_activity($conn, $licenseDbId, $machineId, $deviceKeyHash, $localIp, $observedIp, 'verify', 'license_inactive', $riskScore);
-            $conn->close();
+            // Keep $conn open for $rejectTracked's free-tier check-in record
+            // (see the challenge_rate_limited site above); PHP closes it on exit.
             $rejectTracked('license_inactive');
         }
         if ((int)$lockedLicense['license_expires_at'] <= $finalNow) {
             $conn->rollback();
             nutricula_log_activity($conn, $licenseDbId, $machineId, $deviceKeyHash, $localIp, $observedIp, 'verify', 'license_expired', $riskScore);
-            $conn->close();
+            // Keep $conn open for $rejectTracked's free-tier check-in record.
             $rejectTracked('license_expired');
         }
 
@@ -543,7 +552,8 @@ try {
         if (!$lock['allowed']) {
             $conn->commit(); // the challenge-used and time-lock touches must still persist
             nutricula_log_activity($conn, $licenseDbId, $machineId, $deviceKeyHash, $localIp, $observedIp, 'verify', 'too_early', $riskScore);
-            $conn->close();
+            // Keep $conn open for $rejectTracked's free-tier check-in record
+            // (the commit above already persisted the time-lock touch).
             $rejectTracked('too_early', $lock['retry_after_seconds']);
         }
 
