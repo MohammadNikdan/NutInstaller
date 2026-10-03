@@ -174,7 +174,19 @@ try {
            default timezone instead of UTC. */
         nutricula_rate_limit_check($conn, $config, 'free_checkin');
 
-        nutricula_track_unlicensed_checkin($conn, $checkinMachineId, $checkinDeviceKeyHash);
+        $checkinPlatformProfile = nutricula_normalize_platform_profile($fields['platform_profile'] ?? null);
+        nutricula_track_unlicensed_checkin($conn, $checkinMachineId, $checkinDeviceKeyHash, $checkinPlatformProfile);
+
+        /* Admin panel (2026): a banned free-tier device is rejected
+           unconditionally, before even looking at artifact/version checks -
+           an admin ban is a deliberate, manual decision and must win over
+           everything else. 'banned' feeds into the exact same signed-Reject
+           construction as 'artifact_mismatch'/'update_required' below ($reason
+           drives it), and is mapped client-side to the SAME TIER_BLOCKED
+           outcome as a clone-detected license block (see CoordinatorCore.cpp's
+           reject-reason mapping) - a ban and a clone-block both mean "fully
+           stop", not just "demoted to free". */
+        $bannedUpfront = nutricula_is_banned($conn, null, $checkinMachineId, $checkinDeviceKeyHash);
 
         /* 2026 hardening (owner's explicit request - "security mechanisms
            shouldn't depend on license type, free or pro"): a free-tier
@@ -185,6 +197,12 @@ try {
            REQUIRED here, exactly like the verify stage - no backward-compat
            allowance, since there is no older Coordinator build in the field
            to accommodate (Nutricula has not shipped publicly yet). */
+        if ($bannedUpfront) {
+            // Admin ban wins outright - skip artifact/version validation
+            // entirely, there is no point spending a manifest lookup on a
+            // device that's being rejected unconditionally either way.
+            $reason = 'banned';
+        } else {
         $buildId = trim(nutricula_required_field($fields, 'build_id'));
         $ex5Hash = strtolower(trim(nutricula_required_field($fields, 'ex5_hash')));
         $ex4Hash = strtolower(trim(nutricula_required_field($fields, 'ex4_hash')));
@@ -274,6 +292,7 @@ try {
                 $reason = 'update_required';
             }
         }
+        } // end !$bannedUpfront
 
         $responseBody = 'NL3-FREE-OK';
         if ($reason !== null) {
@@ -353,7 +372,7 @@ try {
        reason is tracked correctly by default, not by remembering to add a
        line at the new call site). */
     $rejectTracked = function (string $reason, int $retryAfterSeconds = 0) use ($config, $conn, $machineId, $deviceKeyHash): never {
-        if ($reason !== 'update_required' && $reason !== 'blocked') {
+        if ($reason !== 'update_required' && $reason !== 'blocked' && $reason !== 'banned') {
             nutricula_track_unlicensed_checkin($conn, $machineId, $deviceKeyHash);
         }
         nutricula_reject($config, $reason, $retryAfterSeconds);
@@ -380,6 +399,15 @@ try {
     }
 
     $licenseDbId = (int)$license['id'];
+
+    /* Admin panel (2026): an admin ban wins outright, before any of the
+       machine/device/status/expiry checks below - checked by license_id
+       alone (not machine_id/device_key_hash) so a ban follows the license
+       even if the request's own machine/device fields are themselves wrong
+       for some other reason. */
+    if (nutricula_is_banned($conn, $licenseDbId, null, null)) {
+        $rejectTracked('banned');
+    }
 
     /* VPS IP-Binding - see nutricula_effective_machine_id()'s doc comment
        in license_common.php. $machineId stays the raw, client-reported

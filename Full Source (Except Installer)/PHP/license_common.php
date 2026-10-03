@@ -402,7 +402,7 @@ function nutricula_log_activity(mysqli $conn, int $licenseDbId, string $machineI
  * Deliberately never throws: a failure here can never interfere with the
  * actual response the caller is about to send.
  */
-function nutricula_track_unlicensed_checkin(mysqli $conn, ?string $machineId, ?string $deviceKeyHash): void
+function nutricula_track_unlicensed_checkin(mysqli $conn, ?string $machineId, ?string $deviceKeyHash, ?string $platformProfile = null): void
 {
     $machineId = ($machineId !== null && $machineId !== '') ? $machineId : null;
     $deviceKeyHash = ($deviceKeyHash !== null && $deviceKeyHash !== '') ? $deviceKeyHash : null;
@@ -431,17 +431,23 @@ function nutricula_track_unlicensed_checkin(mysqli $conn, ?string $machineId, ?s
         }
 
         if ($existingId !== null) {
-            // Touch last_seen_at, and opportunistically fill in whichever
+            // Touch last_seen_at, opportunistically fill in whichever
             // identifier was previously missing (e.g. machine_id becomes
-            // available on a later check-in after initially failing).
+            // available on a later check-in after initially failing), and
+            // always overwrite platform_profile when a value was sent this
+            // time (not COALESCE - a device's platform classification can
+            // only get more precise over time, never needs "first wins").
+            // A null here (older Coordinator, or the export unavailable this
+            // one time) leaves the previously-recorded value untouched.
             $stmt = $conn->prepare(
                 'UPDATE nutricula_unlicensed_checkins
                  SET last_seen_at = NOW(),
                      machine_id = COALESCE(machine_id, ?),
-                     device_public_key_hash = COALESCE(device_public_key_hash, ?)
+                     device_public_key_hash = COALESCE(device_public_key_hash, ?),
+                     platform_profile = COALESCE(?, platform_profile)
                  WHERE id = ?'
             );
-            $stmt->bind_param('ssi', $machineId, $deviceKeyHash, $existingId);
+            $stmt->bind_param('sssi', $machineId, $deviceKeyHash, $platformProfile, $existingId);
             $stmt->execute();
             $stmt->close();
             return;
@@ -449,10 +455,10 @@ function nutricula_track_unlicensed_checkin(mysqli $conn, ?string $machineId, ?s
 
         $stmt = $conn->prepare(
             'INSERT INTO nutricula_unlicensed_checkins
-             (machine_id, device_public_key_hash, first_seen_at, last_seen_at)
-             VALUES (?, ?, NOW(), NOW())'
+             (machine_id, device_public_key_hash, first_seen_at, last_seen_at, platform_profile)
+             VALUES (?, ?, NOW(), NOW(), ?)'
         );
-        $stmt->bind_param('ss', $machineId, $deviceKeyHash);
+        $stmt->bind_param('sss', $machineId, $deviceKeyHash, $platformProfile);
         if (!$stmt->execute()) {
             // Benign race: another concurrent check-in from the same
             // computer inserted first - not an error worth logging.
@@ -463,6 +469,48 @@ function nutricula_track_unlicensed_checkin(mysqli $conn, ?string $machineId, ?s
         $stmt->close();
     } catch (Throwable $e) {
         error_log('[Nutricula unlicensed tracking] ' . $e->getMessage());
+    }
+}
+
+/**
+ * Admin panel (2026): true if this request's identity is currently banned.
+ * For a premium request, pass $licenseDbId (the ban is keyed to the
+ * license row, independent of machine_id/device key, so it follows the
+ * license even across a transfer). For a free_checkin request, pass
+ * $machineId/$deviceKeyHash instead (whichever the Coordinator sent) and
+ * leave $licenseDbId null. Checking both scopes with a single OR-across-
+ * columns query means the caller never needs to know the ban's own scope -
+ * it only needs to know what identity it currently has in hand. Deliberately
+ * fail-open on a DB error (returns false) rather than fail-closed: a
+ * transient admin-panel-table hiccup must never take down the entire
+ * licensing flow for every customer - see this function's call sites in
+ * license_check.php for how the one all-identities-null case (client sent
+ * nothing at all) is already rejected earlier for unrelated reasons anyway.
+ */
+function nutricula_is_banned(mysqli $conn, ?int $licenseDbId, ?string $machineId, ?string $deviceKeyHash): bool
+{
+    if ($licenseDbId === null && ($machineId === null || $machineId === '') && ($deviceKeyHash === null || $deviceKeyHash === '')) {
+        return false;
+    }
+    try {
+        $stmt = $conn->prepare(
+            'SELECT id FROM nutricula_banned_devices
+             WHERE (license_id IS NOT NULL AND license_id = ?)
+                OR (machine_id IS NOT NULL AND machine_id = ?)
+                OR (device_public_key_hash IS NOT NULL AND device_public_key_hash = ?)
+             LIMIT 1'
+        );
+        if (!$stmt) return false;
+        $mid = ($machineId !== null && $machineId !== '') ? $machineId : '';
+        $dkh = ($deviceKeyHash !== null && $deviceKeyHash !== '') ? $deviceKeyHash : '';
+        $stmt->bind_param('iss', $licenseDbId, $mid, $dkh);
+        $stmt->execute();
+        $row = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+        return $row !== null;
+    } catch (Throwable $e) {
+        error_log('[Nutricula ban check] ' . $e->getMessage());
+        return false;
     }
 }
 
