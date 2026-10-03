@@ -1,4 +1,30 @@
 # Nutricula Installer configuration
 
+
+
+# Displayed product version (e.g. shown as "Expert Advisor 3.1").
 VERSION=3.1
+
+
+
+# Website button (globe icon, top-right of the window).
+WEBSITE_URL=https://www.NutriculaExpert.com
+
+# Support button (send/telegram icon, top-right of the window).
+SUPPORT_URL=https://t.me/nutriculaexpertsupport
+
+
+
+# "Installation Guide" button (footer, left).
 INSTALLATION_GUIDE_URL=https://www.facebook.com/
+
+# "Buy Premium License" button (footer). Replace with your real purchase page.
+PREMIUM_PURCHASE_URL=https://www.NutriculaExpert.com
+
+
+
+# Server endpoint the installer POSTs to for a PREMIUM signup.
+SIGNUP_URL=https://nutriculaexpert.com/license_validator_phps/nutricula_computer_based_signup.php
+
+# Server endpoint the installer POSTs to for a license TRANSFER.
+TRANSFER_URL=https://nutriculaexpert.com/license_validator_phps/nutricula_computer_based_signup_transfer.php
