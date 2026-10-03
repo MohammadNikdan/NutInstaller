@@ -743,12 +743,15 @@ void CoordinatorCore::WorkerLoop()
                 // even verify) - previously this meant the Coordinator
                 // made NO network contact whatsoever while sitting at
                 // TIER_FREE, silently, forever. Send a lightweight,
-                // unauthenticated "I am a free-tier install and still
-                // running" ping instead, so the vendor can actually see
-                // free-tier usage exists. Fire-and-forget: no retry loop,
-                // the response (if any) is not even inspected - this is
-                // pure telemetry, not something that gates tier or any
-                // other behavior below.
+                // unauthenticated-as-a-REQUEST "I am a free-tier install and
+                // still running" ping instead, so the vendor can actually
+                // see free-tier usage exists. No retry loop on failure
+                // (this is still just telemetry, not something worth
+                // burning the 10-attempt budget over) - but as of this
+                // hardening pass, the RESPONSE is genuinely inspected (see
+                // below), not discarded: it can carry an authenticated,
+                // server-signed update/tamper verdict even for a license-
+                // less install.
                 //
                 // Free installs always use the WithGuid variant (altMachineId),
                 // never the dual-machine_id complexity Premium needs - see
@@ -756,11 +759,34 @@ void CoordinatorCore::WorkerLoop()
                 // machine_id_alt is deliberately NOT sent here at all (this
                 // is the one stage where the server treats it as fully
                 // optional and never needs a fallback candidate).
+                //
+                // 2026 hardening (project owner's explicit request -
+                // "security mechanisms shouldn't depend on license type,
+                // free or pro"): also report the exact same Artifact
+                // Evidence (manifest/hash measurements) already computed
+                // above for the universal local-tamper gate and for
+                // Premium's own verify request - free of any extra cost to
+                // include here too. The server validates these against its
+                // OWN authoritative nutricula_build_manifests table (never
+                // trusting the client's bare values) and against
+                // latest_version, exactly like Premium's verify stage, and
+                // can send back a genuine signed Reject (update_required /
+                // artifact_mismatch) instead of a plain OK - see the
+                // response handling below, which (unlike before) actually
+                // inspects this response instead of discarding it.
                 std::map<std::string, std::string> checkinFields;
                 checkinFields["v"] = "3";
                 checkinFields["stage"] = "free_checkin";
                 checkinFields["machine_id"] = altMachineId;
                 checkinFields["device_key_hash"] = deviceKeyHash;
+                checkinFields["build_id"] = manifest.buildId;
+                checkinFields["ex5_hash"] = manifest.ex5Sha256;
+                checkinFields["ex4_hash"] = manifest.ex4Sha256;
+                checkinFields["dll32_hash"] = manifest.dll32Sha256;
+                checkinFields["dll64_hash"] = manifest.dll64Sha256;
+                checkinFields["machineid32_hash"] = manifest.machineid32Sha256;
+                checkinFields["machineid64_hash"] = manifest.machineid64Sha256;
+                checkinFields["broker_hash"] = expectedBrokerHash;
                 long long nowForCheckin = EstimatedNow();
                 bool dueForNetworkCheckin = (m_lastFreeCheckinSentAt == 0) ||
                     (nowForCheckin - m_lastFreeCheckinSentAt >= FREE_CHECKIN_INTERVAL_SEC);
@@ -771,11 +797,89 @@ void CoordinatorCore::WorkerLoop()
                     {
                         const std::wstring checkinHost = L"nutriculaexpert.com";
                         const std::wstring checkinPath = L"/license_validator_phps/license_check.php";
-                        Transport::PostEnvelope(checkinHost, checkinPath, checkinEnvelope, 15000);
+                        TransportResponse checkinResp = Transport::PostEnvelope(checkinHost, checkinPath, checkinEnvelope, 15000);
+                        // 2026 hardening: the response is now actually
+                        // inspected (no longer fire-and-forget). Two
+                        // outcomes are recognized:
+                        //  - A genuine, server-signature-verified Reject
+                        //    (the exact same signed format/key Premium's
+                        //    Reject uses) moves this install OFF TIER_FREE:
+                        //    "update_required" -> TIER_UPDATE_REQUIRED (the
+                        //    same mandatory-update gate Premium gets), and
+                        //    "artifact_mismatch" -> TIER_FAILED (confirmed
+                        //    tampering - collapses to "-2" via
+                        //    Check_Core_Integrity(), exactly like a
+                        //    communication failure, not a mere demotion -
+                        //    see the detailed comment at the assignment
+                        //    below). Any other reason stays at TIER_FREE.
+                        //  - The plain "NL3-FREE-OK" literal is checked
+                        //    FIRST, directly, and explicitly resets the
+                        //    persisted outcome back to TIER_FREE. It carries
+                        //    no signature and needs none: forging "all
+                        //    clear" grants an attacker nothing beyond the
+                        //    TIER_FREE already in effect, so authenticating
+                        //    it would add cost without adding security.
+                        // Anything else (a transport failure, a corrupted or
+                        // otherwise unparseable body) leaves m_freeTierOutcome
+                        // exactly as it was - see its own comment in
+                        // CoordinatorCore.h for why silence must never be
+                        // treated as "all clear".
+                        if (checkinResp.result == TransportResult::Ok)
+                        {
+                            std::string checkinPlaintext;
+                            if (LicenseProtocol::GcmDecrypt(checkinResp.body, checkinPlaintext) &&
+                                checkinPlaintext == "NL3-FREE-OK")
+                            {
+                                m_freeTierOutcome.store(TIER_FREE);
+                                std::lock_guard<std::mutex> lock(m_state.resultMutex);
+                                m_state.lastCanonical.clear();
+                                m_state.lastSignatureB64.clear();
+                            }
+                            else
+                            {
+                                ParsedResponse checkinParsed = LicenseProtocol::DecryptAndVerify(checkinResp.body);
+                                if (checkinParsed.kind == ResponseKind::Rejected)
+                                {
+                                    // "artifact_mismatch" -> TIER_FAILED
+                                    // (2026 hardening, project owner's
+                                    // explicit request): confirmed tampering
+                                    // must collapse to the same TIER_FAILED/
+                                    // "-2" outcome a communication failure
+                                    // already does - NOT merely demote to
+                                    // TIER_FREE - and identically whether
+                                    // this is a free or a licensed install.
+                                    // Check_Core_Integrity() already folds
+                                    // TIER_FAILED into -2 unconditionally, so
+                                    // this needs no DLL-side change. Per
+                                    // TIER_FAILED's own "carries no signature
+                                    // by design" contract, canonical/
+                                    // signature are cleared rather than
+                                    // published for this specific outcome.
+                                    int outcome = (checkinParsed.rejectReason == "update_required") ? TIER_UPDATE_REQUIRED
+                                        : (checkinParsed.rejectReason == "artifact_mismatch") ? TIER_FAILED
+                                        : TIER_FREE;
+                                    m_freeTierOutcome.store(outcome);
+                                    UpdateClockAnchor(static_cast<long long>(checkinParsed.requestedAt));
+                                    std::lock_guard<std::mutex> lock(m_state.resultMutex);
+                                    if (outcome == TIER_FAILED)
+                                    {
+                                        m_state.lastCanonical.clear();
+                                        m_state.lastSignatureB64.clear();
+                                    }
+                                    else
+                                    {
+                                        m_state.lastCanonical = checkinParsed.rawCanonical;
+                                        m_state.lastSignatureB64 = checkinParsed.rawSignatureB64;
+                                    }
+                                }
+                                // else: Invalid/unexpected - inconclusive,
+                                // leave the persisted outcome untouched.
+                            }
+                        }
                     }
                     m_lastFreeCheckinSentAt = nowForCheckin;
                 }
-                m_state.tier.store(TIER_FREE);
+                m_state.tier.store(m_freeTierOutcome.load());
                 m_state.pending.store(PENDING_IDLE);
                 // Pace the free-tier cycle: re-evaluate locally about every
                 // MIN_RANDOM_OFFSET_SEC (the actual network free_checkin above
@@ -873,11 +977,27 @@ void CoordinatorCore::WorkerLoop()
                     // to a distinct tier, not the ordinary TIER_FREE - still
                     // arrives via the exact same signed Reject path as any
                     // other rejection reason, so it's just as authenticated.
+                    // "artifact_mismatch" (2026 hardening, project owner's
+                    // explicit request: "اگه هش دستکاری شده باشه ... باید
+                    // -2 برگرده" - confirmed tampering must collapse to the
+                    // same TIER_FAILED/"-2" outcome a communication failure
+                    // already does, NOT merely demote to TIER_FREE, and this
+                    // applies identically regardless of license type) maps to
+                    // TIER_FAILED - the thin DLL's Check_Core_Integrity()
+                    // already folds TIER_FAILED into -2 unconditionally (see
+                    // its own comment: "ANY of them treated identically -
+                    // Alert + remove"), so reusing it here needs no DLL-side
+                    // change at all. TIER_FAILED is documented as carrying no
+                    // signature "by design" - canonical/signature are
+                    // deliberately cleared (not the Reject's own, which would
+                    // otherwise mismatch the empty-signature TIER_FAILED path
+                    // the DLL expects) rather than published.
                     finalStable = (challengeParsed.rejectReason == "update_required") ? TIER_UPDATE_REQUIRED
                         : (challengeParsed.rejectReason == "blocked") ? TIER_BLOCKED
+                        : (challengeParsed.rejectReason == "artifact_mismatch") ? TIER_FAILED
                         : TIER_FREE;
-                    finalCanonical = challengeParsed.rawCanonical;
-                    finalSignatureB64 = challengeParsed.rawSignatureB64;
+                    finalCanonical = (finalStable == TIER_FAILED) ? std::string() : challengeParsed.rawCanonical;
+                    finalSignatureB64 = (finalStable == TIER_FAILED) ? std::string() : challengeParsed.rawSignatureB64;
                     // Clock Anchor: this Reject's own requestedAt is authentic
                     // (RSA-signature-verified by DecryptAndVerify before
                     // kind==Rejected was ever set) server time.
@@ -942,11 +1062,18 @@ void CoordinatorCore::WorkerLoop()
                 { if (attempt < MAX_ATTEMPTS) Sleep(2000); continue; }
                 if (verifyParsed.kind == ResponseKind::Rejected)
                 {
+                    // "artifact_mismatch" -> TIER_FAILED (2026 hardening) -
+                    // see the identical, more detailed comment at the
+                    // challenge-stage Reject handling above for the full
+                    // reasoning (confirmed tampering collapses to "-2",
+                    // same as a communication failure, regardless of
+                    // license type - the owner's explicit request).
                     finalStable = (verifyParsed.rejectReason == "update_required") ? TIER_UPDATE_REQUIRED
                         : (verifyParsed.rejectReason == "blocked") ? TIER_BLOCKED
+                        : (verifyParsed.rejectReason == "artifact_mismatch") ? TIER_FAILED
                         : TIER_FREE;
-                    finalCanonical = verifyParsed.rawCanonical;
-                    finalSignatureB64 = verifyParsed.rawSignatureB64;
+                    finalCanonical = (finalStable == TIER_FAILED) ? std::string() : verifyParsed.rawCanonical;
+                    finalSignatureB64 = (finalStable == TIER_FAILED) ? std::string() : verifyParsed.rawSignatureB64;
                     // Clock Anchor: same reasoning as the challenge-stage
                     // Reject above - this is an authentic, signature-verified
                     // server timestamp.

@@ -122,6 +122,19 @@ private:
     // ServeOneClient thread happens to be handling the current pipe
     // connection, and read from the separate WorkerLoop thread.
     std::atomic<long long> m_lastEaActivityAt{0};
+    // 2026 hardening: the free-tier branch's own persisted verdict
+    // (TIER_FREE or TIER_UPDATE_REQUIRED - see WorkerLoop's free_checkin
+    // handling). The actual network check-in only happens every
+    // FREE_CHECKIN_INTERVAL_SEC (30:00), but the outer loop re-publishes a
+    // tier far more often than that (every ~MIN_RANDOM_OFFSET_SEC) - without
+    // this, a confirmed TIER_UPDATE_REQUIRED would flicker back to
+    // TIER_FREE within minutes on every cycle that skips the network call,
+    // not just the ones that make it. Sticky across cycles; only a fresh,
+    // verified server response (Reject or the explicit "NL3-FREE-OK"
+    // literal) ever changes it - a transport failure or an unparseable body
+    // leaves whatever was last confirmed untouched, same philosophy as the
+    // Premium/Transfer path's own "silence never downgrades trust" rule.
+    std::atomic<int> m_freeTierOutcome{TIER_FREE};
     // EstimatedNow() at the moment Start() launched WorkerLoop - the idle-
     // self-exit basis (see WorkerLoop) for a freshly (re)started process
     // that hasn't heard from any EA yet, so a brand-new Coordinator always
