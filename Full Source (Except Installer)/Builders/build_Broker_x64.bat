@@ -108,7 +108,24 @@ REM     .rsrc icon and the .pdata/.xdata exception-unwind tables fully intact
 REM     (all three verified), so runtime behavior is completely unchanged.
 REM     NOTE: this changes the binary's SHA-256, so the manifest MUST be
 REM     regenerated with NutriculaSignTool after rebuilding.
-%GPP64% -D_WIN32_WINNT=0x0601 -std=c++17 -O2 -s -static -static-libgcc -static-libstdc++ ^
+REM
+REM --- -mwindows (2026 bug fix): builds this exe as a GUI-subsystem binary
+REM     instead of a console one, so Windows NEVER allocates/shows a console
+REM     window for it - not on double-click, not from the DLL's own
+REM     CreateProcessW (which already passed CREATE_NO_WINDOW), and NOT from
+REM     the per-user Scheduled Task watchdog (InstallerService's schtasks.exe
+REM     "/TR" action launches the exe directly, and Task Scheduler shows a
+REM     console window of its own for a console-subsystem exe in an
+REM     interactive session regardless of how it's invoked - CREATE_NO_WINDOW
+REM     only has an effect if the LAUNCHING process requests it, which
+REM     schtasks.exe does not). Safe: the Broker's few printf() calls
+REM     (startup banner, singleton-exit message, missing-pubkey warning) are
+REM     purely informational, read no input, and simply become silent no-ops
+REM     with no console attached - nothing else in this binary needs a
+REM     console. (The separate build_Broker_x64_DIAG.bat build intentionally
+REM     does NOT add this flag, so its [PipeAuth] diagnostic output stays
+REM     visible when run manually for troubleshooting.)
+%GPP64% -D_WIN32_WINNT=0x0601 -std=c++17 -O2 -s -mwindows -static -static-libgcc -static-libstdc++ ^
     -I ..\Coordinator -I ..\LicenseCheck ^
     ..\Coordinator\NutriculaLicenseBroker.cpp ^
     ..\Coordinator\CoordinatorCore.cpp ^

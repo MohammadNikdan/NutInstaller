@@ -108,7 +108,12 @@ REM     .rsrc icon and the .pdata/.xdata exception-unwind tables fully intact
 REM     (all three verified), so runtime behavior is completely unchanged.
 REM     NOTE: this changes the binary's SHA-256, so the manifest MUST be
 REM     regenerated with NutriculaSignTool after rebuilding.
-%GPP32% -D_WIN32_WINNT=0x0601 -std=c++17 -O2 -s -static -static-libgcc -static-libstdc++ ^
+REM
+REM --- -mwindows (2026 bug fix) - see build_Broker_x64.bat's own comment for
+REM     the full explanation: this stops Windows from ever showing a console
+REM     window for this exe, including when the Scheduled Task watchdog
+REM     launches it directly. ---
+%GPP32% -D_WIN32_WINNT=0x0601 -std=c++17 -O2 -s -mwindows -static -static-libgcc -static-libstdc++ ^
     -I ..\Coordinator -I ..\LicenseCheck ^
     ..\Coordinator\NutriculaLicenseBroker.cpp ^
     ..\Coordinator\CoordinatorCore.cpp ^
