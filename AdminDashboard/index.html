@@ -4,21 +4,35 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="robots" content="noindex, nofollow">
-<title>پنل مدیریت Nutricula</title>
+<title data-i18n="app_title">پنل مدیریت Nutricula</title>
 <link rel="manifest" href="manifest.json">
 <link rel="icon" href="icon-192.png">
-<meta name="theme-color" content="#0b0f14">
+<meta name="theme-color" content="#f3f5f1">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
 
+<!-- Language switch (visible on both login + dashboard) -->
+<div class="lang-switch" id="langSwitch">
+  <button type="button" data-lang-btn="fa">فا</button>
+  <button type="button" data-lang-btn="en">EN</button>
+</div>
+
 <!-- Login screen -->
 <section id="loginScreen" class="screen">
+  <div class="login-orb"></div>
   <form id="loginForm" class="login-card">
-    <h1>پنل مدیریت Nutricula</h1>
-    <p class="muted">برای ادامه رمز عبور را وارد کنید.</p>
-    <input id="loginPassword" type="password" placeholder="رمز عبور" autocomplete="current-password" required>
-    <button type="submit">ورود</button>
+    <div class="login-mark">N</div>
+    <h1 data-i18n="app_title">پنل مدیریت Nutricula</h1>
+    <p class="muted" data-i18n="login_sub">برای ادامه رمز عبور را وارد کنید.</p>
+    <div class="field-wrap">
+      <input id="loginPassword" type="password" data-i18n-placeholder="login_password_placeholder" placeholder="رمز عبور" autocomplete="current-password" required>
+      <button type="button" class="toggle-visibility" id="togglePasswordBtn" aria-label="toggle password visibility">
+        <svg id="eyeIcon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7Z"/><circle cx="12" cy="12" r="3"/></svg>
+        <svg id="eyeOffIcon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" hidden><path d="M17.94 17.94A10.94 10.94 0 0 1 12 19c-7 0-11-7-11-7a21.3 21.3 0 0 1 5.17-5.94M9.9 4.24A10.4 10.4 0 0 1 12 4c7 0 11 7 11 7a21.3 21.3 0 0 1-2.61 3.57M14.12 14.12a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
+      </button>
+    </div>
+    <button type="submit" data-i18n="login_submit">ورود</button>
     <p id="loginError" class="error-text" hidden></p>
   </form>
 </section>
@@ -26,20 +40,20 @@
 <!-- Dashboard -->
 <div id="dashboard" class="screen" hidden>
   <header class="topbar">
-    <h1>پنل مدیریت Nutricula</h1>
+    <h1 data-i18n="app_title">پنل مدیریت Nutricula</h1>
     <div class="topbar-actions">
       <label class="field-inline">
-        بازه فعال بودن:
+        <span data-i18n="window_label">بازه فعال بودن:</span>
         <select id="windowDays">
-          <option value="1">۲۴ ساعت</option>
-          <option value="7">۷ روز</option>
-          <option value="30" selected>۳۰ روز</option>
-          <option value="90">۹۰ روز</option>
+          <option value="1" data-i18n="window_1d">۲۴ ساعت</option>
+          <option value="7" data-i18n="window_7d">۷ روز</option>
+          <option value="30" selected data-i18n="window_30d">۳۰ روز</option>
+          <option value="90" data-i18n="window_90d">۹۰ روز</option>
         </select>
       </label>
-      <button id="refreshBtn" class="btn">بروزرسانی</button>
+      <button id="refreshBtn" class="btn primary" data-i18n="refresh">بروزرسانی</button>
       <span id="lastUpdated" class="muted small"></span>
-      <button id="logoutBtn" class="btn ghost">خروج</button>
+      <button id="logoutBtn" class="btn ghost" data-i18n="logout">خروج</button>
     </div>
   </header>
 
@@ -50,16 +64,16 @@
     <!-- Growth chart -->
     <section class="panel">
       <div class="panel-head">
-        <h2>روند رشد کاربران</h2>
+        <h2 data-i18n="growth_title">روند رشد کاربران</h2>
         <div class="panel-controls">
           <select id="growthGranularity">
-            <option value="day">روزانه</option>
-            <option value="week">هفتگی</option>
-            <option value="month" selected>ماهانه</option>
+            <option value="day" data-i18n="gran_day">روزانه</option>
+            <option value="week" data-i18n="gran_week">هفتگی</option>
+            <option value="month" selected data-i18n="gran_month">ماهانه</option>
           </select>
           <select id="growthMetric">
-            <option value="new" selected>کاربر جدید</option>
-            <option value="cumulative">مجموع تجمعی</option>
+            <option value="new" selected data-i18n="metric_new">کاربر جدید</option>
+            <option value="cumulative" data-i18n="metric_cumulative">مجموع تجمعی</option>
           </select>
         </div>
       </div>
@@ -69,12 +83,12 @@
     <!-- OS breakdown -->
     <section class="panel">
       <div class="panel-head">
-        <h2>کاربران فعال به تفکیک سیستم‌عامل</h2>
+        <h2 data-i18n="os_title">کاربران فعال به تفکیک سیستم‌عامل</h2>
         <div class="panel-controls">
           <select id="osSegment">
-            <option value="total" selected>همه</option>
-            <option value="free">رایگان</option>
-            <option value="premium">پریمیوم</option>
+            <option value="total" selected data-i18n="segment_total">همه</option>
+            <option value="free" data-i18n="segment_free">رایگان</option>
+            <option value="premium" data-i18n="segment_premium">پریمیوم</option>
           </select>
         </div>
       </div>
@@ -84,43 +98,43 @@
     <!-- Server load -->
     <section class="panel">
       <div class="panel-head">
-        <h2>شلوغی سرور (درخواست در دقیقه، ۱ ساعت اخیر)</h2>
+        <h2 data-i18n="load_title">شلوغی سرور (درخواست در دقیقه، ۱ ساعت اخیر)</h2>
       </div>
       <canvas id="loadChart" height="70"></canvas>
     </section>
 
     <!-- Conversion -->
     <section class="panel">
-      <div class="panel-head"><h2>نرخ تبدیل رایگان به پریمیوم</h2></div>
+      <div class="panel-head"><h2 data-i18n="conversion_title">نرخ تبدیل رایگان به پریمیوم</h2></div>
       <div class="cards" id="conversionCards"></div>
     </section>
 
     <!-- Build adoption -->
     <section class="panel">
-      <div class="panel-head"><h2>ادوپشن نسخه (build)</h2></div>
+      <div class="panel-head"><h2 data-i18n="build_title">ادوپشن نسخه (build)</h2></div>
       <div id="buildAdoption"></div>
     </section>
 
     <!-- Health / extra signals -->
     <section class="panel">
-      <div class="panel-head"><h2>سلامت و وضعیت کلی</h2></div>
+      <div class="panel-head"><h2 data-i18n="health_title">سلامت و وضعیت کلی</h2></div>
       <div class="cards" id="healthCards"></div>
     </section>
 
     <!-- Suspicious IPs -->
     <section class="panel">
-      <div class="panel-head"><h2>IPهای مشکوک</h2></div>
+      <div class="panel-head"><h2 data-i18n="suspicious_title">IPهای مشکوک</h2></div>
       <div id="suspiciousIps"></div>
     </section>
 
     <!-- Search & ban -->
     <section class="panel">
       <div class="panel-head">
-        <h2>جستجوی کاربر / بن کردن</h2>
+        <h2 data-i18n="search_title">جستجوی کاربر / بن کردن</h2>
       </div>
       <div class="search-row">
-        <input id="searchInput" type="text" placeholder="ایمیل، machine_id یا device_key_hash یا UUID لایسنس">
-        <button id="searchBtn" class="btn">جستجو</button>
+        <input id="searchInput" type="text" data-i18n-placeholder="search_placeholder" placeholder="ایمیل، machine_id یا device_key_hash یا UUID لایسنس">
+        <button id="searchBtn" class="btn primary" data-i18n="search_btn">جستجو</button>
       </div>
       <div id="searchResults"></div>
     </section>
@@ -128,8 +142,8 @@
     <!-- Banned list -->
     <section class="panel">
       <div class="panel-head">
-        <h2>لیست بن‌شده‌ها</h2>
-        <button id="refreshBannedBtn" class="btn ghost small">بروزرسانی لیست</button>
+        <h2 data-i18n="banned_title">لیست بن‌شده‌ها</h2>
+        <button id="refreshBannedBtn" class="btn ghost small" data-i18n="refresh_list">بروزرسانی لیست</button>
       </div>
       <div id="bannedList"></div>
     </section>
@@ -137,22 +151,22 @@
     <!-- -2 log -->
     <section class="panel">
       <div class="panel-head">
-        <h2>گزارش‌های -۲</h2>
+        <h2 data-i18n="minus2_title">گزارش‌های -۲</h2>
       </div>
       <div class="search-row">
-        <input id="minus2Query" type="text" placeholder="ایمیل یا machine_id">
+        <input id="minus2Query" type="text" data-i18n-placeholder="minus2_placeholder" placeholder="ایمیل یا machine_id">
         <select id="minus2Reason">
-          <option value="">همه علت‌ها</option>
+          <option value="" data-i18n="minus2_reason_all">همه علت‌ها</option>
           <option value="artifact_mismatch">artifact_mismatch</option>
           <option value="transport_exhausted">transport_exhausted</option>
           <option value="machineid_generation_failed">machineid_generation_failed</option>
         </select>
         <select id="minus2Kind">
-          <option value="">رایگان و پریمیوم</option>
-          <option value="free">فقط رایگان</option>
-          <option value="licensed">فقط پریمیوم</option>
+          <option value="" data-i18n="minus2_kind_all">رایگان و پریمیوم</option>
+          <option value="free" data-i18n="minus2_kind_free">فقط رایگان</option>
+          <option value="licensed" data-i18n="minus2_kind_premium">فقط پریمیوم</option>
         </select>
-        <button id="minus2SearchBtn" class="btn">جستجو</button>
+        <button id="minus2SearchBtn" class="btn primary" data-i18n="search_btn">جستجو</button>
       </div>
       <div id="minus2Results"></div>
       <div id="minus2Pager" class="pager"></div>

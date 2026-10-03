@@ -6,7 +6,7 @@
 // instantly when you open the installed PWA, before the first live fetch
 // completes.
 
-const CACHE_NAME = 'nutricula-admin-shell-v2';
+const CACHE_NAME = 'nutricula-admin-shell-v3';
 const SHELL_FILES = [
   './',
   './index.html',
@@ -15,6 +15,14 @@ const SHELL_FILES = [
   './manifest.json',
   './icon-192.png',
   './icon-512.png',
+  './fonts/estedad-400.woff2',
+  './fonts/estedad-500.woff2',
+  './fonts/estedad-600.woff2',
+  './fonts/estedad-700.woff2',
+  './fonts/outfit-400.woff2',
+  './fonts/outfit-500.woff2',
+  './fonts/outfit-600.woff2',
+  './fonts/outfit-700.woff2',
 ];
 
 self.addEventListener('install', (event) => {
