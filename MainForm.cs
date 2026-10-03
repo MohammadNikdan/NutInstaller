@@ -103,8 +103,7 @@ namespace NutriculaInstaller
         {
             DialogResult confirm = MessageBox.Show(
                 this,
-                "This will completely remove Nutricula EA from this computer - the license " +
-                "service/broker, the Expert Advisor, and every installed file. Continue?",
+                "This will completely remove Nutricula EA, including your license, from this computer. Continue?",
                 "Uninstall Nutricula EA",
                 MessageBoxButtons.YesNo,
                 MessageBoxIcon.Warning);

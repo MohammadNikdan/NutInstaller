@@ -113,8 +113,7 @@ namespace NutriculaInstaller
             if (!skipConfirm)
             {
                 DialogResult confirm = MessageBox.Show(
-                    "This will remove Nutricula EA from MetaTrader on this computer, including the " +
-                    "license Broker and all installed files. Continue?",
+                    "This will completely remove Nutricula EA, including your license, from this computer. Continue?",
                     "Uninstall Nutricula EA",
                     MessageBoxButtons.YesNo,
                     MessageBoxIcon.Warning);
