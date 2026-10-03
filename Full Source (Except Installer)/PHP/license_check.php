@@ -236,6 +236,31 @@ try {
         $reason = null;
         if (!$artifactsOk) {
             $reason = 'artifact_mismatch';
+            // 2026 hardening: same -2/support logging as the verify stage's
+            // artifact_mismatch - see that site's comment for the full
+            // reasoning. Builds as precise a detail string as this request
+            // lets us determine (malformed fields, no manifest row at all,
+            // or exactly which hash field(s) genuinely mismatched).
+            if (!$wellFormed) {
+                $mismatchDetail = 'malformed build_id/hash field(s)';
+            } elseif (!$manifestRow) {
+                $mismatchDetail = 'no manifest row found for build_id=' . $buildId;
+            } else {
+                $mismatchedFields = [];
+                if (!hash_equals((string)$manifestRow['ex5_sha256'], $ex5Hash)) $mismatchedFields[] = 'ex5_hash';
+                if (!hash_equals((string)$manifestRow['ex4_sha256'], $ex4Hash)) $mismatchedFields[] = 'ex4_hash';
+                if (!hash_equals((string)$manifestRow['dll32_sha256'], $dll32Hash)) $mismatchedFields[] = 'dll32_hash';
+                if (!hash_equals((string)$manifestRow['dll64_sha256'], $dll64Hash)) $mismatchedFields[] = 'dll64_hash';
+                if (!hash_equals((string)$manifestRow['machineid32_sha256'], $machineid32Hash)) $mismatchedFields[] = 'machineid32_hash';
+                if (!hash_equals((string)$manifestRow['machineid64_sha256'], $machineid64Hash)) $mismatchedFields[] = 'machineid64_hash';
+                if (!$brokerMatches) $mismatchedFields[] = 'broker_hash';
+                $mismatchDetail = 'build_id=' . $buildId . '; mismatched field(s): ' . implode(', ', $mismatchedFields);
+            }
+            nutricula_log_minus2(
+                $conn, 'free', 'artifact_mismatch', $mismatchDetail,
+                null, null,
+                $checkinMachineId, null, $checkinDeviceKeyHash, $buildId, nutricula_client_ip($config)
+            );
         } else {
             $latestVersion = (string)($config['latest_version'] ?? '');
             $installedVersion = (string)($manifestRow['version'] ?? '');
@@ -500,9 +525,35 @@ try {
         $machineid32Hash = strtolower(trim(nutricula_required_field($fields, 'machineid32_hash')));
         $machineid64Hash = strtolower(trim(nutricula_required_field($fields, 'machineid64_hash')));
         $brokerHash = strtolower(trim(nutricula_required_field($fields, 'broker_hash')));
-        if ($buildId === '' || strlen($buildId) > 64) $rejectTracked('artifact_mismatch');
-        foreach ([$ex5Hash, $ex4Hash, $dll32Hash, $dll64Hash, $machineid32Hash, $machineid64Hash, $brokerHash] as $h) {
-            if (!preg_match('/\A[0-9a-f]{64}\z/', $h)) $rejectTracked('artifact_mismatch');
+
+        /* 2026 hardening: every "artifact_mismatch" reject here is a
+           confirmed-tampering verdict the client maps to TIER_FAILED/"-2"
+           (see CoordinatorCore.cpp) - log it, with as precise a reason as
+           this request lets us determine, to nutricula_minus2_log so
+           support can explain a customer's -2 report without guessing. */
+        $logArtifactMismatch = function (string $detail) use ($conn, $licenseDbId, $license, $machineId, $machineIdAlt, $deviceKeyHash, $buildId, $observedIp): void {
+            nutricula_log_minus2(
+                $conn, 'licensed', 'artifact_mismatch', $detail,
+                $licenseDbId, (string)$license['user_email'],
+                $machineId, $machineIdAlt, $deviceKeyHash, $buildId, $observedIp
+            );
+        };
+
+        if ($buildId === '' || strlen($buildId) > 64) {
+            $logArtifactMismatch('malformed build_id');
+            $rejectTracked('artifact_mismatch');
+        }
+        $hashFieldsByName = [
+            'ex5_hash' => $ex5Hash, 'ex4_hash' => $ex4Hash,
+            'dll32_hash' => $dll32Hash, 'dll64_hash' => $dll64Hash,
+            'machineid32_hash' => $machineid32Hash, 'machineid64_hash' => $machineid64Hash,
+            'broker_hash' => $brokerHash,
+        ];
+        foreach ($hashFieldsByName as $fieldName => $h) {
+            if (!preg_match('/\A[0-9a-f]{64}\z/', $h)) {
+                $logArtifactMismatch('malformed ' . $fieldName);
+                $rejectTracked('artifact_mismatch');
+            }
         }
 
         $stmt = $conn->prepare(
@@ -580,14 +631,22 @@ try {
             hash_equals((string)$expectedManifest['broker64_sha256'], $brokerHash)
         );
 
-        if (!$expectedManifest ||
-            !hash_equals((string)$expectedManifest['ex5_sha256'], $ex5Hash) ||
-            !hash_equals((string)$expectedManifest['ex4_sha256'], $ex4Hash) ||
-            !hash_equals((string)$expectedManifest['dll32_sha256'], $dll32Hash) ||
-            !hash_equals((string)$expectedManifest['dll64_sha256'], $dll64Hash) ||
-            !hash_equals((string)$expectedManifest['machineid32_sha256'], $machineid32Hash) ||
-            !hash_equals((string)$expectedManifest['machineid64_sha256'], $machineid64Hash) ||
-            !$brokerMatches) {
+        if (!$expectedManifest) {
+            $logArtifactMismatch('no manifest row found for build_id=' . $buildId);
+            $rejectTracked('artifact_mismatch');
+        }
+        $mismatchedFields = [];
+        if (!hash_equals((string)$expectedManifest['ex5_sha256'], $ex5Hash)) $mismatchedFields[] = 'ex5_hash';
+        if (!hash_equals((string)$expectedManifest['ex4_sha256'], $ex4Hash)) $mismatchedFields[] = 'ex4_hash';
+        if (!hash_equals((string)$expectedManifest['dll32_sha256'], $dll32Hash)) $mismatchedFields[] = 'dll32_hash';
+        if (!hash_equals((string)$expectedManifest['dll64_sha256'], $dll64Hash)) $mismatchedFields[] = 'dll64_hash';
+        if (!hash_equals((string)$expectedManifest['machineid32_sha256'], $machineid32Hash)) $mismatchedFields[] = 'machineid32_hash';
+        if (!hash_equals((string)$expectedManifest['machineid64_sha256'], $machineid64Hash)) $mismatchedFields[] = 'machineid64_hash';
+        if (!$brokerMatches) $mismatchedFields[] = 'broker_hash';
+        if (!empty($mismatchedFields)) {
+            $logArtifactMismatch(
+                'build_id=' . $buildId . '; mismatched field(s): ' . implode(', ', $mismatchedFields)
+            );
             $rejectTracked('artifact_mismatch');
         }
 

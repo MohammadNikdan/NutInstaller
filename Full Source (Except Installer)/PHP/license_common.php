@@ -466,6 +466,77 @@ function nutricula_track_unlicensed_checkin(mysqli $conn, ?string $machineId, ?s
     }
 }
 
+/* Retention for nutricula_minus2_log (2026) - keeps the table from growing
+   without bound. Same "cheap, opportunistic housekeeping, bounded with
+   LIMIT" pattern already used by nutricula_cleanup_old_challenges() - runs
+   as a side effect of normal logging traffic, no separate cron job needed.
+   30 days is a deliberate trade-off (owner's own suggestion): long enough
+   to cover essentially every real support request ("my EA stopped working
+   last week"), short enough to keep the table, and therefore every lookup
+   against it, fast regardless of install volume. Raise this constant if a
+   longer support window is ever needed. */
+const MINUS2_LOG_RETENTION_DAYS = 30;
+
+function nutricula_cleanup_old_minus2_logs(mysqli $conn): void
+{
+    $conn->query(
+        'DELETE FROM nutricula_minus2_log
+         WHERE occurred_at < (NOW() - INTERVAL ' . MINUS2_LOG_RETENTION_DAYS . ' DAY)
+         LIMIT 200'
+    );
+}
+
+/**
+ * Logs one occurrence of a "-2" (Check_Core_Integrity() / TIER_FAILED)
+ * outcome for support lookup - see nutricula_minus2_log's own schema
+ * comment for the full, exact enumeration of which causes can ever reach
+ * this function and which structurally never can. Deliberately never
+ * throws and never affects the caller's own response: a failure here must
+ * never block or alter the real request/response it was called alongside.
+ * Every identifying parameter is nullable - in the free tier especially,
+ * several of them may genuinely be unavailable (see nutricula_track_
+ * unlicensed_checkin's own doc comment for the same reasoning).
+ */
+function nutricula_log_minus2(
+    mysqli $conn,
+    string $installKind,   // 'free' | 'licensed'
+    string $reasonCode,
+    ?string $reasonDetail,
+    ?int $licenseDbId,
+    ?string $userEmail,
+    ?string $machineId,
+    ?string $machineIdAlt,
+    ?string $deviceKeyHash,
+    ?string $buildId,
+    ?string $observedIp
+): void {
+    try {
+        nutricula_cleanup_old_minus2_logs($conn);
+
+        $stmt = $conn->prepare(
+            'INSERT INTO nutricula_minus2_log
+             (occurred_at, install_kind, reason_code, reason_detail, license_id,
+              user_email, machine_id, machine_id_alt, device_public_key_hash,
+              build_id, observed_ip)
+             VALUES (NOW(), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+        );
+        if (!$stmt) return;
+        // Type string, one letter per bind_param value in order:
+        // installKind(s) reasonCode(s) reasonDetail(s) licenseDbId(i)
+        // userEmail(s) machineId(s) machineIdAlt(s) deviceKeyHash(s)
+        // buildId(s) observedIp(s) = "sssissssss" (10 letters for 10 values).
+        $stmt->bind_param(
+            'sssissssss',
+            $installKind, $reasonCode, $reasonDetail, $licenseDbId,
+            $userEmail, $machineId, $machineIdAlt, $deviceKeyHash, $buildId, $observedIp
+        );
+        $stmt->execute();
+        $stmt->close();
+    } catch (Throwable $e) {
+        error_log('[Nutricula -2 log] ' . $e->getMessage());
+    }
+}
+
 function nutricula_ok_gcm(string $plaintext, array $config): never
 {
     header('Content-Type: text/plain; charset=UTF-8');
