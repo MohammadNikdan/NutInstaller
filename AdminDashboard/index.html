@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="fa" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex, nofollow">
+<title>پنل مدیریت Nutricula</title>
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon-192.png">
+<meta name="theme-color" content="#0b0f14">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<!-- Login screen -->
+<section id="loginScreen" class="screen">
+  <form id="loginForm" class="login-card">
+    <h1>پنل مدیریت Nutricula</h1>
+    <p class="muted">برای ادامه رمز عبور را وارد کنید.</p>
+    <input id="loginPassword" type="password" placeholder="رمز عبور" autocomplete="current-password" required>
+    <button type="submit">ورود</button>
+    <p id="loginError" class="error-text" hidden></p>
+  </form>
+</section>
+
+<!-- Dashboard -->
+<div id="dashboard" class="screen" hidden>
+  <header class="topbar">
+    <h1>پنل مدیریت Nutricula</h1>
+    <div class="topbar-actions">
+      <label class="field-inline">
+        بازه فعال بودن:
+        <select id="windowDays">
+          <option value="1">۲۴ ساعت</option>
+          <option value="7">۷ روز</option>
+          <option value="30" selected>۳۰ روز</option>
+          <option value="90">۹۰ روز</option>
+        </select>
+      </label>
+      <button id="refreshBtn" class="btn">بروزرسانی</button>
+      <span id="lastUpdated" class="muted small"></span>
+      <button id="logoutBtn" class="btn ghost">خروج</button>
+    </div>
+  </header>
+
+  <main>
+    <!-- Summary cards -->
+    <section class="cards" id="summaryCards"></section>
+
+    <!-- Growth chart -->
+    <section class="panel">
+      <div class="panel-head">
+        <h2>روند رشد کاربران</h2>
+        <div class="panel-controls">
+          <select id="growthGranularity">
+            <option value="day">روزانه</option>
+            <option value="week">هفتگی</option>
+            <option value="month" selected>ماهانه</option>
+          </select>
+          <select id="growthMetric">
+            <option value="new" selected>کاربر جدید</option>
+            <option value="cumulative">مجموع تجمعی</option>
+          </select>
+        </div>
+      </div>
+      <canvas id="growthChart" height="90"></canvas>
+    </section>
+
+    <!-- OS breakdown -->
+    <section class="panel">
+      <div class="panel-head">
+        <h2>کاربران فعال به تفکیک سیستم‌عامل</h2>
+        <div class="panel-controls">
+          <select id="osSegment">
+            <option value="total" selected>همه</option>
+            <option value="free">رایگان</option>
+            <option value="premium">پریمیوم</option>
+          </select>
+        </div>
+      </div>
+      <canvas id="osChart" height="90"></canvas>
+    </section>
+
+    <!-- Server load -->
+    <section class="panel">
+      <div class="panel-head">
+        <h2>شلوغی سرور (درخواست در دقیقه، ۱ ساعت اخیر)</h2>
+      </div>
+      <canvas id="loadChart" height="70"></canvas>
+    </section>
+
+    <!-- Search & ban -->
+    <section class="panel">
+      <div class="panel-head">
+        <h2>جستجوی کاربر / بن کردن</h2>
+      </div>
+      <div class="search-row">
+        <input id="searchInput" type="text" placeholder="ایمیل، machine_id یا device_key_hash یا UUID لایسنس">
+        <button id="searchBtn" class="btn">جستجو</button>
+      </div>
+      <div id="searchResults"></div>
+    </section>
+
+    <!-- Banned list -->
+    <section class="panel">
+      <div class="panel-head">
+        <h2>لیست بن‌شده‌ها</h2>
+        <button id="refreshBannedBtn" class="btn ghost small">بروزرسانی لیست</button>
+      </div>
+      <div id="bannedList"></div>
+    </section>
+
+    <!-- -2 log -->
+    <section class="panel">
+      <div class="panel-head">
+        <h2>گزارش‌های -۲</h2>
+      </div>
+      <div class="search-row">
+        <input id="minus2Query" type="text" placeholder="ایمیل یا machine_id">
+        <select id="minus2Reason">
+          <option value="">همه علت‌ها</option>
+          <option value="artifact_mismatch">artifact_mismatch</option>
+          <option value="transport_exhausted">transport_exhausted</option>
+          <option value="machineid_generation_failed">machineid_generation_failed</option>
+        </select>
+        <select id="minus2Kind">
+          <option value="">رایگان و پریمیوم</option>
+          <option value="free">فقط رایگان</option>
+          <option value="licensed">فقط پریمیوم</option>
+        </select>
+        <button id="minus2SearchBtn" class="btn">جستجو</button>
+      </div>
+      <div id="minus2Results"></div>
+      <div id="minus2Pager" class="pager"></div>
+    </section>
+  </main>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.4/chart.umd.min.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
