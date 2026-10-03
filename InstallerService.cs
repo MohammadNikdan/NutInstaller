@@ -819,11 +819,10 @@ namespace NutriculaInstaller
             string brokerPath = Path.Combine(installDir, "NutriculaLicenseBroker.exe");
 
             // The Coordinator must stay available across reboots/logins, and
-            // must also come up the instant an EA attaches. Three cooperating
-            // mechanisms, all pointing at the SAME user-session Broker:
+            // must also come up the instant an EA attaches. Two cooperating
+            // mechanisms, both pointing at the SAME user-session Broker:
             //   (a) HKCU Run key  - starts it at every user login,
             //   (b) immediate launch below - starts it right now, at install,
-            //   (c) Scheduled Task watchdog - restarts it if it ever crashes,
             // plus the DLL's own on-demand launch the moment an EA attaches
             // (NutriculaLicenseCheckThin.cpp EnsureCoordinatorRunning), which
             // needs no registry at all - it derives this same install path
@@ -836,6 +835,22 @@ namespace NutriculaInstaller
             // already alive) is harmless: the Broker's own singleton mutex
             // (see NutriculaLicenseBroker.cpp) makes any second instance exit
             // immediately rather than compete.
+            //
+            // REMOVED (2026): the former Scheduled Task "watchdog" that
+            // re-ran the Broker every 5 minutes to recover it after a crash.
+            // It was both redundant and actively harmful: the DLL's own
+            // EnsureCoordinatorRunning() already relaunches the Broker within
+            // ~15s of the very first failed poll whenever an EA is actually
+            // active - faster than a 5-minute watchdog could ever react -
+            // and Task Scheduler pops its own console window for a
+            // console-subsystem exe launched this way regardless of the
+            // exe's own CreateProcess flags, which is exactly the unwanted
+            // "a cmd window just appeared by itself" symptom this removes.
+            // The Coordinator now also self-exits after an hour of no EA
+            // activity (see CoordinatorCore::WorkerLoop's IDLE_SELF_EXIT_SEC)
+            // rather than being kept alive forever by a periodic relauncher -
+            // it exists only while actually useful, and the DLL brings it
+            // back on demand the moment it's needed again.
             try
             {
                 using (RegistryKey runKey = Registry.CurrentUser.OpenSubKey(
@@ -868,27 +883,6 @@ namespace NutriculaInstaller
                 throw;
             }
 
-            // Watchdog: the HKCU Run key above only re-launches the Broker
-            // at the next login - it does nothing if the Broker crashes or
-            // is killed mid-session. A Scheduled Task that just re-runs the
-            // same executable every few minutes closes that gap cheaply:
-            // thanks to the Broker's own singleton mutex, running it again
-            // while a healthy instance is already active is a harmless
-            // immediate no-op, and running it again when the previous
-            // instance died is exactly the recovery we want. No admin
-            // rights needed for a per-user Scheduled Task.
-            try
-            {
-                RunHidden("schtasks.exe",
-                    "/Create /F /SC MINUTE /MO 5 /TN \"NutriculaLicenseBrokerWatchdog\" /TR \"\\\"" + brokerPath + "\\\"\"",
-                    15000);
-                log("Registered License Broker watchdog (re-checks every 5 minutes).");
-            }
-            catch (Exception ex)
-            {
-                log("WARNING: could not register the License Broker watchdog (" + ex.Message +
-                    "). The Broker will still restart at next login via the Run key, just not automatically if it crashes mid-session.");
-            }
         }
 
         /// <summary>
@@ -931,6 +925,11 @@ namespace NutriculaInstaller
             }
             catch { }
 
+            // Migration cleanup (2026): older installs registered a
+            // "NutriculaLicenseBrokerWatchdog" Scheduled Task (removed - see
+            // InstallCoordinatorAsync's own comment on why). Harmless no-op
+            // via /F if it was never registered; removes it for anyone
+            // upgrading from an older install that still has it.
             try
             {
                 RunHidden("schtasks.exe", "/Delete /F /TN \"NutriculaLicenseBrokerWatchdog\"", 10000);
