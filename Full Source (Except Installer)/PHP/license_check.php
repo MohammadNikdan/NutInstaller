@@ -16,24 +16,44 @@ const CHECK_ALLOWED_FIELDS = [
     'refresh_token',
 ];
 const CHALLENGE_STAGE_FIELDS = ['v', 'stage', 'license_id', 'machine_id', 'machine_id_alt', 'device_key_hash', 'local_ip'];
-/* Free-tier telemetry (2026): a lightweight, unauthenticated check-in the
-   Coordinator sends periodically whenever it has NO usable local lease at
-   all (missing file, corrupt file, or a lease that failed Layer 1's
-   machine/device match) - i.e. whenever it is about to present TIER_FREE
-   locally with nothing else to report. Deliberately minimal: no
-   license_id (there may genuinely be none), no challenge/signature (there
-   is no license private key relationship to prove possession of anything
-   against - this is not an authorization request, just "a free-tier
-   install exists and is still running"). Still travels inside the same
-   mandatory GCM transport envelope as every other request (Transport Key),
-   so it is not readable in transit, but carries no cryptographic proof of
-   device ownership beyond that - by design, since nothing is being
-   authorized. See nutricula_track_unlicensed_checkin() for what gets
-   recorded, and the "reject reasons that map to TIER_FREE" handling below
-   for how a MISMATCHED-but-real lease (Layer 1 catches it locally, but the
-   Coordinator still owns a real license_id) is tracked through the
-   existing challenge/verify path instead of this one. */
-const FREE_CHECKIN_STAGE_FIELDS = ['v', 'stage', 'machine_id', 'device_key_hash'];
+/* Free-tier telemetry (2026): a check-in the Coordinator sends periodically
+   whenever it has NO usable local lease at all (missing file, corrupt file,
+   or a lease that failed Layer 1's machine/device match) - i.e. whenever it
+   is about to present TIER_FREE locally with nothing else to report. Still
+   deliberately minimal on the AUTHORIZATION side: no license_id (there may
+   genuinely be none), no challenge/signature (there is no license private
+   key relationship to prove possession of anything against - this is not an
+   authorization request, just "a free-tier install exists and is still
+   running"). Still travels inside the same mandatory GCM transport envelope
+   as every other request (Transport Key), so it is not readable in transit,
+   but carries no cryptographic proof of device ownership beyond that - by
+   design, since nothing is being authorized. See
+   nutricula_track_unlicensed_checkin() for what gets recorded, and the
+   "reject reasons that map to TIER_FREE" handling below for how a
+   MISMATCHED-but-real lease (Layer 1 catches it locally, but the Coordinator
+   still owns a real license_id) is tracked through the existing
+   challenge/verify path instead of this one.
+   2026 hardening (owner's explicit request - "security mechanisms shouldn't
+   depend on license type, free or pro"): build_id and the 7 artifact hashes
+   below are now ALSO REQUIRED here, exactly as mandatory as they are on the
+   verify stage (no backward-compat allowance - Nutricula has not shipped
+   publicly yet, so there is no older Coordinator build in the field to stay
+   compatible with). This endpoint validates them against
+   nutricula_build_manifests - the exact same server-authoritative table the
+   Premium/Transfer verify stage checks - and against latest_version, and
+   responds with a genuine signed Reject (update_required / artifact_mismatch)
+   instead of the plain OK when either check fails, so a free install gets
+   the same mandatory-update and tamper-detection enforcement a Premium
+   install does. This still proves nothing about LICENSE ownership (there is
+   no license here to own) - it only proves "this build's artifacts are/
+   aren't what the vendor shipped", which needs no per-device signature,
+   only the server's own signing key (the same one that signs every
+   Reject/Lease). */
+const FREE_CHECKIN_STAGE_FIELDS = [
+    'v', 'stage', 'machine_id', 'device_key_hash',
+    'build_id', 'ex5_hash', 'ex4_hash', 'dll32_hash', 'dll64_hash',
+    'machineid32_hash', 'machineid64_hash', 'broker_hash',
+];
 /* build_id/ex5_hash/dll32_hash/dll64_hash/machineid32_hash/machineid64_hash/
    broker_hash: Artifact Evidence (architecture points 47-49/88) - the
    Coordinator's own measured hashes of the currently-installed EX5/DLL32/
@@ -151,12 +171,109 @@ try {
         nutricula_rate_limit_check($conn, $config, 'free_checkin');
 
         nutricula_track_unlicensed_checkin($conn, $checkinMachineId, $checkinDeviceKeyHash);
+
+        /* 2026 hardening (owner's explicit request - "security mechanisms
+           shouldn't depend on license type, free or pro"): a free-tier
+           install now gets the SAME authenticated mandatory-update and
+           server-authoritative artifact-hash validation Premium/Transfer
+           already receive via the challenge/verify flow, instead of an
+           unconditional, unauthenticated "OK". build_id/the 7 hashes are
+           REQUIRED here, exactly like the verify stage - no backward-compat
+           allowance, since there is no older Coordinator build in the field
+           to accommodate (Nutricula has not shipped publicly yet). */
+        $buildId = trim(nutricula_required_field($fields, 'build_id'));
+        $ex5Hash = strtolower(trim(nutricula_required_field($fields, 'ex5_hash')));
+        $ex4Hash = strtolower(trim(nutricula_required_field($fields, 'ex4_hash')));
+        $dll32Hash = strtolower(trim(nutricula_required_field($fields, 'dll32_hash')));
+        $dll64Hash = strtolower(trim(nutricula_required_field($fields, 'dll64_hash')));
+        $machineid32Hash = strtolower(trim(nutricula_required_field($fields, 'machineid32_hash')));
+        $machineid64Hash = strtolower(trim(nutricula_required_field($fields, 'machineid64_hash')));
+        $brokerHash = strtolower(trim(nutricula_required_field($fields, 'broker_hash')));
+
+        $wellFormed = ($buildId !== '' && strlen($buildId) <= 64);
+        foreach ([$ex5Hash, $ex4Hash, $dll32Hash, $dll64Hash, $machineid32Hash, $machineid64Hash, $brokerHash] as $h) {
+            if (!preg_match('/\A[0-9a-f]{64}\z/', $h)) $wellFormed = false;
+        }
+
+        // Malformed Artifact Evidence is treated identically to
+        // well-formed-but-wrong below (artifact_mismatch) rather than a
+        // hard error - there is no per-device signature on this stage to
+        // tell "tampered" apart from "simply dropped/truncated in transit",
+        // and either way the Coordinator now treats the outcome identically
+        // (TIER_FAILED / "-2", not just a demotion to TIER_FREE - see the
+        // client-side mapping in CoordinatorCore.cpp).
+        $manifestRow = null;
+        if ($wellFormed) {
+            $manifestStmt = $conn->prepare(
+                'SELECT version, ex5_sha256, ex4_sha256, dll32_sha256, dll64_sha256,
+                        machineid32_sha256, machineid64_sha256,
+                        broker32_sha256, broker64_sha256
+                 FROM nutricula_build_manifests WHERE build_id=? LIMIT 1'
+            );
+            if ($manifestStmt) {
+                $manifestStmt->bind_param('s', $buildId);
+                $manifestStmt->execute();
+                $manifestRow = $manifestStmt->get_result()->fetch_assoc();
+                $manifestStmt->close();
+            }
+        }
+
+        // Accepts EITHER the 32-bit or 64-bit expected Broker hash - see
+        // the identical reasoning at the verify stage's $brokerMatches.
+        $brokerMatches = $manifestRow && (
+            hash_equals((string)$manifestRow['broker32_sha256'], $brokerHash) ||
+            hash_equals((string)$manifestRow['broker64_sha256'], $brokerHash)
+        );
+        $artifactsOk = $wellFormed && $manifestRow &&
+            hash_equals((string)$manifestRow['ex5_sha256'], $ex5Hash) &&
+            hash_equals((string)$manifestRow['ex4_sha256'], $ex4Hash) &&
+            hash_equals((string)$manifestRow['dll32_sha256'], $dll32Hash) &&
+            hash_equals((string)$manifestRow['dll64_sha256'], $dll64Hash) &&
+            hash_equals((string)$manifestRow['machineid32_sha256'], $machineid32Hash) &&
+            hash_equals((string)$manifestRow['machineid64_sha256'], $machineid64Hash) &&
+            $brokerMatches;
+
+        $reason = null;
+        if (!$artifactsOk) {
+            $reason = 'artifact_mismatch';
+        } else {
+            $latestVersion = (string)($config['latest_version'] ?? '');
+            $installedVersion = (string)($manifestRow['version'] ?? '');
+            if ($latestVersion !== '' && $installedVersion !== '' &&
+                version_compare($installedVersion, $latestVersion, '<')) {
+                $reason = 'update_required';
+            }
+        }
+
+        $responseBody = 'NL3-FREE-OK';
+        if ($reason !== null) {
+            // Same signed-Reject format and server signing key the
+            // Premium/Transfer verify stage uses (nutricula_reject() /
+            // nutricula_server_sign()) - the Coordinator's existing
+            // LicenseProtocol::DecryptAndVerify already knows how to verify
+            // this exact format, so nothing new is needed client-side to
+            // trust it. No per-device signature is involved or required -
+            // this endpoint is only vouching for "this build's artifacts",
+            // not for license ownership.
+            $now2 = time();
+            $canonical = 'reason=' . $reason . '|requested_at=' . $now2 . '|retry_after_seconds=0';
+            try {
+                $sig = nutricula_server_sign($canonical, $config);
+                $responseBody = 'NL3-REJECT|' . $canonical . '|server_signature=' . $sig;
+            } catch (Throwable $e) {
+                // Signing failed (e.g. key file unreadable) - fail open to
+                // the harmless plain-OK default, same spirit as
+                // nutricula_reject()'s own fallback.
+                $responseBody = 'NL3-FREE-OK';
+            }
+        }
+
         $conn->close();
 
         http_response_code(200);
         header('Content-Type: text/plain; charset=UTF-8');
         try {
-            echo nutricula_gcm_encrypt('NL3-FREE-CHECKIN-OK', $config);
+            echo nutricula_gcm_encrypt($responseBody, $config);
         } catch (Throwable $e) {
             echo 'no';
         }
