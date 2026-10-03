@@ -438,7 +438,8 @@ void ReportFailureBestEffort(
     const std::string& machineIdAlt,    // may be empty
     const std::string& deviceKeyHash,   // may be empty
     const std::string& licenseId,       // may be empty
-    const std::string& buildId)         // may be empty
+    const std::string& buildId,         // may be empty
+    const std::string& platformProfile) // may be empty - see MachineIdBridge::GetPlatformProfile
 {
     std::map<std::string, std::string> fields;
     fields["v"] = "3";
@@ -450,6 +451,7 @@ void ReportFailureBestEffort(
     if (!deviceKeyHash.empty()) fields["device_key_hash"] = deviceKeyHash;
     if (!licenseId.empty()) fields["license_id"] = licenseId;
     if (!buildId.empty()) fields["build_id"] = buildId;
+    if (!platformProfile.empty()) fields["platform_profile"] = platformProfile;
 
     std::string envelope = LicenseProtocol::BuildRequestEnvelope(fields);
     if (envelope.empty()) return;
@@ -780,7 +782,12 @@ void CoordinatorCore::WorkerLoop()
                 // successfully loaded and verified above, or this point would
                 // never have been reached), so support can at least see "this
                 // build/license had a local machine-ID failure" even without a
-                // specific machine to correlate it to.
+                // specific machine to correlate it to. Platform profile is
+                // best-effort here too (empty if GetPlatformProfile() itself
+                // has nothing to report, e.g. no machine ID was ever
+                // successfully generated this process).
+                std::string failurePlatformProfile;
+                MachineIdBridge::GetPlatformProfile(failurePlatformProfile);
                 long long nowForFailureReport = EstimatedNow();
                 if (m_lastFailureReportSentAt == 0 ||
                     nowForFailureReport - m_lastFailureReportSentAt >= FAILURE_REPORT_INTERVAL_SEC)
@@ -790,7 +797,8 @@ void CoordinatorCore::WorkerLoop()
                         local.hasLease ? "licensed" : "free",
                         "", "", "",
                         local.hasLease ? local.lease.licenseId : std::string(),
-                        manifest.buildId);
+                        manifest.buildId,
+                        failurePlatformProfile);
                     m_lastFailureReportSentAt = nowForFailureReport;
                 }
                 Sleep(5000);
@@ -817,6 +825,14 @@ void CoordinatorCore::WorkerLoop()
                 machineId = altMachineId;
                 machineIdAlt = primaryMachineId;
             }
+
+            // 2026 hardening (-2 diagnostic logging): fetched once per cycle,
+            // right alongside the machine ID/device key hash it's derived
+            // from the same way (see GetPlatformProfile's own comment) -
+            // may come back empty on an older MachineId DLL, which every
+            // call site below treats as "nothing to report", never an error.
+            std::string platformProfile;
+            MachineIdBridge::GetPlatformProfile(platformProfile);
 
             std::string licenseIdForRequest = local.hasLease ? local.lease.licenseId : std::string();
 
@@ -872,6 +888,7 @@ void CoordinatorCore::WorkerLoop()
                 checkinFields["machineid32_hash"] = manifest.machineid32Sha256;
                 checkinFields["machineid64_hash"] = manifest.machineid64Sha256;
                 checkinFields["broker_hash"] = expectedBrokerHash;
+                if (!platformProfile.empty()) checkinFields["platform_profile"] = platformProfile;
                 long long nowForCheckin = EstimatedNow();
                 bool dueForNetworkCheckin = (m_lastFreeCheckinSentAt == 0) ||
                     (nowForCheckin - m_lastFreeCheckinSentAt >= FREE_CHECKIN_INTERVAL_SEC);
@@ -942,6 +959,11 @@ void CoordinatorCore::WorkerLoop()
                                     // published for this specific outcome.
                                     int outcome = (checkinParsed.rejectReason == "update_required") ? TIER_UPDATE_REQUIRED
                                         : (checkinParsed.rejectReason == "artifact_mismatch") ? TIER_FAILED
+                                        // Admin panel (2026): an admin-issued ban is
+                                        // the same "fully stop" outcome as a clone-
+                                        // detected block (TIER_BLOCKED) - free and
+                                        // premium installs are treated identically.
+                                        : (checkinParsed.rejectReason == "banned") ? TIER_BLOCKED
                                         : TIER_FREE;
                                     m_freeTierOutcome.store(outcome);
                                     UpdateClockAnchor(static_cast<long long>(checkinParsed.requestedAt));
@@ -1098,6 +1120,9 @@ void CoordinatorCore::WorkerLoop()
                     // the DLL expects) rather than published.
                     finalStable = (challengeParsed.rejectReason == "update_required") ? TIER_UPDATE_REQUIRED
                         : (challengeParsed.rejectReason == "blocked") ? TIER_BLOCKED
+                        // Admin panel (2026): an admin ban maps to the same
+                        // TIER_BLOCKED outcome as a clone-detected block.
+                        : (challengeParsed.rejectReason == "banned") ? TIER_BLOCKED
                         : (challengeParsed.rejectReason == "artifact_mismatch") ? TIER_FAILED
                         : TIER_FREE;
                     finalCanonical = (finalStable == TIER_FAILED) ? std::string() : challengeParsed.rawCanonical;
@@ -1159,6 +1184,7 @@ void CoordinatorCore::WorkerLoop()
                 verifyFields["machineid32_hash"] = manifest.machineid32Sha256;
                 verifyFields["machineid64_hash"] = manifest.machineid64Sha256;
                 verifyFields["broker_hash"] = expectedBrokerHash;
+                if (!platformProfile.empty()) verifyFields["platform_profile"] = platformProfile;
                 verifyFields["signature"] = signatureB64;
                 // Send whatever refresh token we currently have locally
                 // (empty if we've never had one, e.g. very first ever
@@ -1193,6 +1219,9 @@ void CoordinatorCore::WorkerLoop()
                     // license type - the owner's explicit request).
                     finalStable = (verifyParsed.rejectReason == "update_required") ? TIER_UPDATE_REQUIRED
                         : (verifyParsed.rejectReason == "blocked") ? TIER_BLOCKED
+                        // Admin panel (2026): an admin ban maps to the same
+                        // TIER_BLOCKED outcome as a clone-detected block.
+                        : (verifyParsed.rejectReason == "banned") ? TIER_BLOCKED
                         : (verifyParsed.rejectReason == "artifact_mismatch") ? TIER_FAILED
                         : TIER_FREE;
                     finalCanonical = (finalStable == TIER_FAILED) ? std::string() : verifyParsed.rawCanonical;
@@ -1256,7 +1285,8 @@ void CoordinatorCore::WorkerLoop()
                         "transport_exhausted",
                         "10/10 attempts failed; last issue: " + lastAttemptIssue,
                         "licensed", machineId, machineIdAlt, deviceKeyHash,
-                        licenseIdForRequest, manifest.buildId);
+                        licenseIdForRequest, manifest.buildId,
+                        platformProfile);
                     m_lastFailureReportSentAt = nowForFailureReport;
                 }
             }
