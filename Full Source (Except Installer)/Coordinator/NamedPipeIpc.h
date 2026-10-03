@@ -18,8 +18,18 @@
 #include <sddl.h>
 #include <string>
 #include <vector>
+#include <cstdio>
 #include "CoordinatorProtocol.h"
 #include "EcdsaHelpers.h"
+
+// DIAGNOSTIC BUILD FLAG (2026, temporary): when defined, the server-side
+// identity check below prints exactly where/why a connecting client was
+// rejected, to the Broker's own console (it already runs with one - see
+// NutriculaLicenseBroker.cpp's main()). Safe to leave on permanently (it
+// only prints Win32 error codes/SIDs, nothing secret) - define it in the
+// build script with -DNUT_PIPE_DIAG, or just uncomment the line below for a
+// one-off diagnostic build.
+// #define NUT_PIPE_DIAG 1
 
 namespace NamedPipeIpc {
 
@@ -83,7 +93,17 @@ inline bool BuildPipeSecurityAttributes(SECURITY_ATTRIBUTES& sa, PSECURITY_DESCR
 
 inline bool VerifyConnectedClientIdentity(HANDLE pipe, PSID expectedOwnerSid)
 {
-    if (!ImpersonateNamedPipeClient(pipe)) return false;
+    if (!ImpersonateNamedPipeClient(pipe))
+    {
+#ifdef NUT_PIPE_DIAG
+        printf("[PipeAuth] REJECTED: ImpersonateNamedPipeClient failed, GetLastError=%lu\n"
+               "           (1314=ERROR_PRIVILEGE_NOT_HELD - this process's token is missing\n"
+               "           SeImpersonatePrivilege. On a non-elevated/standard-user Windows\n"
+               "           account this privilege can be absent by local policy.)\n",
+               GetLastError());
+#endif
+        return false;
+    }
 
     bool ok = false;
     HANDLE token = nullptr;
@@ -114,14 +134,54 @@ inline bool VerifyConnectedClientIdentity(HANDLE pipe, PSID expectedOwnerSid)
                     {
                         BOOL isAdmin = FALSE;
                         ok = CheckTokenMembership(token, adminSidBuf, &isAdmin) && isAdmin;
+#ifdef NUT_PIPE_DIAG
+                        if (!ok)
+                        {
+                            LPWSTR clientSidStr = nullptr, ownSidStr = nullptr;
+                            ConvertSidToStringSidW(tokenUser->User.Sid, &clientSidStr);
+                            ConvertSidToStringSidW(expectedOwnerSid, &ownSidStr);
+                            wprintf(L"[PipeAuth] REJECTED: connecting client's SID (%ls) is neither\n"
+                                    L"           the Broker's own SID (%ls) nor a local Administrator.\n",
+                                    clientSidStr ? clientSidStr : L"?", ownSidStr ? ownSidStr : L"?");
+                            if (clientSidStr) LocalFree(clientSidStr);
+                            if (ownSidStr) LocalFree(ownSidStr);
+                        }
+#endif
                     }
+#ifdef NUT_PIPE_DIAG
+                    else
+                    {
+                        printf("[PipeAuth] REJECTED: CreateWellKnownSid(Administrators) failed, GetLastError=%lu\n", GetLastError());
+                    }
+#endif
                 }
             }
+#ifdef NUT_PIPE_DIAG
+            else
+            {
+                printf("[PipeAuth] REJECTED: GetTokenInformation(TokenUser) failed, GetLastError=%lu\n", GetLastError());
+            }
+#endif
         }
+#ifdef NUT_PIPE_DIAG
+        else
+        {
+            printf("[PipeAuth] REJECTED: GetTokenInformation size probe failed, GetLastError=%lu\n", GetLastError());
+        }
+#endif
         CloseHandle(token);
     }
+#ifdef NUT_PIPE_DIAG
+    else
+    {
+        printf("[PipeAuth] REJECTED: OpenThreadToken failed, GetLastError=%lu\n", GetLastError());
+    }
+#endif
 
     RevertToSelf();
+#ifdef NUT_PIPE_DIAG
+    if (ok) printf("[PipeAuth] ACCEPTED: client identity verified OK.\n");
+#endif
     return ok;
 }
 
@@ -238,8 +298,21 @@ inline HANDLE ConnectAndVerify(const unsigned char coordinatorPublicKeyXY[64], D
     DWORD waited = 0;
     while (waited < timeoutMs)
     {
+        // dwFlagsAndAttributes MUST carry SECURITY_SQOS_PRESENT |
+        // SECURITY_IMPERSONATION (2026 bug fix - found via PipeDiag's
+        // [PipeAuth] logging): without an explicit Security Quality Of
+        // Service, a locally-opened pipe handle only grants the SERVER an
+        // "Identification"-level view of the client's token, which is NOT
+        // enough for ImpersonateNamedPipeClient to actually impersonate it -
+        // the server's AcceptAndHandshake/VerifyConnectedClientIdentity call
+        // fails with ERROR_NO_IMPERSONATION_TOKEN (1368), rejects the
+        // connection before ever sending the handshake challenge, and the
+        // client sees ERROR_PIPE_NOT_CONNECTED (233) on the very next
+        // ReadFile - which is exactly the -2 symptom this closes. This
+        // affects EVERY client of this pipe (the thin DLL here, and
+        // PipeDiag.cpp's own copy of this same connect logic).
         pipe = CreateFileW(CoordinatorProtocol::PIPE_NAME, GENERIC_READ | GENERIC_WRITE,
-            0, nullptr, OPEN_EXISTING, 0, nullptr);
+            0, nullptr, OPEN_EXISTING, SECURITY_SQOS_PRESENT | SECURITY_IMPERSONATION, nullptr);
         if (pipe != INVALID_HANDLE_VALUE) break;
         if (GetLastError() != ERROR_PIPE_BUSY) return INVALID_HANDLE_VALUE; // not running / not available at all
         if (!WaitNamedPipeW(CoordinatorProtocol::PIPE_NAME, 1000)) { waited += 1000; continue; }
