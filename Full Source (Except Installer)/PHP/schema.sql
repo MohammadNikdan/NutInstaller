@@ -422,3 +422,30 @@ CREATE TABLE nutricula_admin_audit_log (
     PRIMARY KEY (id),
     KEY idx_audit_occurred (occurred_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+/* Registered fingerprint/Face ID (WebAuthn/passkey) credentials for the
+   admin panel's own sign-in - added 2026, alongside the panel's passwordless
+   sign-in option. Stores only the PUBLIC key (raw P-256 X/Y coordinates)
+   and a replay counter, never anything that could reproduce the actual
+   fingerprint/face, which never leaves the device's own secure hardware. */
+CREATE TABLE nutricula_admin_passkeys (
+    id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+    -- The authenticator-chosen opaque credential handle (not secret, but not
+    -- meant to be public either) - looked up on every passwordless login.
+    credential_id VARBINARY(255) NOT NULL,
+    -- Raw P-256 public key coordinates (ES256 only - see
+    -- AdminPanel/admin_webauthn_common.php for why this is ES256-only).
+    pub_x BINARY(32) NOT NULL,
+    pub_y BINARY(32) NOT NULL,
+    -- Authenticator's own signature counter, for basic clone detection.
+    -- Many platform authenticators (Face ID/Touch ID, most Android) always
+    -- report 0 - handled as "no counter support" rather than an error.
+    sign_count INT UNSIGNED NOT NULL DEFAULT 0,
+    -- Human-friendly device name given at registration time, for your own
+    -- list only - never sent to the browser.
+    label VARCHAR(100) NOT NULL DEFAULT '',
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    last_used_at DATETIME NULL,
+    PRIMARY KEY (id),
+    UNIQUE KEY uq_passkey_credential_id (credential_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
