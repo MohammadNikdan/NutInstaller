@@ -16,10 +16,10 @@ SUPPORT_URL=https://t.me/nutriculaexpertsupport
 
 
 # "Installation Guide" button (footer, left).
-INSTALLATION_GUIDE_URL=https://www.facebook.com/
+INSTALLATION_GUIDE_URL=https://www.aparat.com/
 
 # "Buy Premium License" button (footer). Replace with your real purchase page.
-PREMIUM_PURCHASE_URL=https://www.NutriculaExpert.com
+PREMIUM_PURCHASE_URL=https://www.NutriculaExpert.com/purchase
 
 
 
