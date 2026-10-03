@@ -13,7 +13,7 @@ const CHECK_ALLOWED_FIELDS = [
     'v', 'stage', 'license_id', 'machine_id', 'machine_id_alt', 'device_key_hash', 'local_ip',
     'challenge_id', 'signature', 'build_id', 'ex5_hash', 'ex4_hash', 'dll32_hash', 'dll64_hash',
     'machineid32_hash', 'machineid64_hash', 'broker_hash',
-    'refresh_token',
+    'refresh_token', 'platform_profile',
 ];
 const CHALLENGE_STAGE_FIELDS = ['v', 'stage', 'license_id', 'machine_id', 'machine_id_alt', 'device_key_hash', 'local_ip'];
 /* Free-tier telemetry (2026): a check-in the Coordinator sends periodically
@@ -53,6 +53,10 @@ const FREE_CHECKIN_STAGE_FIELDS = [
     'v', 'stage', 'machine_id', 'device_key_hash',
     'build_id', 'ex5_hash', 'ex4_hash', 'dll32_hash', 'dll64_hash',
     'machineid32_hash', 'machineid64_hash', 'broker_hash',
+    // 2026 hardening: optional (not required like the hashes above) - purely
+    // diagnostic, attached to the -2 log row when this check-in turns out to
+    // be an artifact_mismatch. See nutricula_normalize_platform_profile().
+    'platform_profile',
 ];
 /* build_id/ex5_hash/dll32_hash/dll64_hash/machineid32_hash/machineid64_hash/
    broker_hash: Artifact Evidence (architecture points 47-49/88) - the
@@ -71,7 +75,7 @@ const VERIFY_STAGE_FIELDS = [
     'v', 'stage', 'license_id', 'machine_id', 'machine_id_alt', 'device_key_hash', 'local_ip', 'challenge_id', 'signature',
     'build_id', 'ex5_hash', 'ex4_hash', 'dll32_hash', 'dll64_hash',
     'machineid32_hash', 'machineid64_hash', 'broker_hash',
-    'refresh_token',
+    'refresh_token', 'platform_profile',
 ];
 
 /* Cheap, opportunistic housekeeping - runs as a side effect of normal
@@ -259,7 +263,8 @@ try {
             nutricula_log_minus2(
                 $conn, 'free', 'artifact_mismatch', $mismatchDetail,
                 null, null,
-                $checkinMachineId, null, $checkinDeviceKeyHash, $buildId, nutricula_client_ip($config)
+                $checkinMachineId, null, $checkinDeviceKeyHash, $buildId, nutricula_client_ip($config),
+                nutricula_normalize_platform_profile($fields['platform_profile'] ?? null)
             );
         } else {
             $latestVersion = (string)($config['latest_version'] ?? '');
@@ -531,11 +536,13 @@ try {
            (see CoordinatorCore.cpp) - log it, with as precise a reason as
            this request lets us determine, to nutricula_minus2_log so
            support can explain a customer's -2 report without guessing. */
-        $logArtifactMismatch = function (string $detail) use ($conn, $licenseDbId, $license, $machineId, $machineIdAlt, $deviceKeyHash, $buildId, $observedIp): void {
+        $verifyPlatformProfile = nutricula_normalize_platform_profile($fields['platform_profile'] ?? null);
+        $logArtifactMismatch = function (string $detail) use ($conn, $licenseDbId, $license, $machineId, $machineIdAlt, $deviceKeyHash, $buildId, $observedIp, $verifyPlatformProfile): void {
             nutricula_log_minus2(
                 $conn, 'licensed', 'artifact_mismatch', $detail,
                 $licenseDbId, (string)$license['user_email'],
-                $machineId, $machineIdAlt, $deviceKeyHash, $buildId, $observedIp
+                $machineId, $machineIdAlt, $deviceKeyHash, $buildId, $observedIp,
+                $verifyPlatformProfile
             );
         };
 

@@ -477,6 +477,23 @@ function nutricula_track_unlicensed_checkin(mysqli $conn, ?string $machineId, ?s
    longer support window is ever needed. */
 const MINUS2_LOG_RETENTION_DAYS = 30;
 
+/* Same fixed allowlist as VALID_PLATFORM_PROFILES in the two
+   computer-based-signup endpoints (duplicated there rather than shared,
+   since those files predate this one's reuse) - the only values the
+   client-side MachineId DLL's platform detection can ever produce. Shared
+   here so every -2-logging call site (license_check.php's verify and
+   free_checkin stages, nutricula_failure_report.php) validates identically
+   instead of re-implementing this check. Returns the lowercased value
+   matching nutricula_minus2_log.platform_profile's ENUM, or null for
+   anything missing/unrecognized - never throws, since this is diagnostic
+   metadata, not something worth failing a request over. */
+function nutricula_normalize_platform_profile(?string $raw): ?string
+{
+    $upper = strtoupper(trim((string)$raw));
+    static $valid = ['WINDOWS', 'WINDOWS_VM', 'MACOS_WINE', 'LINUX_WINE'];
+    return in_array($upper, $valid, true) ? strtolower($upper) : null;
+}
+
 function nutricula_cleanup_old_minus2_logs(mysqli $conn): void
 {
     $conn->query(
@@ -508,7 +525,16 @@ function nutricula_log_minus2(
     ?string $machineIdAlt,
     ?string $deviceKeyHash,
     ?string $buildId,
-    ?string $observedIp
+    ?string $observedIp,
+    // 2026 hardening: one of 'windows'|'windows_vm'|'macos_wine'|'linux_wine'
+    // (already-lowercased, matching nutricula_licenses.device_type's own
+    // convention), or null when the caller has no value to report (an
+    // older Coordinator that never sent platform_profile, or - for
+    // 'machineid_generation_failed' specifically - a client that never
+    // reached the point of knowing its own platform). Validated against
+    // the fixed allowlist by the caller, not here - this function trusts
+    // its caller the same way it already trusts every other parameter.
+    ?string $platformProfile = null
 ): void {
     try {
         nutricula_cleanup_old_minus2_logs($conn);
@@ -517,18 +543,20 @@ function nutricula_log_minus2(
             'INSERT INTO nutricula_minus2_log
              (occurred_at, install_kind, reason_code, reason_detail, license_id,
               user_email, machine_id, machine_id_alt, device_public_key_hash,
-              build_id, observed_ip)
-             VALUES (NOW(), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+              build_id, observed_ip, platform_profile)
+             VALUES (NOW(), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
         );
         if (!$stmt) return;
         // Type string, one letter per bind_param value in order:
         // installKind(s) reasonCode(s) reasonDetail(s) licenseDbId(i)
         // userEmail(s) machineId(s) machineIdAlt(s) deviceKeyHash(s)
-        // buildId(s) observedIp(s) = "sssissssss" (10 letters for 10 values).
+        // buildId(s) observedIp(s) platformProfile(s) = "sssisssssss"
+        // (11 letters for 11 values).
         $stmt->bind_param(
-            'sssissssss',
+            'sssisssssss',
             $installKind, $reasonCode, $reasonDetail, $licenseDbId,
-            $userEmail, $machineId, $machineIdAlt, $deviceKeyHash, $buildId, $observedIp
+            $userEmail, $machineId, $machineIdAlt, $deviceKeyHash, $buildId, $observedIp,
+            $platformProfile
         );
         $stmt->execute();
         $stmt->close();

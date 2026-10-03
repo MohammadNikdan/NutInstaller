@@ -37,6 +37,7 @@ require_once __DIR__ . '/license_common.php';
 const FAILURE_REPORT_ALLOWED_FIELDS = [
     'v', 'reason_code', 'reason_detail', 'install_kind',
     'license_id', 'machine_id', 'machine_id_alt', 'device_key_hash', 'build_id',
+    'platform_profile',
 ];
 
 /* Fixed, short allowlist - NOT whatever string the client feels like
@@ -94,6 +95,11 @@ try {
     if (strlen($buildId) > 64) $buildId = substr($buildId, 0, 64);
     $buildId = ($buildId !== '') ? $buildId : null;
 
+    // 2026 hardening: same best-effort, non-authoritative treatment as every
+    // other field here - an unrecognized/missing value just means this log
+    // row has no platform recorded, never an error.
+    $platformProfile = nutricula_normalize_platform_profile($fields['platform_profile'] ?? null);
+
     // license_id is purely for looking up the email to attach to this log
     // row for support convenience - it is NEVER verified against any
     // signature here (this endpoint has none to check), so it must never
@@ -119,7 +125,7 @@ try {
     nutricula_log_minus2(
         $conn, $installKind, $reasonCode, $reasonDetail,
         $licenseDbId, $userEmail, $machineId, $machineIdAlt, $deviceKeyHash,
-        $buildId, nutricula_client_ip($config)
+        $buildId, nutricula_client_ip($config), $platformProfile
     );
     $conn->close();
 
