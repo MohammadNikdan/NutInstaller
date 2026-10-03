@@ -214,6 +214,171 @@ try {
     $stmt->close();
     $result['server_load_last_hour'] = $loadSeries;
 
+    // ------------------------------------------------------------------
+    // Free -> Premium conversion. A "conversion" is detected when a
+    // premium license's machine_id matches a row that was ALREADY in
+    // nutricula_unlicensed_checkins (first_seen_at before the license's
+    // created_at) - both tables already store machine_id for their own
+    // reasons, so this needs no new column, just a join. Necessarily an
+    // approximation (a customer who reinstalls on a fresh machine ID
+    // between trying the free version and buying won't match), but it's a
+    // real, directly-derived signal, not a guess.
+    // ------------------------------------------------------------------
+    $convertedAllTime = $scalar(
+        'SELECT COUNT(*) FROM nutricula_licenses lic
+         WHERE EXISTS (
+             SELECT 1 FROM nutricula_unlicensed_checkins u
+             WHERE u.machine_id = lic.machine_id AND u.first_seen_at < lic.created_at
+         )'
+    );
+    $convertedInWindow = $scalar(
+        'SELECT COUNT(*) FROM nutricula_licenses lic
+         WHERE lic.created_at >= (NOW() - INTERVAL ? DAY)
+           AND EXISTS (
+             SELECT 1 FROM nutricula_unlicensed_checkins u
+             WHERE u.machine_id = lic.machine_id AND u.first_seen_at < lic.created_at
+         )',
+        ['i'], [$days]
+    );
+    $avgDaysRow = $conn->query(
+        'SELECT AVG(DATEDIFF(lic.created_at, u.first_seen_at)) a
+         FROM nutricula_licenses lic
+         JOIN nutricula_unlicensed_checkins u
+           ON u.machine_id = lic.machine_id AND u.first_seen_at < lic.created_at'
+    )->fetch_assoc();
+    $result['conversion'] = [
+        'converted_all_time' => $convertedAllTime,
+        'converted_in_window' => $convertedInWindow,
+        'free_ever_total' => $freeEverTotal,
+        'conversion_rate_all_time_pct' => $pct($convertedAllTime, $freeEverTotal),
+        'avg_days_free_to_premium' => $avgDaysRow && $avgDaysRow['a'] !== null ? round((float)$avgDaysRow['a'], 1) : null,
+    ];
+
+    // ------------------------------------------------------------------
+    // Build/version adoption among CURRENTLY ACTIVE installs (within the
+    // selected window), free + premium combined, grouped by version via
+    // nutricula_build_manifests. "Latest" = the manifest with the most
+    // recent created_at (i.e. the most recently published build row) -
+    // this panel doesn't read the public license_config.php, so it derives
+    // "latest" from the manifests table itself rather than duplicating
+    // that config's latest_version value.
+    // ------------------------------------------------------------------
+    $latestRow = $conn->query('SELECT build_id, version FROM nutricula_build_manifests ORDER BY created_at DESC LIMIT 1')->fetch_assoc();
+    $latestVersion = $latestRow ? (string)$latestRow['version'] : null;
+
+    $adoptionRows = [];
+    $res = $conn->query(
+        "SELECT COALESCE(m.version, 'unknown') version,
+                SUM(CASE WHEN src = 'free' THEN 1 ELSE 0 END) free_count,
+                SUM(CASE WHEN src = 'premium' THEN 1 ELSE 0 END) premium_count
+         FROM (
+             SELECT last_build_id, 'free' src FROM nutricula_unlicensed_checkins
+             WHERE last_seen_at >= (NOW() - INTERVAL $days DAY) AND last_build_id IS NOT NULL
+             UNION ALL
+             SELECT last_build_id, 'premium' src FROM nutricula_licenses
+             WHERE status='active' AND last_seen_at IS NOT NULL
+               AND last_seen_at >= (NOW() - INTERVAL $days DAY) AND last_build_id IS NOT NULL
+         ) t
+         LEFT JOIN nutricula_build_manifests m ON m.build_id = t.last_build_id
+         GROUP BY COALESCE(m.version, 'unknown')
+         ORDER BY free_count + premium_count DESC"
+    );
+    $totalWithBuildInfo = 0;
+    $onLatestCount = 0;
+    while ($row = $res->fetch_assoc()) {
+        $rowTotal = (int)$row['free_count'] + (int)$row['premium_count'];
+        $totalWithBuildInfo += $rowTotal;
+        if ($latestVersion !== null && $row['version'] === $latestVersion) $onLatestCount += $rowTotal;
+        $adoptionRows[] = [
+            'version' => (string)$row['version'],
+            'free' => (int)$row['free_count'],
+            'premium' => (int)$row['premium_count'],
+            'total' => $rowTotal,
+            'is_latest' => $latestVersion !== null && $row['version'] === $latestVersion,
+        ];
+    }
+    $result['build_adoption'] = [
+        'latest_version' => $latestVersion,
+        'rows' => $adoptionRows,
+        'active_with_known_build' => $totalWithBuildInfo,
+        'pct_on_latest' => $pct($onLatestCount, $totalWithBuildInfo),
+    ];
+
+    // ------------------------------------------------------------------
+    // Suspicious IPs - two independent signals:
+    //  - raw request VOLUME per IP across all endpoints in the last 24h,
+    //    straight from nutricula_rate_limits (catches a flood/scripted
+    //    hammering regardless of whether individual requests succeed).
+    //  - FAILED/rejected premium activity per IP in the selected window,
+    //    from nutricula_license_activity (catches someone trying many
+    //    license_ids/machine_ids against one IP - credential stuffing-
+    //    style probing - even if their request rate alone looks modest).
+    // ------------------------------------------------------------------
+    $topByVolume = [];
+    $res = $conn->query(
+        "SELECT SUBSTRING_INDEX(rate_key, '|', -1) ip, SUM(request_count) c
+         FROM nutricula_rate_limits
+         WHERE window_start >= " . (time() - 86400) . "
+         GROUP BY ip ORDER BY c DESC LIMIT 15"
+    );
+    while ($row = $res->fetch_assoc()) { $topByVolume[] = ['ip' => (string)$row['ip'], 'requests_24h' => (int)$row['c']]; }
+
+    $topByFailures = [];
+    $stmt = $conn->prepare(
+        "SELECT observed_ip, COUNT(*) c FROM nutricula_license_activity
+         WHERE reason IS NOT NULL AND occurred_at >= (NOW() - INTERVAL ? DAY)
+         GROUP BY observed_ip ORDER BY c DESC LIMIT 15"
+    );
+    $stmt->bind_param('i', $days);
+    $stmt->execute();
+    $res = $stmt->get_result();
+    while ($row = $res->fetch_assoc()) { $topByFailures[] = ['ip' => (string)$row['observed_ip'], 'failed_attempts' => (int)$row['c']]; }
+    $stmt->close();
+
+    $result['suspicious_ips'] = [
+        'top_by_request_volume_24h' => $topByVolume,
+        'top_by_failed_attempts_window' => $topByFailures,
+    ];
+
+    // ------------------------------------------------------------------
+    // A handful of extra signals that come essentially free from columns
+    // that already exist, worth having on one screen:
+    //  - licenses expiring soon (renewal/business planning)
+    //  - currently clone-blocked licenses (blocked_until in the future)
+    //  - licenses with an open "one stale token seen" flag (precedes an
+    //    actual clone-block - an early warning, not yet an incident)
+    //  - verify/challenge success rate in the selected window (general
+    //    protocol health, independent of the -2 log's own narrower scope)
+    // ------------------------------------------------------------------
+    $expiring7d = $scalar(
+        'SELECT COUNT(*) FROM nutricula_licenses WHERE status=\'active\' AND license_expires_at BETWEEN ? AND ?',
+        ['i', 'i'], [time(), time() + 7 * 86400]
+    );
+    $expiring30d = $scalar(
+        'SELECT COUNT(*) FROM nutricula_licenses WHERE status=\'active\' AND license_expires_at BETWEEN ? AND ?',
+        ['i', 'i'], [time(), time() + 30 * 86400]
+    );
+    $cloneBlockedNow = $scalar('SELECT COUNT(*) FROM nutricula_licenses WHERE blocked_until IS NOT NULL AND blocked_until > ?', ['i'], [time()]);
+    $tokenSuspiciousNow = $scalar('SELECT COUNT(*) FROM nutricula_licenses WHERE token_suspicious = 1');
+
+    $verifyTotal = $scalar(
+        "SELECT COUNT(*) FROM nutricula_license_activity WHERE request_type='verify' AND occurred_at >= (NOW() - INTERVAL ? DAY)",
+        ['i'], [$days]
+    );
+    $verifyOk = $scalar(
+        "SELECT COUNT(*) FROM nutricula_license_activity WHERE request_type='verify' AND reason IS NULL AND occurred_at >= (NOW() - INTERVAL ? DAY)",
+        ['i'], [$days]
+    );
+
+    $result['health'] = [
+        'licenses_expiring_7d' => $expiring7d,
+        'licenses_expiring_30d' => $expiring30d,
+        'clone_blocked_now' => $cloneBlockedNow,
+        'token_suspicious_now' => $tokenSuspiciousNow,
+        'verify_success_rate_pct_window' => $pct($verifyOk, $verifyTotal),
+        'verify_attempts_window' => $verifyTotal,
+    ];
+
     $conn->close();
     nutricula_admin_send_json($result);
 

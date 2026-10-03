@@ -101,6 +101,10 @@ async function refreshAll() {
     renderGrowthChart();
     renderOsChart();
     renderLoadChart(data.server_load_last_hour);
+    renderConversion(data.conversion);
+    renderBuildAdoption(data.build_adoption);
+    renderHealth(data.health);
+    renderSuspiciousIps(data.suspicious_ips);
     $('lastUpdated').textContent = 'آخرین بروزرسانی: ' + new Date().toLocaleTimeString('fa-IR');
   } catch (e) {
     if (String(e.message).includes('Not authenticated') || String(e.message).includes('Session expired')) {
@@ -244,6 +248,81 @@ function chartBaseOptions() {
       y: { ticks: { color: '#8a99a8' }, grid: { color: '#1f2a36' }, beginAtZero: true },
     },
   };
+}
+
+// ---------------------------------------------------------- Conversion ----
+
+function renderConversion(c) {
+  if (!c) return;
+  const cards = [
+    ['تبدیل‌شده در بازه انتخابی', c.converted_in_window, ''],
+    ['تبدیل‌شده (کل تاریخچه)', c.converted_all_time, `${c.conversion_rate_all_time_pct}% از کل رایگان‌ها`],
+    ['میانگین روز تا تبدیل', c.avg_days_free_to_premium ?? '-', ''],
+  ];
+  $('conversionCards').innerHTML = cards.map(([label, value, sub]) => `
+    <div class="card">
+      <div class="label">${label}</div>
+      <div class="value">${typeof value === 'number' ? fmtNum(value) : value}</div>
+      ${sub ? `<div class="sub">${sub}</div>` : ''}
+    </div>
+  `).join('');
+}
+
+// ------------------------------------------------------- Build adoption ---
+
+function renderBuildAdoption(b) {
+  if (!b) return;
+  const box = $('buildAdoption');
+  if (!b.rows.length) {
+    box.innerHTML = '<div class="empty-state">هنوز داده‌ای برای نسخه‌ی نصب‌شده ثبت نشده.</div>';
+    return;
+  }
+  const rows = b.rows.map((r) => `<tr>
+    <td>${escapeHtml(r.version)} ${r.is_latest ? '<span class="badge ok">آخرین نسخه</span>' : ''}</td>
+    <td>${fmtNum(r.free)}</td>
+    <td>${fmtNum(r.premium)}</td>
+    <td>${fmtNum(r.total)}</td>
+  </tr>`).join('');
+  box.innerHTML = `
+    <div class="sub" style="margin-bottom:8px;">آخرین نسخه‌ی منتشرشده: <strong>${escapeHtml(b.latest_version || '-')}</strong> — ${b.pct_on_latest}% از نصب‌های فعال با نسخه‌ی مشخص روی آخرین نسخه‌اند.</div>
+    <div class="table-wrap"><table><thead><tr>
+      <th>نسخه</th><th>رایگان</th><th>پریمیوم</th><th>جمع</th>
+    </tr></thead><tbody>${rows}</tbody></table></div>`;
+}
+
+// -------------------------------------------------------------- Health ----
+
+function renderHealth(h) {
+  if (!h) return;
+  const cards = [
+    ['لایسنس‌های نزدیک به انقضا (۷ روز)', h.licenses_expiring_7d, ''],
+    ['لایسنس‌های نزدیک به انقضا (۳۰ روز)', h.licenses_expiring_30d, ''],
+    ['در حال بلاک کلون (الان)', h.clone_blocked_now, ''],
+    ['هشدار توکن مشکوک (الان)', h.token_suspicious_now, ''],
+    ['نرخ موفقیت verify (بازه)', h.verify_success_rate_pct_window + '%', `از ${fmtNum(h.verify_attempts_window)} تلاش`],
+  ];
+  $('healthCards').innerHTML = cards.map(([label, value, sub]) => `
+    <div class="card">
+      <div class="label">${label}</div>
+      <div class="value">${typeof value === 'number' ? fmtNum(value) : value}</div>
+      ${sub ? `<div class="sub">${sub}</div>` : ''}
+    </div>
+  `).join('');
+}
+
+// ------------------------------------------------------- Suspicious IPs ---
+
+function renderSuspiciousIps(s) {
+  if (!s) return;
+  const box = $('suspiciousIps');
+  const volRows = (s.top_by_request_volume_24h || []).map((r) => `<tr><td>${escapeHtml(r.ip)}</td><td>${fmtNum(r.requests_24h)}</td></tr>`).join('');
+  const failRows = (s.top_by_failed_attempts_window || []).map((r) => `<tr><td>${escapeHtml(r.ip)}</td><td>${fmtNum(r.failed_attempts)}</td></tr>`).join('');
+  box.innerHTML = `
+    <h3 class="small muted">بیشترین حجم درخواست (۲۴ ساعت اخیر)</h3>
+    ${volRows ? `<div class="table-wrap"><table><thead><tr><th>IP</th><th>تعداد درخواست</th></tr></thead><tbody>${volRows}</tbody></table></div>` : '<div class="empty-state">چیزی غیرعادی دیده نشد.</div>'}
+    <h3 class="small muted" style="margin-top:14px;">بیشترین تلاش ناموفق (بازه انتخابی)</h3>
+    ${failRows ? `<div class="table-wrap"><table><thead><tr><th>IP</th><th>تعداد تلاش ناموفق</th></tr></thead><tbody>${failRows}</tbody></table></div>` : '<div class="empty-state">چیزی غیرعادی دیده نشد.</div>'}
+  `;
 }
 
 // --------------------------------------------------------- Search / ban ---
