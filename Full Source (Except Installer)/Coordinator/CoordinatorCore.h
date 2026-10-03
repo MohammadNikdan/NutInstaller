@@ -141,6 +141,14 @@ private:
     // gets one full idle window to actually be used before it can exit,
     // instead of measuring idleness from the Unix epoch (0).
     long long m_processStartedAt = 0;
+    // 2026 hardening: throttles ReportFailureBestEffort (see
+    // CoordinatorCore.cpp) so a sustained local failure (e.g. a real,
+    // ongoing network outage) reports itself to nutricula_failure_report.php
+    // at most once per FAILURE_REPORT_INTERVAL_SEC, not once per WorkerLoop
+    // cycle - same cadence/throttle pattern as m_lastFreeCheckinSentAt
+    // above, for the same reason (this is diagnostic telemetry, not a
+    // security check).
+    long long m_lastFailureReportSentAt = 0;
 };
 
 } // namespace Coordinator

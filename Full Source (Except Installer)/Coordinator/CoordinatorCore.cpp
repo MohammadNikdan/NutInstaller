@@ -92,6 +92,18 @@ constexpr long long EA_ACTIVITY_WINDOW_SEC = FREE_CHECKIN_INTERVAL_SEC + 300; //
 // right now.
 constexpr long long IDLE_SELF_EXIT_SEC = 3600; // 60:00
 
+// -2 diagnostic reporting (2026, project owner's explicit request): how
+// often THIS SAME locally-decided failure (see ReportFailureBestEffort's own
+// comment for exactly which two reasons this covers) is allowed to fire a
+// best-effort report to nutricula_failure_report.php. A sustained outage
+// would otherwise re-report itself every single WorkerLoop cycle (as often
+// as every ~MIN_RANDOM_OFFSET_SEC) forever - pure noise for support and
+// needless load on the log table's own retention housekeeping. Reuses the
+// same cadence as free-tier telemetry for the same reasoning: this is
+// diagnostic statistics, not a security-relevant check, so there's no
+// reason to report more often than this.
+constexpr long long FAILURE_REPORT_INTERVAL_SEC = 1800; // 30:00
+
 // Deterministically derives the next-request offset from a lease's
 // refresh token - same token always yields the same offset (so a
 // restart never changes it), but the value is unpredictable to anyone
@@ -395,6 +407,59 @@ LocalFileState EvaluateLocalFile()
         state.signatureB64 = parsed.rawSignatureB64;
     }
     return state;
+}
+
+// -2 diagnostic reporting (2026, project owner's explicit request: a full,
+// support-facing log of every "-2" Check_Core_Integrity() outcome, free or
+// licensed). Reports ONLY the two "-2" causes the Coordinator ever decides
+// entirely on its own, without the server having any part in the decision:
+//   - "transport_exhausted": the premium/transfer attempt loop ran its full
+//     MAX_ATTEMPTS budget without ever getting a usable, signature-verified
+//     response from the server.
+//   - "machineid_generation_failed": local hardware-ID generation failed.
+// (The third real -2 cause the server CAN see - a confirmed, signed
+// "artifact_mismatch" Reject - is logged directly by license_check.php at
+// the moment the server itself decides it, with far more context than this
+// Coordinator could add; it is deliberately NOT re-reported here.)
+// Every OTHER possible -2 cause (EA<->DLL handshake, DLL<->Broker pipe
+// failures) is 100% local to a layer that never talks to this server at
+// all, so there is nothing this function - or anything else - could ever
+// report for those; see nutricula_minus2_log's own schema comment for the
+// full enumeration.
+// True best-effort: no retry, result and response body both ignored - this
+// is a side-channel diagnostic note about a failure that is already being
+// handled (or not) by the caller regardless of whether this report itself
+// gets through.
+void ReportFailureBestEffort(
+    const std::string& reasonCode,
+    const std::string& reasonDetail,
+    const std::string& installKind, // "free" | "licensed"
+    const std::string& machineId,       // may be empty
+    const std::string& machineIdAlt,    // may be empty
+    const std::string& deviceKeyHash,   // may be empty
+    const std::string& licenseId,       // may be empty
+    const std::string& buildId)         // may be empty
+{
+    std::map<std::string, std::string> fields;
+    fields["v"] = "3";
+    fields["reason_code"] = reasonCode;
+    if (!reasonDetail.empty()) fields["reason_detail"] = reasonDetail;
+    fields["install_kind"] = installKind;
+    if (!machineId.empty()) fields["machine_id"] = machineId;
+    if (!machineIdAlt.empty()) fields["machine_id_alt"] = machineIdAlt;
+    if (!deviceKeyHash.empty()) fields["device_key_hash"] = deviceKeyHash;
+    if (!licenseId.empty()) fields["license_id"] = licenseId;
+    if (!buildId.empty()) fields["build_id"] = buildId;
+
+    std::string envelope = LicenseProtocol::BuildRequestEnvelope(fields);
+    if (envelope.empty()) return;
+
+    const std::wstring host = L"nutriculaexpert.com";
+    const std::wstring urlPath = L"/license_validator_phps/nutricula_failure_report.php";
+    // Short timeout, and the TransportResponse is intentionally never even
+    // read - this must never slow down or alter the caller's own already-
+    // decided outcome.
+    Transport::PostEnvelope(host, urlPath, envelope, 8000);
 }
 
 } // anonymous namespace
@@ -708,6 +773,26 @@ void CoordinatorCore::WorkerLoop()
             {
                 m_state.tier.store(TIER_FAILED);
                 m_state.pending.store(PENDING_IDLE);
+                // -2 diagnostic reporting (2026) - see ReportFailureBestEffort's
+                // own comment. No machine_id/device_key_hash to report (that is
+                // exactly what just failed to generate) - build_id/license_id
+                // are still reported where available (manifest was already
+                // successfully loaded and verified above, or this point would
+                // never have been reached), so support can at least see "this
+                // build/license had a local machine-ID failure" even without a
+                // specific machine to correlate it to.
+                long long nowForFailureReport = EstimatedNow();
+                if (m_lastFailureReportSentAt == 0 ||
+                    nowForFailureReport - m_lastFailureReportSentAt >= FAILURE_REPORT_INTERVAL_SEC)
+                {
+                    ReportFailureBestEffort(
+                        "machineid_generation_failed", "",
+                        local.hasLease ? "licensed" : "free",
+                        "", "", "",
+                        local.hasLease ? local.lease.licenseId : std::string(),
+                        manifest.buildId);
+                    m_lastFailureReportSentAt = nowForFailureReport;
+                }
                 Sleep(5000);
                 continue;
             }
@@ -946,6 +1031,22 @@ void CoordinatorCore::WorkerLoop()
             long finalStable = localLeaseStillGood ? TIER_LICENSED : TIER_FAILED;
             std::string finalCanonical = localLeaseStillGood ? local.canonical : std::string();
             std::string finalSignatureB64 = localLeaseStillGood ? local.signatureB64 : std::string();
+            // -2 diagnostic reporting (2026): true once the server ACTUALLY
+            // answered this cycle (Reject or Lease, any reason) - as opposed
+            // to the loop simply exhausting MAX_ATTEMPTS without ever hearing
+            // back usably. Distinguishes "the server told us something" (a
+            // Reject(artifact_mismatch) ending in TIER_FAILED is already
+            // logged directly by license_check.php, with far more context)
+            // from "we never got a usable answer at all" (reported, best-
+            // effort, via ReportFailureBestEffort right after the loop - see
+            // its own comment for the reasoning).
+            bool gotServerDecision = false;
+            // Best available description of why the LAST attempt in this
+            // cycle failed to advance, for that same best-effort report's
+            // reason_detail - updated at every point the loop below gives up
+            // on an attempt and retries. Generic by design (this is a
+            // diagnostic hint for support, not a decision input).
+            std::string lastAttemptIssue = "no attempts made (license_id was empty)";
 
             for (int attempt = 1; attempt <= MAX_ATTEMPTS && !licenseIdForRequest.empty(); attempt++)
             {
@@ -959,15 +1060,18 @@ void CoordinatorCore::WorkerLoop()
                 std::string challengeEnvelope = LicenseProtocol::BuildRequestEnvelope(challengeFields);
 
                 bool advance = !challengeEnvelope.empty();
+                if (!advance) lastAttemptIssue = "failed to build the challenge request locally (envelope build failed)";
                 ParsedResponse challengeParsed;
                 if (advance)
                 {
                     TransportResponse r = Transport::PostEnvelope(host, urlPath, challengeEnvelope, 30000);
                     advance = (r.result == TransportResult::Ok);
+                    if (!advance) lastAttemptIssue = "challenge request: transport failed (no response from server)";
                     if (advance)
                     {
                         challengeParsed = LicenseProtocol::DecryptAndVerify(r.body);
                         advance = (challengeParsed.kind != ResponseKind::Invalid && challengeParsed.kind != ResponseKind::LegacyNo);
+                        if (!advance) lastAttemptIssue = "challenge response: could not decrypt/verify";
                     }
                 }
                 if (advance && challengeParsed.kind == ResponseKind::Rejected)
@@ -1002,9 +1106,14 @@ void CoordinatorCore::WorkerLoop()
                     // (RSA-signature-verified by DecryptAndVerify before
                     // kind==Rejected was ever set) server time.
                     UpdateClockAnchor(static_cast<long long>(challengeParsed.requestedAt));
+                    gotServerDecision = true;
                     break;
                 }
-                if (advance && challengeParsed.kind != ResponseKind::Challenge) advance = false;
+                if (advance && challengeParsed.kind != ResponseKind::Challenge)
+                {
+                    advance = false;
+                    lastAttemptIssue = "challenge response: unexpected response kind";
+                }
                 if (!advance) { if (attempt < MAX_ATTEMPTS) Sleep(2000); continue; }
 
                 // Artifact Evidence (architecture points 47-49/88): the
@@ -1027,7 +1136,12 @@ void CoordinatorCore::WorkerLoop()
                     "|machineid64_hash=" + manifest.machineid64Sha256 +
                     "|broker_hash=" + expectedBrokerHash;
                 std::string signatureB64;
-                if (!MachineIdBridge::SignChallenge(message, signatureB64)) { if (attempt < MAX_ATTEMPTS) Sleep(2000); continue; }
+                if (!MachineIdBridge::SignChallenge(message, signatureB64))
+                {
+                    lastAttemptIssue = "failed to sign Artifact Evidence locally";
+                    if (attempt < MAX_ATTEMPTS) Sleep(2000);
+                    continue;
+                }
 
                 std::map<std::string, std::string> verifyFields;
                 verifyFields["v"] = "3";
@@ -1055,11 +1169,20 @@ void CoordinatorCore::WorkerLoop()
                 std::string verifyEnvelope = LicenseProtocol::BuildRequestEnvelope(verifyFields);
 
                 TransportResponse verifyResp = Transport::PostEnvelope(host, urlPath, verifyEnvelope, 30000);
-                if (verifyResp.result != TransportResult::Ok) { if (attempt < MAX_ATTEMPTS) Sleep(2000); continue; }
+                if (verifyResp.result != TransportResult::Ok)
+                {
+                    lastAttemptIssue = "verify request: transport failed (no response from server)";
+                    if (attempt < MAX_ATTEMPTS) Sleep(2000);
+                    continue;
+                }
 
                 ParsedResponse verifyParsed = LicenseProtocol::DecryptAndVerify(verifyResp.body);
                 if (verifyParsed.kind == ResponseKind::Invalid || verifyParsed.kind == ResponseKind::LegacyNo)
-                { if (attempt < MAX_ATTEMPTS) Sleep(2000); continue; }
+                {
+                    lastAttemptIssue = "verify response: could not decrypt/verify";
+                    if (attempt < MAX_ATTEMPTS) Sleep(2000);
+                    continue;
+                }
                 if (verifyParsed.kind == ResponseKind::Rejected)
                 {
                     // "artifact_mismatch" -> TIER_FAILED (2026 hardening) -
@@ -1078,13 +1201,29 @@ void CoordinatorCore::WorkerLoop()
                     // Reject above - this is an authentic, signature-verified
                     // server timestamp.
                     UpdateClockAnchor(static_cast<long long>(verifyParsed.requestedAt));
+                    gotServerDecision = true;
                     break;
                 }
-                if (verifyParsed.kind != ResponseKind::Lease) { if (attempt < MAX_ATTEMPTS) Sleep(2000); continue; }
+                if (verifyParsed.kind != ResponseKind::Lease)
+                {
+                    lastAttemptIssue = "verify response: unexpected response kind";
+                    if (attempt < MAX_ATTEMPTS) Sleep(2000);
+                    continue;
+                }
 
-                if (!WriteLicenseFileAtomic(GetLicenseFilePathW(), verifyResp.body)) { if (attempt < MAX_ATTEMPTS) Sleep(2000); continue; }
+                if (!WriteLicenseFileAtomic(GetLicenseFilePathW(), verifyResp.body))
+                {
+                    lastAttemptIssue = "received a Lease but failed to write it to the local license file";
+                    if (attempt < MAX_ATTEMPTS) Sleep(2000);
+                    continue;
+                }
                 LocalFileState reReadCheck = EvaluateLocalFile();
-                if (!reReadCheck.hasLease) { if (attempt < MAX_ATTEMPTS) Sleep(2000); continue; }
+                if (!reReadCheck.hasLease)
+                {
+                    lastAttemptIssue = "wrote the Lease locally but it failed to re-verify on read-back";
+                    if (attempt < MAX_ATTEMPTS) Sleep(2000);
+                    continue;
+                }
 
                 finalStable = TIER_LICENSED;
                 finalCanonical = reReadCheck.canonical;
@@ -1094,7 +1233,32 @@ void CoordinatorCore::WorkerLoop()
                 // own DecryptAndVerify call) Lease's requestedAt is authentic
                 // server time.
                 UpdateClockAnchor(reReadCheck.requestedAt);
+                gotServerDecision = true;
                 break;
+            }
+
+            // -2 diagnostic reporting (2026): fires ONLY when the loop above
+            // ran to completion without the server ever giving us a usable,
+            // interpretable answer at all (a Reject(artifact_mismatch) is
+            // already logged directly by license_check.php, with far more
+            // context, via gotServerDecision above). This is the
+            // "transport_exhausted" cause from nutricula_minus2_log's own
+            // schema comment - best-effort and separately throttled, see
+            // ReportFailureBestEffort's and m_lastFailureReportSentAt's own
+            // comments for why.
+            if (finalStable == TIER_FAILED && !gotServerDecision && !licenseIdForRequest.empty())
+            {
+                long long nowForFailureReport = EstimatedNow();
+                if (m_lastFailureReportSentAt == 0 ||
+                    nowForFailureReport - m_lastFailureReportSentAt >= FAILURE_REPORT_INTERVAL_SEC)
+                {
+                    ReportFailureBestEffort(
+                        "transport_exhausted",
+                        "10/10 attempts failed; last issue: " + lastAttemptIssue,
+                        "licensed", machineId, machineIdAlt, deviceKeyHash,
+                        licenseIdForRequest, manifest.buildId);
+                    m_lastFailureReportSentAt = nowForFailureReport;
+                }
             }
 
             m_state.tier.store(finalStable);
