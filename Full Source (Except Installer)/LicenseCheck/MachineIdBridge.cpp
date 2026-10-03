@@ -47,6 +47,11 @@ namespace
     // actually meant to be the capacity integer.
     typedef int (__cdecl* SignChallengeFn)(const char* message, int messageLength, char* outputSignatureB64, int outputCapacity);
     typedef int (__cdecl* IsWineEnvironmentFn)();
+    // 2026 hardening: same (buffer, capacity) -> int convention as every
+    // other export here. Optional (see GetPlatformProfile below) - an older
+    // MachineId DLL built before this feature simply won't export it, and
+    // that must not break anything else this bridge does.
+    typedef int (__cdecl* GetLastPlatformProfileFn)(char* output, int outputCapacity);
 
     HMODULE g_module = nullptr;
     GenerateMachineIdFn g_generateMachineId = nullptr;
@@ -56,12 +61,14 @@ namespace
     GetLicensePathFn g_getLicensePath = nullptr;
     SignChallengeFn g_signChallenge = nullptr;
     IsWineEnvironmentFn g_isWineEnvironment = nullptr;
+    GetLastPlatformProfileFn g_getLastPlatformProfile = nullptr;
 
     const int MACHINE_ID_CAPACITY = 65;   // 64 hex chars + NUL
     const int PUBLIC_KEY_CAPACITY = 128;  // Base64 of 64 raw bytes (~88 chars) + margin
     const int KEY_HASH_CAPACITY = 65;     // 64 hex chars + NUL
     const int SIGNATURE_CAPACITY = 128;   // Base64 of 64 raw bytes (~88 chars) + margin
     const int LICENSE_PATH_CAPACITY_CHARS = 1024;
+    const int PLATFORM_PROFILE_CAPACITY = 32; // longest value today is "WINDOWS_VM" (10 chars) + margin
 }
 
 bool MachineIdBridge::Load(const std::wstring& dllDirectory)
@@ -86,6 +93,9 @@ bool MachineIdBridge::Load(const std::wstring& dllDirectory)
     g_getLicensePath = reinterpret_cast<GetLicensePathFn>(GetProcAddress(g_module, "Nutricula_GetLicensePath"));
     g_signChallenge = reinterpret_cast<SignChallengeFn>(GetProcAddress(g_module, "Nutricula_SignChallenge"));
     g_isWineEnvironment = reinterpret_cast<IsWineEnvironmentFn>(GetProcAddress(g_module, "Nutricula_IsWineEnvironment"));
+    // Deliberately NOT included in allFound below - see GetPlatformProfile's
+    // own comment and this typedef's comment above.
+    g_getLastPlatformProfile = reinterpret_cast<GetLastPlatformProfileFn>(GetProcAddress(g_module, "Nutricula_GetLastPlatformProfile"));
 
     bool allFound = g_generateMachineId && g_getDevicePublicKey && g_getDeviceKeyHash &&
         g_getLicensePath && g_signChallenge && g_isWineEnvironment;
@@ -205,6 +215,22 @@ bool MachineIdBridge::SignChallenge(const std::string& message, std::string& out
     return !outSignatureB64.empty();
 }
 
+// 2026 hardening (-2 diagnostic logging): see this method's doc comment in
+// MachineIdBridge.h. Returns false (never a hard failure) if the export
+// isn't present at all, or if it returned a result that isn't exactly 1
+// (e.g. no machine ID generated yet this process - see
+// Nutricula_GetLastPlatformProfile's own implementation).
+bool MachineIdBridge::GetPlatformProfile(std::string& outProfile)
+{
+    if (!g_getLastPlatformProfile) return false;
+    std::vector<char> buffer(PLATFORM_PROFILE_CAPACITY, 0);
+    int result = g_getLastPlatformProfile(buffer.data(), PLATFORM_PROFILE_CAPACITY);
+    if (result != 1) return false;
+    buffer[PLATFORM_PROFILE_CAPACITY - 1] = '\0';
+    outProfile.assign(buffer.data());
+    return !outProfile.empty();
+}
+
 void MachineIdBridge::Unload()
 {
     if (g_module)
@@ -217,5 +243,6 @@ void MachineIdBridge::Unload()
         g_getLicensePath = nullptr;
         g_signChallenge = nullptr;
         g_isWineEnvironment = nullptr;
+        g_getLastPlatformProfile = nullptr;
     }
 }

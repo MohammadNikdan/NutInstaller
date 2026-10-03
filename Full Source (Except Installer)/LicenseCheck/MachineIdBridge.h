@@ -15,6 +15,7 @@
 //   Nutricula_SignChallenge
 //   Nutricula_GetLicensePath
 //   Nutricula_IsWineEnvironment
+//   Nutricula_GetLastPlatformProfile
 // If the actual exported names/signatures differ, only this file needs to
 // change - nothing else in this DLL references the neighbor DLL directly.
 //
@@ -36,6 +37,17 @@ public:
     static bool GetDeviceKeyHash(std::string& outHashHex);
     static bool GetLicenseFilePath(std::wstring& outPath);
     static bool IsWineEnvironment();
+
+    // 2026 hardening (-2 diagnostic logging): returns the same platform
+    // classification already computed during machine-ID generation and
+    // already sent to the signup endpoints as "platform_profile" (see
+    // NutriculaMachineId.cpp's g_lastPlatformProfile / PlatformKind) - one
+    // of "WINDOWS", "WINDOWS_VM", "MACOS_WINE", "LINUX_WINE". Returns false
+    // (leaving outProfile untouched) if the export is missing (an older
+    // MachineId DLL) or no machine ID has been generated yet this process -
+    // callers must treat this as "unknown", never as a hard failure of the
+    // license check itself, since this value is diagnostic-only.
+    static bool GetPlatformProfile(std::string& outProfile);
 
     // message is the exact UTF-8 canonical string to sign (e.g.
     // "NUTRICULA-RUNTIME-V3|challenge_id=...|nonce=...|license_id=...|
