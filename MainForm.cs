@@ -315,11 +315,11 @@ namespace NutriculaInstaller
                 webButton = new HeaderIconButton(UiHelpers.GlyphGlobe) { Location = new Point(webLeft, 40) };
             }
 
-            chatButton.Click += delegate { OpenUrl("https://t.me/nutriculaexpertsupport"); };
+            chatButton.Click += delegate { OpenUrl(AppConfig.SupportUrl); };
             header.Controls.Add(chatButton);
             headerToolTip.SetToolTip(chatButton, "Chat with support on Telegram");
 
-            webButton.Click += delegate { OpenUrl("https://www.NutriculaExpert.com"); };
+            webButton.Click += delegate { OpenUrl(AppConfig.WebsiteUrl); };
             header.Controls.Add(webButton);
             headerToolTip.SetToolTip(webButton, "Visit our website");
         }
@@ -351,7 +351,7 @@ namespace NutriculaInstaller
                 TextColor = UiHelpers.BrandColor,
                 CustomIconDrawer = UiHelpers.DrawShoppingBagGlyph
             };
-            buyButton.Click += delegate { OpenUrl("https://www.google.com/"); };
+            buyButton.Click += delegate { OpenUrl(AppConfig.PremiumPurchaseUrl); };
             footer.Controls.Add(buyButton);
 
             // Bottom-right of the same row, opposite the guide/buy buttons.

@@ -13,8 +13,11 @@ namespace NutriculaInstaller
 {
     internal sealed class InstallerService
     {
-        public const string PremiumUrl = "https://nutriculaexpert.com/license_validator_phps/nutricula_computer_based_signup.php";
-        public const string TransferUrl = "https://nutriculaexpert.com/license_validator_phps/nutricula_computer_based_signup_transfer.php";
+        // Server endpoints are now sourced from Config\AppConfig.txt (edit-and-
+        // rebuild), not hardcoded here. Kept as these same names so every
+        // existing call site (e.g. RequestLicenseAsync's baseUrl) is unchanged.
+        public static string PremiumUrl => AppConfig.SignupUrl;
+        public static string TransferUrl => AppConfig.TransferUrl;
         private const string LicenseFileName = "NutriculaLicense.txt";
         private readonly TerminalDiscoveryService discovery = new TerminalDiscoveryService();
 
