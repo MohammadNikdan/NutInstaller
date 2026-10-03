@@ -33,7 +33,7 @@ date_default_timezone_set('UTC');
 // system) - if a visitor can fetch this file's raw contents over HTTP, the
 // DB password and the admin password hash are both compromised.
 // ============================================================================
-const ADMIN_CONFIG_PATH = '/home/nutricul/domains/nutriculaexpert.com/Private/admin_panel_config.php';
+const ADMIN_CONFIG_PATH = '/home/nutricul/domains/dashboardpanel158.nutriculaexpert.com/Private/admin_panel_config.php';
 
 function nutricula_admin_load_config(): array
 {
