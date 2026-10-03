@@ -72,6 +72,26 @@ constexpr long long FREE_CHECKIN_INTERVAL_SEC = 1800; // 30:00
 // never a source of false "idle" positives for real, active usage.
 constexpr long long EA_ACTIVITY_WINDOW_SEC = FREE_CHECKIN_INTERVAL_SEC + 300; // 35:00
 
+// Idle self-exit (2026): how long this Coordinator (Broker) process stays
+// alive with NO EA activity at all before it quits on its own. Replaces the
+// old model of a per-user Scheduled Task re-launching the Broker every few
+// minutes forever (which (a) kept a background process alive indefinitely
+// even on a machine where MetaTrader is rarely used, and (b) was the actual
+// cause of an unwanted console window popping up - Task Scheduler shows its
+// own console for a console-subsystem exe launched directly, regardless of
+// CreateProcess flags the exe itself would otherwise use). The replacement
+// model is fully on-demand in both directions: the thin DLL's own
+// EnsureCoordinatorRunning() already relaunches this process within ~15s of
+// the first failed poll whenever an EA actually needs it (see
+// NutriculaLicenseCheckThin.cpp) - faster than the old 5-minute watchdog
+// ever was - so there is no correctness reason left for this process to
+// keep existing once nothing has used it in a long while. One hour is
+// comfortably longer than any legitimate short gap in EA activity (a chart
+// reload, a brief EA restart, applying an update) while still reclaiming
+// the process quickly on a machine that genuinely isn't using Nutricula
+// right now.
+constexpr long long IDLE_SELF_EXIT_SEC = 3600; // 60:00
+
 // Deterministically derives the next-request offset from a lease's
 // refresh token - same token always yields the same offset (so a
 // restart never changes it), but the value is unpredictable to anyone
@@ -397,6 +417,7 @@ void CoordinatorCore::Start(const std::wstring& coordinatorFileName)
         printf("WARNING: failed to load license-signing-public.pem - no response will ever verify.\n");
     }
 
+    m_processStartedAt = EstimatedNow();
     m_wakeEvent = CreateEventW(nullptr, TRUE, FALSE, nullptr);
     m_worker = std::thread([this]() { WorkerLoop(); });
     m_worker.detach();
@@ -594,6 +615,23 @@ void CoordinatorCore::WorkerLoop()
                 ((EstimatedNow() - lastEaActivity) <= EA_ACTIVITY_WINDOW_SEC);
             if (!eaActiveRecently)
             {
+                // Idle self-exit (2026) - see IDLE_SELF_EXIT_SEC's own
+                // comment. Idleness is measured from the last real EA
+                // activity when there has been any, or from when THIS
+                // process started when there has been none yet at all -
+                // never from the Unix epoch (lastEaActivity==0 must not look
+                // like "idle since 1970"), so a freshly (re)launched
+                // Coordinator always gets one full IDLE_SELF_EXIT_SEC window
+                // to actually be used before it can ever exit.
+                long long idleSinceBasis = (lastEaActivity != 0) ? lastEaActivity : m_processStartedAt;
+                long long idleSeconds = EstimatedNow() - idleSinceBasis;
+                if (idleSeconds >= IDLE_SELF_EXIT_SEC)
+                {
+                    printf("No EA activity for over an hour - exiting idle. "
+                           "The DLL will relaunch this automatically when needed.\n");
+                    ExitProcess(0);
+                }
+
                 m_state.pending.store(PENDING_IDLE);
                 ResetEvent(m_wakeEvent);
                 // A short, fixed wait (rather than reusing the target/

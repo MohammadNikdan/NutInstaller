@@ -122,6 +122,12 @@ private:
     // ServeOneClient thread happens to be handling the current pipe
     // connection, and read from the separate WorkerLoop thread.
     std::atomic<long long> m_lastEaActivityAt{0};
+    // EstimatedNow() at the moment Start() launched WorkerLoop - the idle-
+    // self-exit basis (see WorkerLoop) for a freshly (re)started process
+    // that hasn't heard from any EA yet, so a brand-new Coordinator always
+    // gets one full idle window to actually be used before it can exit,
+    // instead of measuring idleness from the Unix epoch (0).
+    long long m_processStartedAt = 0;
 };
 
 } // namespace Coordinator
