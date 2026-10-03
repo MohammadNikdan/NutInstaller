@@ -402,8 +402,9 @@ function nutricula_log_activity(mysqli $conn, int $licenseDbId, string $machineI
  * Deliberately never throws: a failure here can never interfere with the
  * actual response the caller is about to send.
  */
-function nutricula_track_unlicensed_checkin(mysqli $conn, ?string $machineId, ?string $deviceKeyHash, ?string $platformProfile = null): void
+function nutricula_track_unlicensed_checkin(mysqli $conn, ?string $machineId, ?string $deviceKeyHash, ?string $platformProfile = null, ?string $buildId = null): void
 {
+    $buildId = ($buildId !== null && $buildId !== '') ? $buildId : null;
     $machineId = ($machineId !== null && $machineId !== '') ? $machineId : null;
     $deviceKeyHash = ($deviceKeyHash !== null && $deviceKeyHash !== '') ? $deviceKeyHash : null;
     if ($machineId === null && $deviceKeyHash === null) return; // nothing to identify this computer by
@@ -444,10 +445,11 @@ function nutricula_track_unlicensed_checkin(mysqli $conn, ?string $machineId, ?s
                  SET last_seen_at = NOW(),
                      machine_id = COALESCE(machine_id, ?),
                      device_public_key_hash = COALESCE(device_public_key_hash, ?),
-                     platform_profile = COALESCE(?, platform_profile)
+                     platform_profile = COALESCE(?, platform_profile),
+                     last_build_id = COALESCE(?, last_build_id)
                  WHERE id = ?'
             );
-            $stmt->bind_param('sssi', $machineId, $deviceKeyHash, $platformProfile, $existingId);
+            $stmt->bind_param('ssssi', $machineId, $deviceKeyHash, $platformProfile, $buildId, $existingId);
             $stmt->execute();
             $stmt->close();
             return;
@@ -455,10 +457,10 @@ function nutricula_track_unlicensed_checkin(mysqli $conn, ?string $machineId, ?s
 
         $stmt = $conn->prepare(
             'INSERT INTO nutricula_unlicensed_checkins
-             (machine_id, device_public_key_hash, first_seen_at, last_seen_at, platform_profile)
-             VALUES (?, ?, NOW(), NOW(), ?)'
+             (machine_id, device_public_key_hash, first_seen_at, last_seen_at, platform_profile, last_build_id)
+             VALUES (?, ?, NOW(), NOW(), ?, ?)'
         );
-        $stmt->bind_param('sss', $machineId, $deviceKeyHash, $platformProfile);
+        $stmt->bind_param('ssss', $machineId, $deviceKeyHash, $platformProfile, $buildId);
         if (!$stmt->execute()) {
             // Benign race: another concurrent check-in from the same
             // computer inserted first - not an error worth logging.

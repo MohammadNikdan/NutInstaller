@@ -72,6 +72,13 @@ CREATE TABLE nutricula_licenses (
     status ENUM('active','expired','revoked') NOT NULL DEFAULT 'active',
     activated_at DATETIME NOT NULL,
     last_seen_at DATETIME NULL,
+    /* Admin panel (2026): the build_id this license's device verified with
+       on its last successful 'verify' request (see license_check.php's
+       lease-issuance UPDATE) - lets the admin dashboard show what fraction
+       of active installs have adopted the latest release, grouped via
+       nutricula_build_manifests.version. NULL until the first verify after
+       this column existed. */
+    last_build_id VARCHAR(64) NULL,
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     PRIMARY KEY (id),
@@ -155,6 +162,18 @@ CREATE TABLE nutricula_unlicensed_checkins (
     device_public_key_hash CHAR(64) NULL,
     first_seen_at DATETIME NOT NULL,
     last_seen_at DATETIME NOT NULL,
+    /* Admin panel (2026): same classification/values as nutricula_licenses.
+       device_type and nutricula_minus2_log.platform_profile - refreshed on
+       every free_checkin (see nutricula_track_unlicensed_checkin), so the
+       admin dashboard can break "active free users" down by OS. NULL until
+       the first free_checkin that actually included platform_profile (older
+       Coordinator, or the local export genuinely unavailable). */
+    platform_profile ENUM('windows','windows_vm','macos_wine','linux_wine') NULL,
+    /* Admin panel (2026): same build-adoption tracking as
+       nutricula_licenses.last_build_id, refreshed on every free_checkin -
+       so the admin dashboard's build-adoption view covers free installs
+       too, not just premium. */
+    last_build_id VARCHAR(64) NULL,
     PRIMARY KEY (id),
     UNIQUE KEY uq_checkin_machine_id (machine_id),
     UNIQUE KEY uq_checkin_device_hash (device_public_key_hash),
@@ -256,4 +275,150 @@ CREATE TABLE nutricula_rate_limits (
     request_count INT UNSIGNED NOT NULL DEFAULT 1,
     PRIMARY KEY (id),
     UNIQUE KEY uq_rate_key_window (rate_key, window_start)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+/* Full support-facing log of every "-2" (Check_Core_Integrity() returning
+   -2 to MQL, i.e. TIER_FAILED) occurrence across every install in the
+   world, free or licensed - one row per occurrence (not deduplicated),
+   so support can look up a customer's complaint by machine_id/email/
+   license and see exactly when and why their EA stopped working.
+
+   COVERAGE NOTE (2026) - read before treating an empty result as "nothing
+   happened": Check_Core_Integrity() can return -2 for five distinct
+   reasons, and only ONE of them is something this server can ever learn
+   about and log:
+     1. The EA<->DLL handshake (inside MetaTrader's own process) is wrong
+        or has lapsed - purely local, no network involved, UNLOGGABLE here.
+     2. The DLL's signature re-verification of an otherwise-well-formed
+        Coordinator reply fails - also purely local (the Coordinator has no
+        way to know the DLL rejected what it sent) - UNLOGGABLE here.
+     3. The DLL's named-pipe connection attempts to the Broker fail
+        repeatedly (e.g. Broker not running at all) - the Broker never even
+        receives a failed connection attempt it was never alive for -
+        UNLOGGABLE here.
+     4. The Coordinator's OWN published tier is TIER_FAILED because it
+        exhausted its 10-attempt retry budget without ANY usable server
+        response (real network outage, or the request never reaching this
+        server for some other reason) - reported via
+        nutricula_failure_report.php's 'transport_exhausted' reason_code
+        (best-effort: if the network is genuinely down, this report may
+        also fail to arrive - its absence in that specific case is itself
+        consistent with "customer's internet/firewall was the problem").
+     5. The Coordinator's OWN published tier is TIER_FAILED because local
+        machine-ID generation failed - reported via
+        nutricula_failure_report.php's 'machineid_generation_failed' reason.
+   A sixth, server-DECIDED cause - confirmed artifact/hash tampering
+   ('artifact_mismatch', detected during 'verify' or 'free_checkin') - is
+   logged directly by license_check.php at the moment the server itself
+   makes that call, with full context (it has everything already in hand).
+   So: reasons 4/5/6 land here; reasons 1/2/3 structurally cannot,
+   by construction, ever reach this server - there is no bug to fix, just a
+   layer that has no network path at all. */
+CREATE TABLE nutricula_minus2_log (
+    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+    occurred_at DATETIME NOT NULL,
+    /* 'free' when no license_id was involved at all (matches the
+       Coordinator's own free-tier/free_checkin definition), 'licensed'
+       when a license_id was involved regardless of whether it was
+       ultimately valid - this is "what KIND of install hit -2", not this
+       event's outcome. */
+    install_kind ENUM('free','licensed') NOT NULL,
+    /* Fixed, short, machine-readable cause - one of: 'artifact_mismatch'
+       (server-confirmed tamper/hash mismatch), 'transport_exhausted'
+       (10 attempts, no usable server response), 'machineid_generation_failed'
+       (local hardware-ID generation failed). See the table comment above
+       for the full reasoning and for which causes can NEVER appear here. */
+    reason_code VARCHAR(64) NOT NULL,
+    /* Free-text elaboration for support - e.g. exactly which hash field(s)
+       mismatched, or how many attempts were made and the last transport
+       error. Never parsed or relied on for any decision anywhere. */
+    reason_detail TEXT NULL,
+    license_id BIGINT UNSIGNED NULL,
+    user_email VARCHAR(320) NULL,
+    machine_id CHAR(64) NULL,
+    machine_id_alt CHAR(64) NULL,
+    device_public_key_hash CHAR(64) NULL,
+    build_id VARCHAR(64) NULL,
+    observed_ip VARCHAR(45) NULL,
+    /* Same classification as nutricula_licenses.device_type above (and the
+       same client-reported "platform_profile" field used at signup) -
+       NULL when the client didn't send one (e.g. a pre-2026 Coordinator,
+       or the local MachineId DLL export genuinely wasn't available on that
+       machine when this -2 occurred), never defaulted to 'unknown' here
+       since "we don't know" and "the client explicitly reported no
+       machine ID yet" are worth distinguishing in a support log. */
+    platform_profile ENUM('windows','windows_vm','macos_wine','linux_wine') NULL,
+    PRIMARY KEY (id),
+    KEY idx_minus2_machine (machine_id),
+    KEY idx_minus2_device_key (device_public_key_hash),
+    KEY idx_minus2_license (license_id),
+    KEY idx_minus2_email (user_email),
+    KEY idx_minus2_occurred (occurred_at),
+    CONSTRAINT fk_minus2_license
+        FOREIGN KEY (license_id) REFERENCES nutricula_licenses(id)
+        ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+/* ============================================================================
+   Admin panel (2026)
+   ============================================================================
+   Everything below is read/written ONLY by the separate admin panel
+   (admin_*.php, on its own subdomain) - license_check.php and the other
+   public-facing endpoints only ever READ nutricula_banned_devices (to
+   enforce a ban), never write it. Login itself uses no table at all - the
+   single admin password hash lives in a private, outside-webroot PHP config
+   file (same convention as license_config.php), not in the database, since
+   there is exactly one admin and a DB row would just be one more thing an
+   attacker who already reached the DB could read. */
+
+/* One row per banned "identity" - either a premium license (scope='license',
+   license_id set) or a free/unlicensed install (scope='free_device',
+   machine_id and/or device_public_key_hash set, whichever the admin searched
+   by). A premium ban does NOT touch nutricula_licenses.status/blocked_until
+   (those stay reserved for the existing expiry/clone-block machinery) -
+   license_check.php checks this table as an INDEPENDENT extra gate, so an
+   admin ban and an automatic clone-block can never clobber each other's
+   state. The server-side effect is identical either way (see license_check's
+   nutricula_is_banned() call sites): a signed Reject with reason 'banned',
+   which the Coordinator maps to the same TIER_BLOCKED outcome as a
+   clone-detected block (see CoordinatorCore.cpp). */
+CREATE TABLE nutricula_banned_devices (
+    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+    scope ENUM('license','free_device') NOT NULL,
+    license_id BIGINT UNSIGNED NULL,
+    machine_id CHAR(64) NULL,
+    device_public_key_hash CHAR(64) NULL,
+    /* Denormalized copy of nutricula_licenses.user_email at ban time, purely
+       so the admin panel's "currently banned" list can show an email without
+       an extra join after the license row might later change - never
+       compared against for the ban decision itself (license_id is). */
+    user_email VARCHAR(320) NULL,
+    reason VARCHAR(255) NULL,
+    banned_at DATETIME NOT NULL,
+    banned_by VARCHAR(255) NOT NULL,
+    PRIMARY KEY (id),
+    UNIQUE KEY uq_ban_license (license_id),
+    UNIQUE KEY uq_ban_machine (machine_id),
+    UNIQUE KEY uq_ban_device_hash (device_public_key_hash),
+    KEY idx_ban_email (user_email),
+    CONSTRAINT fk_ban_license
+        FOREIGN KEY (license_id) REFERENCES nutricula_licenses(id)
+        ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+/* Append-only trail of every mutating action taken from the admin panel
+   (ban, unban - and anything added later) - never read by any enforcement
+   logic, purely so that if the panel's one password is ever compromised,
+   there is a record of exactly what was done, when, and from where. Never
+   pruned automatically (unlike nutricula_minus2_log) - this table only ever
+   grows at the rate of actual admin clicks, which is tiny. */
+CREATE TABLE nutricula_admin_audit_log (
+    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+    occurred_at DATETIME NOT NULL,
+    action VARCHAR(64) NOT NULL,
+    target_type VARCHAR(32) NOT NULL,
+    target_detail VARCHAR(500) NOT NULL,
+    admin_ip VARCHAR(45) NOT NULL,
+    PRIMARY KEY (id),
+    KEY idx_audit_occurred (occurred_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

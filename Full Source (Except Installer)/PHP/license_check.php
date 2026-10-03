@@ -175,7 +175,16 @@ try {
         nutricula_rate_limit_check($conn, $config, 'free_checkin');
 
         $checkinPlatformProfile = nutricula_normalize_platform_profile($fields['platform_profile'] ?? null);
-        nutricula_track_unlicensed_checkin($conn, $checkinMachineId, $checkinDeviceKeyHash, $checkinPlatformProfile);
+        // Admin panel (2026, build-adoption tracking): read defensively here
+        // (not via nutricula_required_field) purely for statistics - the
+        // REAL required/well-formed check for build_id happens below and
+        // still governs the actual artifact_mismatch decision; this copy
+        // only ever feeds the admin dashboard's "which version is this
+        // install on" view, so a missing/malformed value here simply means
+        // "nothing to record yet", never a request failure.
+        $trackingBuildId = isset($fields['build_id']) ? trim((string)$fields['build_id']) : null;
+        if ($trackingBuildId === '' || ($trackingBuildId !== null && strlen($trackingBuildId) > 64)) $trackingBuildId = null;
+        nutricula_track_unlicensed_checkin($conn, $checkinMachineId, $checkinDeviceKeyHash, $checkinPlatformProfile, $trackingBuildId);
 
         /* Admin panel (2026): a banned free-tier device is rejected
            unconditionally, before even looking at artifact/version checks -
@@ -803,11 +812,11 @@ try {
 
         $update = $conn->prepare(
             'UPDATE nutricula_licenses
-             SET last_observed_ip=?, last_seen_at=NOW()
+             SET last_observed_ip=?, last_seen_at=NOW(), last_build_id=?
              WHERE id=?'
         );
         if (!$update) throw new RuntimeException('DB prepare failed.');
-        $update->bind_param('si', $observedIp, $licenseDbId);
+        $update->bind_param('ssi', $observedIp, $buildId, $licenseDbId);
         if (!$update->execute()) throw new RuntimeException('DB update failed.');
         $update->close();
 
