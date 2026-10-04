@@ -2,6 +2,12 @@
 
 declare(strict_types=1);
 
+// Captured before anything else runs (even before require_once) so the
+// admin panel's "server response speed" report reflects the FULL request
+// cost, not just the part after bootstrap - see nutricula_record_request_timing()
+// in license_common.php for where this is used, a few lines below.
+$__nutriculaReqStart = microtime(true);
+
 date_default_timezone_set('UTC');
 
 require_once __DIR__ . '/license_common.php';
@@ -114,6 +120,14 @@ function nutricula_challenge_rate_ok(mysqli $conn, int $licenseDbId, int $now): 
 
 try {
     $config = nutricula_load_config();
+    // Registered as early as config is available - a shutdown function
+    // always runs on script end (normal return, exit(), or an uncaught
+    // exception), so this reliably captures every outcome below, not just
+    // the success path. See nutricula_record_request_timing()'s own doc
+    // comment in license_common.php for why this adds no latency.
+    register_shutdown_function(function () use ($__nutriculaReqStart, $config): void {
+        nutricula_record_request_timing($config, $__nutriculaReqStart);
+    });
     $conn = nutricula_db($config);
     // DDoS mitigation: rejects cheaply (before any decrypt/DB-heavy work)
     // if this IP has exceeded the request rate for this endpoint - see

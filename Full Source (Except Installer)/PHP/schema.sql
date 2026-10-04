@@ -162,6 +162,17 @@ CREATE TABLE nutricula_unlicensed_checkins (
     device_public_key_hash CHAR(64) NULL,
     first_seen_at DATETIME NOT NULL,
     last_seen_at DATETIME NOT NULL,
+    /* Admin panel (2026): the last_seen_at value as of the start of the
+       CURRENT calendar day (UTC), i.e. "when were they last seen before
+       today" - written by nutricula_track_unlicensed_checkin() in
+       license_common.php (see its own comment for why it only rolls
+       forward once per day). Lets the admin panel's "free user returning
+       after 30+ days" card tell a genuine comeback apart from someone who
+       simply checked in again a few minutes after their last request -
+       last_seen_at alone can never make that distinction, since it's
+       overwritten on every single check-in. NULL for a brand-new row (no
+       "before" to speak of yet). */
+    previous_last_seen_at DATETIME NULL,
     /* Admin panel (2026): same classification/values as nutricula_licenses.
        device_type and nutricula_minus2_log.platform_profile - refreshed on
        every free_checkin (see nutricula_track_unlicensed_checkin), so the
@@ -275,6 +286,25 @@ CREATE TABLE nutricula_rate_limits (
     request_count INT UNSIGNED NOT NULL DEFAULT 1,
     PRIMARY KEY (id),
     UNIQUE KEY uq_rate_key_window (rate_key, window_start)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+/* Response-time instrumentation for the admin panel's "server health"
+   report - one row per calendar MINUTE (not per request - a per-request
+   log would grow unboundedly on a busy server), written by
+   nutricula_record_request_timing() in license_common.php via a shutdown-
+   function hook in license_check.php, so it costs the real request zero
+   observable latency. avg response time for a given minute is
+   total_duration_ms / request_count. Rows older than ~40 days are deleted
+   opportunistically by the same function (see its own doc comment) - that
+   comfortably covers the report's longest lookback (a month ago) while
+   keeping this table small (well under 60,000 rows even at full traffic). */
+CREATE TABLE nutricula_request_timing (
+    window_start INT UNSIGNED NOT NULL,
+    request_count INT UNSIGNED NOT NULL DEFAULT 0,
+    total_duration_ms BIGINT UNSIGNED NOT NULL DEFAULT 0,
+    min_duration_ms INT UNSIGNED NOT NULL DEFAULT 0,
+    max_duration_ms INT UNSIGNED NOT NULL DEFAULT 0,
+    PRIMARY KEY (window_start)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 /* Full support-facing log of every "-2" (Check_Core_Integrity() returning

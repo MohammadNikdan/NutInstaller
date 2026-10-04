@@ -440,9 +440,25 @@ function nutricula_track_unlicensed_checkin(mysqli $conn, ?string $machineId, ?s
             // only get more precise over time, never needs "first wins").
             // A null here (older Coordinator, or the export unavailable this
             // one time) leaves the previously-recorded value untouched.
+            // previous_last_seen_at exists purely so the admin panel's "free
+            // user returning after 30+ days" card (see admin_stats.php) can
+            // tell whether a GAP in usage happened - last_seen_at alone only
+            // ever shows the single most recent check-in, never what it was
+            // before that. Only rolled forward on the first check-in of a
+            // NEW calendar day (UTC - a few hours of fuzziness near midnight
+            // doesn't matter for a 30-day threshold); a second/third/Nth
+            // check-in later the SAME day leaves it untouched, otherwise a
+            // chatty client checking in every few minutes would overwrite a
+            // genuinely-30-days-stale value with "earlier today" the moment
+            // its SECOND check-in of the day landed, hiding every real
+            // returning user from that card. previous_last_seen_at = last_seen_at
+            // MUST be listed before last_seen_at = NOW() below - MySQL
+            // evaluates a single-table UPDATE's SET list left to right, so
+            // this order is what makes the IF() below see the OLD value.
             $stmt = $conn->prepare(
                 'UPDATE nutricula_unlicensed_checkins
-                 SET last_seen_at = NOW(),
+                 SET previous_last_seen_at = IF(DATE(last_seen_at) <> UTC_DATE(), last_seen_at, previous_last_seen_at),
+                     last_seen_at = NOW(),
                      machine_id = COALESCE(machine_id, ?),
                      device_public_key_hash = COALESCE(device_public_key_hash, ?),
                      platform_profile = COALESCE(?, platform_profile),
@@ -920,6 +936,64 @@ function nutricula_rate_limit_check(mysqli $conn, array $config, string $endpoin
         $cutoff = $windowStart - (10 * $windowSeconds);
         $conn->query('DELETE FROM nutricula_rate_limits WHERE window_start < ' . (int)$cutoff . ' LIMIT 1000');
     } catch (Throwable $ignored) {}
+}
+
+/* Request-timing instrumentation for the admin panel's "server health"
+   report (see admin_stats.php's server_health section) - records how long
+   THIS request took to handle, aggregated into one row per calendar minute
+   in nutricula_request_timing, so the panel can compare today's response
+   speed against yesterday/last week/last month without needing shell/SSH
+   access to the box.
+
+   Call pattern (see license_check.php, the one hot public endpoint this is
+   wired into): capture $start = microtime(true) as the very first line of
+   the script, then AFTER $config is loaded,
+     register_shutdown_function(fn() => nutricula_record_request_timing($config, $start));
+   A shutdown function runs after the script has already produced its full
+   response, so none of this - including the fresh DB connection it opens,
+   since the request's own $conn is usually already closed by then - adds
+   any latency the client can observe. fastcgi_finish_request() (when the
+   SAPI supports it, which cPanel's PHP-FPM normally does) makes this
+   doubly true by flushing the response to the client BEFORE this function
+   even starts running. */
+function nutricula_record_request_timing(array $config, float $startTime): void
+{
+    if (function_exists('fastcgi_finish_request')) {
+        try { @fastcgi_finish_request(); } catch (Throwable $ignored) {}
+    }
+    try {
+        $durationMs = (int)round((microtime(true) - $startTime) * 1000);
+        if ($durationMs < 0) $durationMs = 0;
+
+        $conn = nutricula_db($config);
+        $windowStart = intdiv(time(), 60) * 60;
+
+        $stmt = $conn->prepare(
+            'INSERT INTO nutricula_request_timing
+                (window_start, request_count, total_duration_ms, min_duration_ms, max_duration_ms)
+             VALUES (?, 1, ?, ?, ?)
+             ON DUPLICATE KEY UPDATE
+                request_count = request_count + 1,
+                total_duration_ms = total_duration_ms + VALUES(total_duration_ms),
+                min_duration_ms = LEAST(min_duration_ms, VALUES(min_duration_ms)),
+                max_duration_ms = GREATEST(max_duration_ms, VALUES(max_duration_ms))'
+        );
+        if ($stmt) {
+            $stmt->bind_param('iiii', $windowStart, $durationMs, $durationMs, $durationMs);
+            $stmt->execute();
+            $stmt->close();
+        }
+
+        // Best-effort retention - keep ~40 days of 1-minute buckets
+        // (~57,600 rows at full traffic, trivial for MySQL), which comfortably
+        // covers the report's longest comparison window (a month ago).
+        // Same opportunistic LIMIT-bounded pattern as nutricula_rate_limit_check().
+        $cutoff = time() - 40 * 86400;
+        $conn->query('DELETE FROM nutricula_request_timing WHERE window_start < ' . (int)$cutoff . ' LIMIT 500');
+        $conn->close();
+    } catch (Throwable $e) {
+        error_log('[Nutricula request timing] ' . $e->getMessage());
+    }
 }
 
 function nutricula_ip_in_cidrs(string $ip, array $cidrs): bool
