@@ -5,9 +5,15 @@ declare(strict_types=1);
 require_once __DIR__ . '/admin_common.php';
 
 /* admin_stats.php - GET, authenticated. Query params:
-     days        = activity window in days, for "active in the last N days"
-                   and for the "inactive" complement (default 30).
-     growth_days = how far back the growth chart goes (default 90).
+     range       = 'today' | 'all' | omitted (plain day-count mode)
+     days        = activity window in days when range is omitted, for
+                   "active in the last N days" and the "inactive" complement
+                   (default 30). Also accepts 365 for "last year".
+     tz          = IANA zone name, detected client-side from the device
+                   (never user-editable) and used for the 'today' boundary
+                   and for the "active today" cards below.
+     growth_days = how far back the growth chart goes (default 90) -
+                   independent of the window above, its own selector.
    Returns one big JSON blob with everything the dashboard's summary cards,
    percentage view, OS breakdown, growth chart and server-load chart need -
    one request, one round trip, so the "update" button and the 60-second
@@ -19,17 +25,65 @@ try {
     nutricula_admin_require_auth();
     $conn = nutricula_admin_db($config);
 
-    $days = (int)($_GET['days'] ?? 30);
-    if ($days < 1) $days = 1;
-    if ($days > 3650) $days = 3650;
-
     $growthDays = (int)($_GET['growth_days'] ?? 90);
     if ($growthDays < 7) $growthDays = 7;
     if ($growthDays > 1095) $growthDays = 1095;
 
+    // ------------------------------------------------------------------
+    // Timezone for the "today" boundary and the active-today
+    // cards below - all share the SAME local midnight, so every "today"-
+    // flavored feature in this response stays consistent with the others.
+    // The browser now sends its own device timezone (not a user-editable
+    // dropdown), so it can be any valid IANA zone name - not a fixed list
+    // anymore. DateTimeZone itself throws on an invalid name, which is all
+    // the validation an unchecked query param needs; fall back to UTC
+    // rather than letting a bad/spoofed value 500 the endpoint.
+    // ------------------------------------------------------------------
+    $tzName = (string)($_GET['tz'] ?? 'UTC');
+    try {
+        $tz = new DateTimeZone($tzName);
+    } catch (Exception $e) {
+        $tzName = 'UTC';
+        $tz = new DateTimeZone($tzName);
+    }
+    $nowInTz = new DateTime('now', $tz);
+    $todayMidnightInTz = (clone $nowInTz)->setTime(0, 0, 0);
+    $todayMidnightTs = $todayMidnightInTz->getTimestamp();
+    $nowTs = $nowInTz->getTimestamp();
+    $elapsedSecondsToday = max(0, $nowTs - $todayMidnightTs);
+
+    // ------------------------------------------------------------------
+    // The "active/new window" - every summary/OS/build/conversion/health
+    // query below that used to say "in the last N days" now filters
+    // between two absolute timestamps ($sinceTs, $untilTs) instead, so
+    // 'today' (local-midnight based, not a round number of days), 'all'
+    // (no lower bound at all) all flow through the exact same queries as
+    // the plain day-count modes (24h/7d/30d/90d/365d) - no special-casing
+    // needed anywhere past this point.
+    // ------------------------------------------------------------------
+    $range = (string)($_GET['range'] ?? '');
+    $days = (int)($_GET['days'] ?? 30); // kept for the response + legacy callers
+    if ($days < 1) $days = 1;
+    if ($days > 3650) $days = 3650;
+    $untilTs = $nowTs;
+
+    if ($range === 'today') {
+        $sinceTs = $todayMidnightTs;
+        $windowLabel = 'today';
+    } elseif ($range === 'all') {
+        $sinceTs = 0; // 1970 - effectively "no lower bound"
+        $windowLabel = 'all';
+    } else {
+        $sinceTs = $nowTs - $days * 86400;
+        $windowLabel = (string)$days;
+    }
+
     $result = [
         'generated_at' => gmdate('c'),
         'window_days' => $days,
+        'window_label' => $windowLabel,
+        'window_since' => gmdate('c', $sinceTs),
+        'window_until' => gmdate('c', $untilTs),
     ];
 
     // ------------------------------------------------------------------
@@ -46,12 +100,12 @@ try {
     };
 
     $freeActive = $scalar(
-        'SELECT COUNT(*) FROM nutricula_unlicensed_checkins WHERE last_seen_at >= (NOW() - INTERVAL ? DAY)',
-        ['i'], [$days]
+        'SELECT COUNT(*) FROM nutricula_unlicensed_checkins WHERE last_seen_at >= FROM_UNIXTIME(?) AND last_seen_at <= FROM_UNIXTIME(?)',
+        ['i', 'i'], [$sinceTs, $untilTs]
     );
     $premiumActive = $scalar(
-        "SELECT COUNT(*) FROM nutricula_licenses WHERE status='active' AND last_seen_at IS NOT NULL AND last_seen_at >= (NOW() - INTERVAL ? DAY)",
-        ['i'], [$days]
+        "SELECT COUNT(*) FROM nutricula_licenses WHERE status='active' AND last_seen_at IS NOT NULL AND last_seen_at >= FROM_UNIXTIME(?) AND last_seen_at <= FROM_UNIXTIME(?)",
+        ['i', 'i'], [$sinceTs, $untilTs]
     );
     $freeNew24h = $scalar('SELECT COUNT(*) FROM nutricula_unlicensed_checkins WHERE first_seen_at >= (NOW() - INTERVAL 1 DAY)');
     $premiumNew24h = $scalar('SELECT COUNT(*) FROM nutricula_licenses WHERE created_at >= (NOW() - INTERVAL 1 DAY)');
@@ -93,38 +147,145 @@ try {
     ];
 
     // ------------------------------------------------------------------
+    // "Today" acquisition cards - deliberately NOT "active today" (merely
+    // having used the app today says nothing about whether someone is a
+    // NEW signal worth noticing). All five are since LOCAL midnight in the
+    // selected timezone ($todayMidnightTs), resetting to zero every day -
+    // the server's own current time in that zone is echoed back so the
+    // admin can verify the midnight boundary is actually landing where
+    // they expect. Independent of the window selector above (always
+    // "today", whatever the dashboard's main window is set to).
+    // ------------------------------------------------------------------
+
+    // 1) Brand-new free users - no record of this machine at all before
+    // today, neither free nor premium.
+    $freeBrandNewToday = $scalar(
+        'SELECT COUNT(*) FROM nutricula_unlicensed_checkins u
+         WHERE u.first_seen_at >= FROM_UNIXTIME(?)
+           AND NOT EXISTS (
+             SELECT 1 FROM nutricula_licenses lic
+             WHERE u.machine_id IS NOT NULL AND lic.machine_id = u.machine_id
+               AND lic.created_at < FROM_UNIXTIME(?)
+           )',
+        ['i', 'i'], [$todayMidnightTs, $todayMidnightTs]
+    );
+
+    // 2) Free users returning TODAY after >=30 days with no free activity -
+    // needs previous_last_seen_at (see nutricula_track_unlicensed_checkin()
+    // in license_common.php). Degrade gracefully on an un-migrated DB
+    // instead of a fatal "unknown column" error.
+    $hasPreviousLastSeenColumn = (bool)$conn->query(
+        "SHOW COLUMNS FROM nutricula_unlicensed_checkins LIKE 'previous_last_seen_at'"
+    )->num_rows;
+    $freeReturningToday = $hasPreviousLastSeenColumn ? $scalar(
+        'SELECT COUNT(*) FROM nutricula_unlicensed_checkins u
+         WHERE u.last_seen_at >= FROM_UNIXTIME(?)
+           AND u.first_seen_at < FROM_UNIXTIME(?)
+           AND u.previous_last_seen_at IS NOT NULL
+           AND u.previous_last_seen_at < FROM_UNIXTIME(?)',
+        ['i', 'i', 'i'], [$todayMidnightTs, $todayMidnightTs, $nowTs - 30 * 86400]
+    ) : 0;
+
+    // 3) First-ever premium activation today - may have used the free
+    // version before, but never held a license before today.
+    $premiumFirstTimeToday = $scalar(
+        'SELECT COUNT(*) FROM nutricula_licenses lic
+         WHERE lic.activated_at >= FROM_UNIXTIME(?)
+           AND NOT EXISTS (
+             SELECT 1 FROM nutricula_licenses other
+             WHERE other.machine_id = lic.machine_id AND other.id <> lic.id
+               AND other.activated_at < FROM_UNIXTIME(?)
+           )',
+        ['i', 'i'], [$todayMidnightTs, $todayMidnightTs]
+    );
+
+    // 4) Renewal/reactivation today - activated today, but this machine
+    // held a premium license before (the complement of #3 among today's
+    // activations: #3 + #4 = every license activated today).
+    $premiumRenewalToday = $scalar(
+        'SELECT COUNT(*) FROM nutricula_licenses lic
+         WHERE lic.activated_at >= FROM_UNIXTIME(?)
+           AND EXISTS (
+             SELECT 1 FROM nutricula_licenses other
+             WHERE other.machine_id = lic.machine_id AND other.id <> lic.id
+               AND other.activated_at < FROM_UNIXTIME(?)
+           )',
+        ['i', 'i'], [$todayMidnightTs, $todayMidnightTs]
+    );
+
+    // 5) Transfers completed today.
+    $transfersToday = $scalar(
+        'SELECT COUNT(*) FROM nutricula_transfer_keys_used WHERE transferred_at >= FROM_UNIXTIME(?)',
+        ['i'], [$todayMidnightTs]
+    );
+
+    $result['today'] = [
+        'timezone' => $tzName,
+        'server_time_in_tz' => $nowInTz->format('Y-m-d H:i:s'),
+        'midnight_in_tz' => $todayMidnightInTz->format('Y-m-d H:i:s'),
+        'free_brand_new' => $freeBrandNewToday,
+        'free_returning_30d' => $freeReturningToday,
+        'free_returning_available' => $hasPreviousLastSeenColumn,
+        'premium_first_time' => $premiumFirstTimeToday,
+        'premium_renewal' => $premiumRenewalToday,
+        'transfers' => $transfersToday,
+    ];
+
+    // ------------------------------------------------------------------
     // Active users by OS/platform, within the same window, broken down by
     // free vs premium so the frontend can show either or a combined total.
+    // windows_vm (Windows running inside a VM) gets its OWN bucket here -
+    // shown as "VPS"/"سرور مجازی" - rather than being folded into "windows",
+    // since that's meaningfully different infrastructure for support
+    // purposes. macos_wine/linux_wine still drop their _wine suffix (no
+    // ambiguity there - there is no "native-vs-VM" distinction to preserve
+    // for those). The frontend maps each key through os_windows/os_vm/
+    // os_mac/os_linux/os_unknown for the actual label text.
     // ------------------------------------------------------------------
-    $osLabels = ['windows', 'windows_vm', 'macos_wine', 'linux_wine'];
+    $osGroups = [
+        'windows' => ['windows'],
+        'vm' => ['windows_vm'],
+        'mac' => ['macos_wine'],
+        'linux' => ['linux_wine'],
+    ];
     $byOs = [];
-    foreach ($osLabels as $os) {
+    foreach ($osGroups as $label => $rawValues) {
+        $placeholders = implode(',', array_fill(0, count($rawValues), '?'));
+        $types = str_repeat('s', count($rawValues)) . 'ii';
+        $params = array_merge($rawValues, [$sinceTs, $untilTs]);
         $freeCount = $scalar(
-            'SELECT COUNT(*) FROM nutricula_unlicensed_checkins WHERE platform_profile = ? AND last_seen_at >= (NOW() - INTERVAL ? DAY)',
-            ['s', 'i'], [$os, $days]
+            "SELECT COUNT(*) FROM nutricula_unlicensed_checkins WHERE platform_profile IN ($placeholders) AND last_seen_at >= FROM_UNIXTIME(?) AND last_seen_at <= FROM_UNIXTIME(?)",
+            str_split($types), $params
         );
         $premiumCount = $scalar(
-            "SELECT COUNT(*) FROM nutricula_licenses WHERE device_type = ? AND status='active' AND last_seen_at IS NOT NULL AND last_seen_at >= (NOW() - INTERVAL ? DAY)",
-            ['s', 'i'], [$os, $days]
+            "SELECT COUNT(*) FROM nutricula_licenses WHERE device_type IN ($placeholders) AND status='active' AND last_seen_at IS NOT NULL AND last_seen_at >= FROM_UNIXTIME(?) AND last_seen_at <= FROM_UNIXTIME(?)",
+            str_split($types), $params
         );
         $byOs[] = [
-            'platform' => $os,
+            'platform' => $label,
             'free' => $freeCount,
             'premium' => $premiumCount,
             'total' => $freeCount + $premiumCount,
         ];
     }
     // Free rows with no platform_profile at all yet (older Coordinator, or
-    // the export genuinely unavailable) - shown separately rather than
-    // silently dropped, so the OS breakdown's total still reconciles with
-    // free_active_window above.
+    // the export genuinely unavailable), plus anything NOT in one of the
+    // known buckets above (device_type='unknown', or any future/unmapped
+    // value) - shown together rather than silently dropped, so the OS
+    // breakdown's total still reconciles with free_active_window above.
+    $knownRaw = array_merge(...array_values($osGroups));
+    $freePlaceholders = implode(',', array_fill(0, count($knownRaw), '?'));
     $freeUnknownOs = $scalar(
-        'SELECT COUNT(*) FROM nutricula_unlicensed_checkins WHERE platform_profile IS NULL AND last_seen_at >= (NOW() - INTERVAL ? DAY)',
-        ['i'], [$days]
+        "SELECT COUNT(*) FROM nutricula_unlicensed_checkins
+         WHERE (platform_profile IS NULL OR platform_profile NOT IN ($freePlaceholders))
+           AND last_seen_at >= FROM_UNIXTIME(?) AND last_seen_at <= FROM_UNIXTIME(?)",
+        array_merge(str_split(str_repeat('s', count($knownRaw))), ['i', 'i']), array_merge($knownRaw, [$sinceTs, $untilTs])
     );
     $premiumUnknownOs = $scalar(
-        "SELECT COUNT(*) FROM nutricula_licenses WHERE device_type='unknown' AND status='active' AND last_seen_at IS NOT NULL AND last_seen_at >= (NOW() - INTERVAL ? DAY)",
-        ['i'], [$days]
+        "SELECT COUNT(*) FROM nutricula_licenses
+         WHERE device_type NOT IN ($freePlaceholders) AND status='active' AND last_seen_at IS NOT NULL
+           AND last_seen_at >= FROM_UNIXTIME(?) AND last_seen_at <= FROM_UNIXTIME(?)",
+        array_merge(str_split(str_repeat('s', count($knownRaw))), ['i', 'i']), array_merge($knownRaw, [$sinceTs, $untilTs])
     );
     $byOs[] = [
         'platform' => 'unknown',
@@ -193,26 +354,190 @@ try {
     $result['growth_daily'] = $series;
 
     // ------------------------------------------------------------------
-    // Server load proxy - total requests/minute across ALL endpoints, for
-    // the last 60 minutes, straight from the rate-limiting table every
-    // public endpoint already writes to. No shell/SSH access to the box
-    // needed for this.
+    // Server health - what "is the server busy" actually means here is
+    // RESPONSE SPEED, not raw request count (a traffic spike the server is
+    // handling fine is not "busy" in any way that matters; a slowdown at
+    // normal traffic IS). The real signal comes from nutricula_request_timing
+    // - one row per minute, written by license_check.php's own request
+    // timer (see nutricula_record_request_timing() in the public PHP
+    // codebase's license_common.php) via a shutdown-function hook that adds
+    // ZERO latency to the actual response. That table may not exist yet on
+    // an install that hasn't picked up this change - degrade to the old
+    // volume-only view (from nutricula_rate_limits, which every endpoint
+    // already writes to) rather than erroring the whole panel.
     // ------------------------------------------------------------------
-    $loadSeries = [];
-    $stmt = $conn->prepare(
-        'SELECT window_start, SUM(request_count) c FROM nutricula_rate_limits
-         WHERE window_start >= ?
-         GROUP BY window_start ORDER BY window_start ASC'
-    );
-    $since = time() - 3600;
-    $stmt->bind_param('i', $since);
-    $stmt->execute();
-    $res = $stmt->get_result();
-    while ($row = $res->fetch_assoc()) {
-        $loadSeries[] = ['minute' => gmdate('H:i', (int)$row['window_start']), 'requests' => (int)$row['c']];
+    $timingTableExists = (bool)$conn->query("SHOW TABLES LIKE 'nutricula_request_timing'")->num_rows;
+
+    $periodStats = function (int $fromTs, int $toTs) use ($conn): array {
+        $stmt = $conn->prepare(
+            'SELECT COALESCE(SUM(request_count),0) c, COALESCE(SUM(total_duration_ms),0) t
+             FROM nutricula_request_timing WHERE window_start >= ? AND window_start < ?'
+        );
+        $stmt->bind_param('ii', $fromTs, $toTs);
+        $stmt->execute();
+        $row = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+        $count = (int)$row['c'];
+        $totalMs = (int)$row['t'];
+        return ['requests' => $count, 'avg_ms' => $count > 0 ? round($totalMs / $count, 1) : null];
+    };
+
+    if (!$timingTableExists) {
+        // Fallback: the old proxy metric (volume only, last hour only) so
+        // there's still SOMETHING on screen while the new table is missing.
+        $loadSeries = [];
+        $stmt = $conn->prepare(
+            'SELECT window_start, SUM(request_count) c FROM nutricula_rate_limits
+             WHERE window_start >= ? GROUP BY window_start ORDER BY window_start ASC'
+        );
+        $since = time() - 3600;
+        $stmt->bind_param('i', $since);
+        $stmt->execute();
+        $res = $stmt->get_result();
+        while ($row = $res->fetch_assoc()) {
+            $loadSeries[] = ['minute' => gmdate('H:i', (int)$row['window_start']), 'requests' => (int)$row['c'], 'avg_ms' => null];
+        }
+        $stmt->close();
+        $result['server_health'] = [
+            'available' => false,
+            'reason' => 'timing_table_missing',
+            'last_hour' => $loadSeries,
+            'verdict' => 'insufficient_data',
+        ];
+    } else {
+        // Minute-by-minute series for the last hour (volume + avg/max
+        // latency per minute) - the detailed chart.
+        $loadSeries = [];
+        $stmt = $conn->prepare(
+            'SELECT window_start, request_count, total_duration_ms, max_duration_ms
+             FROM nutricula_request_timing WHERE window_start >= ? ORDER BY window_start ASC'
+        );
+        $since = time() - 3600;
+        $stmt->bind_param('i', $since);
+        $stmt->execute();
+        $res = $stmt->get_result();
+        while ($row = $res->fetch_assoc()) {
+            $c = (int)$row['request_count'];
+            $loadSeries[] = [
+                'minute' => gmdate('H:i', (int)$row['window_start']),
+                'requests' => $c,
+                'avg_ms' => $c > 0 ? round(((int)$row['total_duration_ms']) / $c, 1) : null,
+                'max_ms' => (int)$row['max_duration_ms'],
+            ];
+        }
+        $stmt->close();
+
+        // The verdict itself: a SELF-RELATIVE comparison (this server
+        // against its own normal self over the last day), not a hardcoded
+        // millisecond threshold - shared hosting speed varies wildly
+        // install to install, so "280ms is slow" means nothing without a
+        // baseline, but "3x slower than this exact server's last 24h
+        // average" means something everywhere.
+        $recent = $periodStats($nowTs - 900, $nowTs);               // last 15 min
+        $baseline = $periodStats($nowTs - 86400, $nowTs - 900);     // prior ~23h45m
+
+        $latencyRatio = ($recent['avg_ms'] !== null && $baseline['avg_ms'] !== null && $baseline['avg_ms'] > 0)
+            ? $recent['avg_ms'] / $baseline['avg_ms'] : null;
+        $recentPerMin = $recent['requests'] / 15;
+        $baselinePerMin = $baseline['requests'] / ((86400 - 900) / 60);
+        $volumeRatio = $baselinePerMin > 0 ? $recentPerMin / $baselinePerMin : null;
+
+        if ($recent['requests'] < 5 || $baseline['requests'] < 20) {
+            // Too little traffic yet to say anything meaningful - a single
+            // slow request among 3 total would look like a 300% spike.
+            $verdict = 'insufficient_data';
+        } elseif ($latencyRatio !== null && ($latencyRatio >= 2.5 || ($latencyRatio >= 1.8 && $volumeRatio !== null && $volumeRatio >= 1.5))) {
+            $verdict = 'critical';
+        } elseif ($latencyRatio !== null && ($latencyRatio >= 1.4 || ($volumeRatio !== null && $volumeRatio >= 1.8))) {
+            $verdict = 'elevated';
+        } else {
+            $verdict = 'normal';
+        }
+
+        // Period-over-period comparison - PURE rolling durations, nothing
+        // anchored to local midnight or clock time at all (deliberately NOT
+        // "today vs yesterday" by calendar day - "last 24h" here always
+        // means the 24 hours ending THIS SECOND, compared against the 24
+        // hours immediately before that, and likewise for 7d/30d). This is
+        // the one spot in the whole report where the selected timezone is
+        // irrelevant by design.
+        $last24h = $periodStats($nowTs - 86400, $nowTs);
+        $prior24h = $periodStats($nowTs - 2 * 86400, $nowTs - 86400);
+        $last7d = $periodStats($nowTs - 7 * 86400, $nowTs);
+        $prior7d = $periodStats($nowTs - 14 * 86400, $nowTs - 7 * 86400);
+        $last30d = $periodStats($nowTs - 30 * 86400, $nowTs);
+        $prior30d = $periodStats($nowTs - 60 * 86400, $nowTs - 30 * 86400);
+
+        $deltaPct = function (?float $now, ?float $then): ?float {
+            if ($now === null || $then === null || $then == 0.0) return null;
+            return round((($now - $then) / $then) * 100, 1);
+        };
+
+        // Best-effort CPU/RAM pressure - most shared hosts (including this
+        // one's admin subdomain, per its own open_basedir restriction)
+        // block /proc entirely, so every field here can legitimately come
+        // back null. Reported when available rather than assumed.
+        $systemLoad = null;
+        if (function_exists('sys_getloadavg')) {
+            $la = @sys_getloadavg();
+            if (is_array($la) && count($la) === 3) {
+                $systemLoad = ['load_1m' => round($la[0], 2), 'load_5m' => round($la[1], 2), 'load_15m' => round($la[2], 2)];
+            }
+        }
+        $cpuCores = null;
+        if (@is_readable('/proc/cpuinfo')) {
+            $cpuinfoRaw = @file_get_contents('/proc/cpuinfo');
+            if ($cpuinfoRaw !== false) {
+                $cpuCores = substr_count($cpuinfoRaw, "\nprocessor\t:") ?: null;
+            }
+        }
+        $memInfo = null;
+        if (@is_readable('/proc/meminfo')) {
+            $memRaw = @file_get_contents('/proc/meminfo');
+            if ($memRaw) {
+                preg_match('/MemTotal:\s+(\d+)/', $memRaw, $mt);
+                preg_match('/MemAvailable:\s+(\d+)/', $memRaw, $ma);
+                if ($mt && $ma) {
+                    $totalMb = (int)round(((int)$mt[1]) / 1024);
+                    $availMb = (int)round(((int)$ma[1]) / 1024);
+                    $memInfo = [
+                        'total_mb' => $totalMb,
+                        'available_mb' => $availMb,
+                        'used_pct' => $totalMb > 0 ? round((($totalMb - $availMb) / $totalMb) * 100, 1) : null,
+                    ];
+                }
+            }
+        }
+
+        $result['server_health'] = [
+            'available' => true,
+            'last_hour' => $loadSeries,
+            'recent_15m' => $recent,
+            'baseline_24h' => $baseline,
+            'latency_ratio' => $latencyRatio !== null ? round($latencyRatio, 2) : null,
+            'volume_ratio' => $volumeRatio !== null ? round($volumeRatio, 2) : null,
+            'verdict' => $verdict,
+            'comparison' => [
+                'last_24h' => $last24h,
+                'prior_24h' => $prior24h,
+                'last_7d' => $last7d,
+                'prior_7d' => $prior7d,
+                'last_30d' => $last30d,
+                'prior_30d' => $prior30d,
+                'requests_24h_pct' => $deltaPct((float)$last24h['requests'], (float)$prior24h['requests']),
+                'requests_7d_pct' => $deltaPct((float)$last7d['requests'], (float)$prior7d['requests']),
+                'requests_30d_pct' => $deltaPct((float)$last30d['requests'], (float)$prior30d['requests']),
+                'latency_24h_pct' => $deltaPct($last24h['avg_ms'], $prior24h['avg_ms']),
+                'latency_7d_pct' => $deltaPct($last7d['avg_ms'], $prior7d['avg_ms']),
+                'latency_30d_pct' => $deltaPct($last30d['avg_ms'], $prior30d['avg_ms']),
+            ],
+            'system' => [
+                'load' => $systemLoad,
+                'cpu_cores' => $cpuCores,
+                'memory' => $memInfo,
+            ],
+        ];
     }
-    $stmt->close();
-    $result['server_load_last_hour'] = $loadSeries;
 
     // ------------------------------------------------------------------
     // Free -> Premium conversion. A "conversion" is detected when a
@@ -233,12 +558,12 @@ try {
     );
     $convertedInWindow = $scalar(
         'SELECT COUNT(*) FROM nutricula_licenses lic
-         WHERE lic.created_at >= (NOW() - INTERVAL ? DAY)
+         WHERE lic.created_at >= FROM_UNIXTIME(?) AND lic.created_at <= FROM_UNIXTIME(?)
            AND EXISTS (
              SELECT 1 FROM nutricula_unlicensed_checkins u
              WHERE u.machine_id = lic.machine_id AND u.first_seen_at < lic.created_at
          )',
-        ['i'], [$days]
+        ['i', 'i'], [$sinceTs, $untilTs]
     );
     $avgDaysRow = $conn->query(
         'SELECT AVG(DATEDIFF(lic.created_at, u.first_seen_at)) a
@@ -267,22 +592,26 @@ try {
     $latestVersion = $latestRow ? (string)$latestRow['version'] : null;
 
     $adoptionRows = [];
-    $res = $conn->query(
+    $stmt = $conn->prepare(
         "SELECT COALESCE(m.version, 'unknown') version,
                 SUM(CASE WHEN src = 'free' THEN 1 ELSE 0 END) free_count,
-                SUM(CASE WHEN src = 'premium' THEN 1 ELSE 0 END) premium_count
+                SUM(CASE WHEN src = 'premium' THEN 1 ELSE 0 END) premium_count,
+                SUM(CASE WHEN src = 'free' THEN 1 ELSE 0 END) + SUM(CASE WHEN src = 'premium' THEN 1 ELSE 0 END) total_count
          FROM (
              SELECT last_build_id, 'free' src FROM nutricula_unlicensed_checkins
-             WHERE last_seen_at >= (NOW() - INTERVAL $days DAY) AND last_build_id IS NOT NULL
+             WHERE last_seen_at >= FROM_UNIXTIME(?) AND last_seen_at <= FROM_UNIXTIME(?) AND last_build_id IS NOT NULL
              UNION ALL
              SELECT last_build_id, 'premium' src FROM nutricula_licenses
              WHERE status='active' AND last_seen_at IS NOT NULL
-               AND last_seen_at >= (NOW() - INTERVAL $days DAY) AND last_build_id IS NOT NULL
+               AND last_seen_at >= FROM_UNIXTIME(?) AND last_seen_at <= FROM_UNIXTIME(?) AND last_build_id IS NOT NULL
          ) t
          LEFT JOIN nutricula_build_manifests m ON m.build_id = t.last_build_id
          GROUP BY COALESCE(m.version, 'unknown')
-         ORDER BY free_count + premium_count DESC"
+         ORDER BY total_count DESC"
     );
+    $stmt->bind_param('iiii', $sinceTs, $untilTs, $sinceTs, $untilTs);
+    $stmt->execute();
+    $res = $stmt->get_result();
     $totalWithBuildInfo = 0;
     $onLatestCount = 0;
     while ($row = $res->fetch_assoc()) {
@@ -297,6 +626,7 @@ try {
             'is_latest' => $latestVersion !== null && $row['version'] === $latestVersion,
         ];
     }
+    $stmt->close();
     $result['build_adoption'] = [
         'latest_version' => $latestVersion,
         'rows' => $adoptionRows,
@@ -326,10 +656,10 @@ try {
     $topByFailures = [];
     $stmt = $conn->prepare(
         "SELECT observed_ip, COUNT(*) c FROM nutricula_license_activity
-         WHERE reason IS NOT NULL AND occurred_at >= (NOW() - INTERVAL ? DAY)
+         WHERE reason IS NOT NULL AND occurred_at >= FROM_UNIXTIME(?) AND occurred_at <= FROM_UNIXTIME(?)
          GROUP BY observed_ip ORDER BY c DESC LIMIT 15"
     );
-    $stmt->bind_param('i', $days);
+    $stmt->bind_param('ii', $sinceTs, $untilTs);
     $stmt->execute();
     $res = $stmt->get_result();
     while ($row = $res->fetch_assoc()) { $topByFailures[] = ['ip' => (string)$row['observed_ip'], 'failed_attempts' => (int)$row['c']]; }
@@ -362,12 +692,12 @@ try {
     $tokenSuspiciousNow = $scalar('SELECT COUNT(*) FROM nutricula_licenses WHERE token_suspicious = 1');
 
     $verifyTotal = $scalar(
-        "SELECT COUNT(*) FROM nutricula_license_activity WHERE request_type='verify' AND occurred_at >= (NOW() - INTERVAL ? DAY)",
-        ['i'], [$days]
+        "SELECT COUNT(*) FROM nutricula_license_activity WHERE request_type='verify' AND occurred_at >= FROM_UNIXTIME(?) AND occurred_at <= FROM_UNIXTIME(?)",
+        ['i', 'i'], [$sinceTs, $untilTs]
     );
     $verifyOk = $scalar(
-        "SELECT COUNT(*) FROM nutricula_license_activity WHERE request_type='verify' AND reason IS NULL AND occurred_at >= (NOW() - INTERVAL ? DAY)",
-        ['i'], [$days]
+        "SELECT COUNT(*) FROM nutricula_license_activity WHERE request_type='verify' AND reason IS NULL AND occurred_at >= FROM_UNIXTIME(?) AND occurred_at <= FROM_UNIXTIME(?)",
+        ['i', 'i'], [$sinceTs, $untilTs]
     );
 
     $result['health'] = [

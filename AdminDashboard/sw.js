@@ -6,7 +6,7 @@
 // instantly when you open the installed PWA, before the first live fetch
 // completes.
 
-const CACHE_NAME = 'nutricula-admin-shell-v3';
+const CACHE_NAME = 'nutricula-admin-shell-v22';
 const SHELL_FILES = [
   './',
   './index.html',
@@ -15,6 +15,7 @@ const SHELL_FILES = [
   './manifest.json',
   './icon-192.png',
   './icon-512.png',
+  './vendor/chart.umd.min.js',
   './fonts/estedad-400.woff2',
   './fonts/estedad-500.woff2',
   './fonts/estedad-600.woff2',

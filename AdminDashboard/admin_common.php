@@ -4,6 +4,24 @@ declare(strict_types=1);
 
 date_default_timezone_set('UTC');
 
+/* Security headers on every admin_*.php response (defense in depth - the
+   SAME headers are also set via .htaccess for the static files .htaccess
+   covers, so this is a belt-and-suspenders duplicate for the PHP endpoints
+   specifically, in case mod_headers or the .htaccess itself is ever
+   unavailable on a given host). Sent unconditionally, before any endpoint
+   does anything else, since this file is require_once'd first by every
+   one of them. See .htaccess for the fuller explanation of each header. */
+function nutricula_admin_security_headers(): void
+{
+    header('X-Frame-Options: DENY');
+    header('X-Content-Type-Options: nosniff');
+    header('Referrer-Policy: no-referrer');
+    header("Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'");
+    header('Permissions-Policy: geolocation=(), microphone=(), camera=(), payment=()');
+    header('Cache-Control: no-store');
+}
+nutricula_admin_security_headers();
+
 /* admin_common.php - shared bootstrap for every admin_*.php endpoint.
    Deliberately self-contained (does NOT require() the public license
    system's license_common.php) even though both ultimately talk to the
@@ -33,7 +51,7 @@ date_default_timezone_set('UTC');
 // system) - if a visitor can fetch this file's raw contents over HTTP, the
 // DB password and the admin password hash are both compromised.
 // ============================================================================
-const ADMIN_CONFIG_PATH = '/home/nutricul/domains/dashboardpanel158.nutriculaexpert.com/Private/admin_panel_config.php';
+const ADMIN_CONFIG_PATH = '/home/nutricul/domains/panel.nutriculaexpert.com/Private/admin_panel_config.php';
 
 function nutricula_admin_load_config(): array
 {
@@ -86,7 +104,16 @@ function nutricula_admin_start_session(array $config): void
         'domain' => '',           // current host only (the admin subdomain itself)
         'secure' => true,         // never sent over plain HTTP
         'httponly' => true,       // never readable from JS - defeats a stray XSS reading the cookie
-        'samesite' => 'Strict',   // never sent on a cross-site request at all
+        // 'Strict' (the obvious "safest" choice) is known to misbehave on
+        // mobile/PWA home-screen launches in some WebKit/Chromium builds -
+        // the very first request after such a launch can be treated as a
+        // top-level cross-site navigation and silently drop the cookie,
+        // which looks exactly like "login works for a second, then bounces
+        // back to the password screen". 'Lax' still blocks the cookie on
+        // any cross-site POST/fetch (the only thing that matters here,
+        // since every mutating endpoint also requires its own CSRF header
+        // regardless of cookie policy), so this loses no real protection.
+        'samesite' => 'Lax',
     ]);
     session_start();
 }
