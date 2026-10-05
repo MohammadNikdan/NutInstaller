@@ -1,0 +1,763 @@
+/* ============================================================================
+   Nutricula Admin Panel — light, modern, bilingual (fa/en) theme.
+   Persian  -> Estedad   (fonts/estedad-*.woff2)
+   English  -> Outfit    (fonts/outfit-*.woff2 — same family used by the
+                           installer elsewhere in this repo)
+   ========================================================================= */
+
+@font-face {
+  font-family: 'Estedad';
+  src: url('fonts/estedad-400.woff2') format('woff2');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Estedad';
+  src: url('fonts/estedad-500.woff2') format('woff2');
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Estedad';
+  src: url('fonts/estedad-600.woff2') format('woff2');
+  font-weight: 600;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Estedad';
+  src: url('fonts/estedad-700.woff2') format('woff2');
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Outfit';
+  src: url('fonts/outfit-400.woff2') format('woff2');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Outfit';
+  src: url('fonts/outfit-500.woff2') format('woff2');
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Outfit';
+  src: url('fonts/outfit-600.woff2') format('woff2');
+  font-weight: 600;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Outfit';
+  src: url('fonts/outfit-700.woff2') format('woff2');
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+:root {
+  /* ---- Light, luxurious palette ---- */
+  --bg-1: #f3f5f1;
+  --bg-2: #eef3ee;
+  --surface: #ffffff;
+  --surface-soft: #fbfbf9;
+  --surface-sunken: #f4f6f4;
+  --border: rgba(23, 35, 30, 0.09);
+  --border-strong: rgba(23, 35, 30, 0.16);
+
+  --text: #1b2420;
+  --text-soft: #43534c;
+  --muted: #7a8780;
+
+  /* Brand navy, sampled from the installer's own jellyfish icon - the
+     panel's general-purpose accent (buttons, focus rings, links). It does
+     NOT mean "active"/"healthy" - that's --success, below. */
+  --accent: #211e63;
+  --accent-ink: #ffffff;
+  --accent-soft: #eceafa;
+  --accent-strong: #15123f;
+  --gold: #b68a2e;
+  --gold-soft: #faf2df;
+
+  /* Green is reserved for "active" / "healthy" / "good standing" signals
+     only (see .badge.ok) - never used as the general brand/button color. */
+  --success: #0f9d73;
+  --success-soft: #e4f5ed;
+  --success-strong: #0b7f5d;
+
+  /* Red is reserved for errors / banned / failure states only. */
+  --danger: #d8485a;
+  --danger-soft: #fbe9ea;
+  --danger-strong: #b5323f;
+
+  /* Amber - a "between normal and critical" signal, used only by the
+     server-health verdict banner's "elevated" state. */
+  --warning: #c98a1f;
+  --warning-soft: #fbf1df;
+  --warning-strong: #96650f;
+
+  --info: #3b82c4;
+
+  --radius-lg: 22px;
+  --radius-md: 14px;
+  --radius-sm: 10px;
+
+  --shadow-xs: 0 1px 2px rgba(20, 30, 25, 0.05);
+  --shadow-sm: 0 2px 8px rgba(20, 30, 25, 0.06);
+  --shadow-md: 0 10px 30px -12px rgba(20, 35, 28, 0.18);
+  --shadow-lg: 0 24px 60px -20px rgba(20, 35, 28, 0.28);
+
+  --font-fa: 'Estedad', 'Segoe UI', Tahoma, sans-serif;
+  --font-en: 'Outfit', 'Segoe UI', sans-serif;
+
+  font-family: var(--font-fa);
+  color-scheme: light;
+}
+
+html[lang="en"] { font-family: var(--font-en); }
+html[lang="en"] body { font-family: var(--font-en); }
+html[lang="fa"] body { font-family: var(--font-fa); }
+
+/* Only the three action buttons below ("Refresh", "Search" x2, "Add this
+   device") read as too heavy in Persian - Estedad's weights simply land
+   heavier than Outfit's at the same numeric weight. Lightened only for
+   those, not the whole page; the root font-size is left completely alone. */
+html[lang="fa"] .btn.primary {
+  font-weight: 400;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  min-height: 100vh;
+  color: var(--text);
+}
+
+body {
+  background:
+    radial-gradient(1100px 500px at 15% -10%, rgba(15, 157, 115, 0.10), transparent 60%),
+    radial-gradient(900px 500px at 110% 10%, rgba(182, 138, 46, 0.08), transparent 55%),
+    linear-gradient(180deg, var(--bg-1), var(--bg-2));
+  background-attachment: fixed;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+::selection { background: var(--accent); color: #fff; }
+
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 999px; }
+::-webkit-scrollbar-thumb:hover { background: var(--muted); }
+
+.screen { min-height: 100vh; }
+
+/* The [hidden] rule must win over any later, more specific selector below
+   (e.g. #loginScreen{display:flex}) — without !important here, an ID
+   selector elsewhere beats the UA's default `[hidden]{display:none}` and
+   BOTH screens stay visible/stacked at once. This was the bug where the
+   dashboard rendered underneath the still-visible login card. */
+.screen[hidden] { display: none !important; }
+/* Same reasoning for the two login-screen views (#fingerprintCard /
+   #loginForm), which are toggled the same way and whose own .login-card
+   rule likewise sets "display: flex". */
+.login-card[hidden] { display: none !important; }
+
+/* ---------- Login ---------- */
+#loginScreen {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  position: relative;
+  overflow: hidden;
+}
+
+.login-orb {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+}
+.login-orb::before,
+.login-orb::after {
+  content: '';
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(60px);
+  opacity: 0.55;
+}
+.login-orb::before {
+  width: 420px; height: 420px;
+  top: -140px; inset-inline-start: -120px;
+  background: radial-gradient(circle, rgba(33,30,99,0.35), transparent 70%);
+}
+.login-orb::after {
+  width: 380px; height: 380px;
+  bottom: -160px; inset-inline-end: -100px;
+  background: radial-gradient(circle, rgba(182,138,46,0.28), transparent 70%);
+}
+
+.login-card {
+  position: relative;
+  z-index: 1;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 40px 34px 32px;
+  width: 100%;
+  max-width: 400px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  box-shadow: var(--shadow-lg);
+}
+
+.login-mark {
+  /* .login-card is a column flexbox with no align-items set, so this fixed-
+     width box defaults to flush against the card's start edge (left in
+     English, right in Persian) - "stuck in a corner" - instead of sitting
+     in the middle above the centered-looking heading text. align-self
+     overrides just this one item, without touching how the full-width
+     heading/inputs/buttons around it lay out. */
+  align-self: center;
+  width: 56px; height: 56px;
+  border-radius: 16px;
+  display: flex; align-items: center; justify-content: center;
+  box-shadow: 0 10px 24px -8px rgba(33,30,99,0.55);
+  margin-bottom: 6px;
+  overflow: hidden;
+}
+.login-mark img { width: 100%; height: 100%; object-fit: cover; display: block; }
+
+.login-card h1 {
+  font-size: 1.35rem;
+  font-weight: 500;
+  /* Extra room below the title specifically - .login-card's own flex "gap"
+     already spaces every child evenly, but with the old subtitle paragraph
+     gone, the title now sits right above the first field/button with only
+     that base gap, which reads as cramped against a heading. */
+  margin: 0 0 10px;
+  letter-spacing: -0.01em;
+  text-align: center;
+}
+
+/* Persian-only: smaller + the heaviest available Estedad weight (700), as
+   a test to compare against the English title's own size/weight. */
+html[lang="fa"] .login-card h1 {
+  font-size: 1.1rem;
+  font-weight: 700;
+}
+
+.login-card .field-wrap {
+  position: relative;
+}
+
+.login-card input {
+  width: 100%;
+  background: var(--surface-sunken);
+  border: 1.5px solid var(--border);
+  color: var(--text);
+  padding: 14px 16px;
+  border-radius: var(--radius-sm);
+  font-size: 1rem;
+  font-family: inherit;
+  transition: border-color 0.18s ease, box-shadow 0.18s ease, background 0.18s ease;
+}
+.login-card input:focus {
+  outline: none;
+  border-color: var(--accent);
+  background: var(--surface);
+  box-shadow: 0 0 0 4px var(--accent-soft);
+}
+
+.toggle-visibility {
+  position: absolute;
+  inset-inline-end: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 8px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.toggle-visibility:hover { color: var(--text); background: var(--surface-sunken); }
+
+.captcha-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.captcha-img {
+  flex: 1;
+  height: 48px;
+  border-radius: var(--radius-sm);
+  border: 1.5px solid var(--border);
+  background: var(--surface-sunken);
+  object-fit: cover;
+}
+.captcha-refresh {
+  flex: none;
+  width: 48px;
+  height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--surface-sunken);
+  border: 1.5px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--muted);
+  cursor: pointer;
+  transition: color 0.18s ease, border-color 0.18s ease;
+}
+.captcha-refresh:hover { color: var(--text); border-color: var(--accent); }
+.captcha-refresh:active svg { transform: rotate(-90deg); }
+.captcha-refresh svg { transition: transform 0.25s ease; }
+
+.login-card button[type="submit"] {
+  background: linear-gradient(145deg, var(--accent), var(--accent-strong));
+  color: #fff;
+  border: none;
+  padding: 14px 16px;
+  border-radius: var(--radius-sm);
+  font-weight: 500;
+  font-size: 1rem;
+  font-family: inherit;
+  cursor: pointer;
+  margin-top: 4px;
+  box-shadow: 0 10px 24px -10px rgba(33,30,99,0.6);
+  transition: transform 0.15s ease, box-shadow 0.15s ease, filter 0.15s ease;
+}
+.login-card button[type="submit"]:hover { filter: brightness(1.04); transform: translateY(-1px); box-shadow: 0 14px 28px -10px rgba(33,30,99,0.65); }
+.login-card button[type="submit"]:active { transform: translateY(0); }
+
+.divider {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--muted);
+  font-size: 0.78rem;
+  margin: 2px 0;
+}
+.divider::before, .divider::after { content: ''; flex: 1; height: 1px; background: var(--border); }
+
+.btn-passkey {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  background: var(--surface-sunken);
+  border: 1.5px solid var(--border);
+  color: var(--text);
+  padding: 13px 16px;
+  border-radius: var(--radius-sm);
+  font-weight: 500;
+  font-size: 0.92rem;
+  font-family: inherit;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+.btn-passkey:hover { border-color: var(--accent); background: var(--accent-soft); }
+
+/* The big primary action on the fingerprint-first login view. */
+.btn-passkey--primary {
+  background: linear-gradient(145deg, var(--accent), var(--accent-strong));
+  color: #fff;
+  border: none;
+  padding: 16px;
+  font-size: 1rem;
+  box-shadow: 0 10px 24px -10px rgba(33,30,99,0.6);
+  margin-top: 4px;
+}
+.btn-passkey--primary:hover { border-color: transparent; background: linear-gradient(145deg, var(--accent), var(--accent-strong)); filter: brightness(1.05); }
+
+.link-btn {
+  background: none;
+  border: none;
+  color: var(--muted);
+  font-family: inherit;
+  font-size: 0.86rem;
+  font-weight: 400;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+  padding: 6px;
+  align-self: center;
+}
+.link-btn:hover { color: var(--text); }
+
+.passkey-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 4px;
+  border-bottom: 1px solid var(--border);
+}
+.passkey-row:last-child { border-bottom: none; }
+.passkey-row .meta { display: flex; flex-direction: column; gap: 2px; }
+.passkey-row .meta .name { font-weight: 500; font-size: 0.92rem; }
+.passkey-row .meta .dates { color: var(--muted); font-size: 0.76rem; }
+
+.error-text {
+  color: var(--danger-strong);
+  background: var(--danger-soft);
+  border: 1px solid rgba(216, 72, 90, 0.25);
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  margin: 0;
+  font-size: 0.86rem;
+}
+.muted { color: var(--muted); }
+.small { font-size: 0.8rem; }
+
+.lang-switch {
+  position: fixed;
+  top: 16px;
+  inset-inline-end: 16px;
+  z-index: 20;
+  display: flex;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 4px;
+  box-shadow: var(--shadow-sm);
+}
+.lang-switch button {
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  font-family: inherit;
+  font-size: 0.78rem;
+  font-weight: 500;
+  padding: 6px 14px;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+.lang-switch button.active {
+  background: linear-gradient(145deg, var(--accent), var(--accent-strong));
+  color: #fff;
+}
+/* On the dashboard the switch lives inline in the topbar (see
+   #langSwitchInline) instead of floating - floating it there used to sit
+   directly on top of the logout button at the end of the topbar row,
+   hiding it completely. */
+.lang-switch--inline {
+  position: static;
+  box-shadow: none;
+}
+/* Same bug class as .screen[hidden] earlier: .lang-switch's own
+   "display: flex" (an author rule) beats the browser's default
+   "[hidden] { display: none }" (a lower-priority UA rule) even when the
+   element's hidden attribute is set via JS - so the floating login-screen
+   switch stayed on screen, sitting on top of the logout button. */
+.lang-switch[hidden] { display: none; }
+
+/* ---------- Topbar ---------- */
+.topbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 28px;
+  border-bottom: 1px solid var(--border);
+  position: sticky;
+  top: 0;
+  background: rgba(255, 255, 255, 0.78);
+  backdrop-filter: blur(14px) saturate(140%);
+  -webkit-backdrop-filter: blur(14px) saturate(140%);
+  z-index: 10;
+}
+.topbar h1 {
+  font-size: 1.1rem;
+  font-weight: 500;
+  margin: 0;
+  letter-spacing: -0.01em;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.topbar h1::before {
+  content: '';
+  width: 10px; height: 10px;
+  border-radius: 3px;
+  background: linear-gradient(145deg, var(--accent), var(--gold));
+  display: inline-block;
+}
+.topbar-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.field-inline { display: flex; align-items: center; gap: 8px; font-size: 0.84rem; color: var(--muted); font-weight: 400; }
+
+select, .btn {
+  background: var(--surface);
+  border: 1.5px solid var(--border);
+  color: var(--text);
+  padding: 9px 14px;
+  border-radius: 999px;
+  font-size: 0.84rem;
+  font-family: inherit;
+  cursor: pointer;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease, background 0.15s ease, color 0.15s ease, transform 0.1s ease;
+}
+select:hover, .btn:hover { border-color: var(--accent); }
+select:focus, .btn:focus-visible { outline: none; box-shadow: 0 0 0 4px var(--accent-soft); border-color: var(--accent); }
+
+/* Custom dropdown arrow, pulled in from the edge with real breathing room
+   (the native arrow used to sit flush against the field's border). */
+select {
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  padding-inline-end: 38px;
+  background-repeat: no-repeat;
+  background-size: 11px 7px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='11' height='7' viewBox='0 0 11 7'%3E%3Cpath d='M1 1l4.5 4.5L10 1' fill='none' stroke='%237a8780' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+}
+html[dir="ltr"] select { background-position: right 14px center; }
+html[dir="rtl"] select { background-position: left 14px center; }
+
+.btn { font-weight: 500; }
+.btn:active { transform: translateY(1px); }
+.btn.primary {
+  background: linear-gradient(145deg, var(--accent), var(--accent-strong));
+  color: #fff;
+  border-color: transparent;
+  box-shadow: var(--shadow-sm);
+}
+.btn.primary:hover { filter: brightness(1.05); }
+.btn.ghost { background: transparent; }
+.btn.danger { border-color: rgba(216,72,90,0.4); color: var(--danger-strong); }
+.btn.danger:hover { background: var(--danger-soft); border-color: var(--danger); }
+.btn.small { padding: 6px 12px; font-size: 0.76rem; }
+
+/* Deliberately NOT a plain .ghost button - on the glassy topbar a borderless/
+   near-transparent button was too low-contrast to register as a button at
+   all. Logout is rare but important to find, so it gets its own clearly
+   visible (if muted) treatment plus an icon. */
+.btn-logout {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border-color: var(--border-strong);
+  color: var(--danger-strong);
+  background: var(--surface);
+}
+.btn-logout:hover { background: var(--danger-soft); border-color: var(--danger); }
+
+main {
+  padding: 24px 28px 64px;
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+  max-width: 1180px;
+  margin: 0 auto;
+}
+
+/* ---------- Summary cards ---------- */
+.cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 14px;
+}
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 18px 18px 16px;
+  box-shadow: var(--shadow-xs);
+  transition: box-shadow 0.2s ease, transform 0.2s ease, border-color 0.2s ease;
+  position: relative;
+  overflow: hidden;
+  /* Cards in the same row are already stretched to equal height by .cards'
+     grid - without this, each card's own content just block-flows from the
+     top, so a card with a "sub" (percentage) line ends up taller than one
+     without, and the sub lines of cards sitting side by side land at
+     different heights instead of all hugging the bottom edge. */
+  display: flex;
+  flex-direction: column;
+}
+.card::before {
+  content: '';
+  position: absolute;
+  inset-inline-start: 0; top: 0; bottom: 0;
+  width: 3px;
+  background: linear-gradient(180deg, var(--accent), var(--gold));
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+.card:hover {
+  box-shadow: var(--shadow-md);
+  transform: translateY(-2px);
+  border-color: var(--border-strong);
+}
+.card:hover::before { opacity: 1; }
+/* Fixed height for EXACTLY 2 lines, regardless of whether this particular
+   card's title actually needs 1, 2 or 3 - without clamping the long titles
+   too, a min-height alone only fixed the short ones: any title wrapping to
+   a 3rd line still grew taller than its siblings and pushed that one
+   card's number down below the others in the same row. The clamp (with a
+   fade instead of a hard cut, so a truncated title doesn't look chopped
+   off) keeps every label box the same height, so every value in the row
+   starts at the exact same baseline no matter how long its title is. */
+.card .label {
+  color: var(--muted);
+  font-size: 0.78rem;
+  line-height: 1.4;
+  height: calc(0.78rem * 1.4 * 2);
+  margin-bottom: 8px;
+  font-weight: 400;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.card .value { font-size: 1.65rem; font-weight: 500; letter-spacing: -0.01em; }
+.card .sub { color: var(--muted); font-size: 0.74rem; margin-top: auto; padding-top: 10px; }
+
+/* The percent sign in a small "sub" caption (e.g. "٪45 of active total") -
+   only a little smaller than the number next to it, since the caption's
+   own font is already small; nowhere near as small as .pct-sign below,
+   which shrinks the sign against a big standalone card value instead. */
+.pct-sign-sub { font-size: 0.75em; font-weight: 600; }
+
+/* The % / ٪ sign on a big standalone number (card values, health metrics) -
+   much smaller than the number it belongs to. Only used where fmtPct()
+   builds the string (app.js); the smaller "sub" captions use .pct-sign-sub
+   above instead, with a much milder size difference. English keeps the
+   sign on the baseline; Persian's ٪ glyph sits low in its own box at this
+   size, so it's nudged up slightly to visually center against the digits -
+   English is unaffected. */
+.pct-sign { font-size: 0.5em; font-weight: 600; }
+html[lang="fa"] .pct-sign { font-size: 0.62em; position: relative; top: -0.08em; }
+
+/* ---------- Panels ---------- */
+.panel {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 22px;
+  box-shadow: var(--shadow-xs);
+}
+.panel-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16px;
+}
+.panel-head h2 {
+  font-size: 1rem;
+  font-weight: 400;
+  margin: 0;
+  letter-spacing: -0.005em;
+}
+.panel-controls { display: flex; gap: 8px; flex-wrap: wrap; }
+
+.search-row { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 14px; }
+.search-row input {
+  flex: 1 1 240px;
+  background: var(--surface-sunken);
+  border: 1.5px solid var(--border);
+  color: var(--text);
+  padding: 11px 14px;
+  border-radius: var(--radius-sm);
+  font-family: inherit;
+  font-size: 0.9rem;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
+}
+.search-row input:focus {
+  outline: none;
+  border-color: var(--accent);
+  background: var(--surface);
+  box-shadow: 0 0 0 4px var(--accent-soft);
+}
+
+table { width: 100%; border-collapse: collapse; font-size: 0.84rem; }
+th, td { text-align: start; padding: 11px 10px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+th { color: var(--muted); font-weight: 500; font-size: 0.76rem; text-transform: uppercase; letter-spacing: 0.03em; }
+tbody tr { transition: background 0.12s ease; }
+tbody tr:hover { background: var(--surface-sunken); }
+tbody tr:last-child td { border-bottom: none; }
+.table-wrap { overflow-x: auto; border-radius: var(--radius-sm); }
+
+.badge { display: inline-block; padding: 4px 11px; border-radius: 999px; font-size: 0.72rem; font-weight: 500; }
+.badge.ok { background: var(--success-soft); color: var(--success-strong); }
+.badge.banned { background: var(--danger-soft); color: var(--danger-strong); }
+
+.pager { display: flex; gap: 10px; align-items: center; margin-top: 14px; font-size: 0.82rem; color: var(--muted); }
+
+.empty-state { color: var(--muted); font-size: 0.86rem; padding: 18px 0; text-align: center; }
+
+/* Server-health report (admin_stats.php's server_health block) */
+.verdict-banner {
+  border-radius: var(--radius-sm);
+  padding: 14px 16px;
+  margin-bottom: 16px;
+  border: 1.5px solid var(--border);
+  background: var(--surface-sunken);
+}
+.verdict-title { font-weight: 500; font-size: 0.95rem; color: var(--text); }
+.verdict-detail { font-size: 0.8rem; color: var(--text-soft); margin-top: 4px; }
+.verdict-banner.verdict-normal { background: var(--success-soft); border-color: rgba(15,157,115,0.3); }
+.verdict-banner.verdict-normal .verdict-title { color: var(--success-strong); }
+.verdict-banner.verdict-elevated { background: var(--warning-soft); border-color: rgba(201,138,31,0.35); }
+.verdict-banner.verdict-elevated .verdict-title { color: var(--warning-strong); }
+.verdict-banner.verdict-critical { background: var(--danger-soft); border-color: rgba(216,72,90,0.35); }
+.verdict-banner.verdict-critical .verdict-title { color: var(--danger-strong); }
+.verdict-banner.verdict-insufficient_data,
+.verdict-banner.verdict-undefined { color: var(--muted); }
+.verdict-banner.verdict-insufficient_data .verdict-title { color: var(--muted); }
+
+.health-comparison { margin-top: 18px; overflow-x: auto; }
+.health-table th, .health-table td { white-space: nowrap; }
+.delta-up { color: var(--danger-strong); font-weight: 500; }
+.delta-down { color: var(--success-strong); font-weight: 500; }
+.health-note { margin-top: 8px; }
+
+/* These three stat cards (system load / CPU cores / RAM) are plain .card
+   elements (see "Summary cards" above) - same markup, same label/value/sub
+   type scale as every other card in the dashboard. .health-system only
+   adds the separator from the chart/table above it; .cards supplies the
+   actual card grid. */
+.health-system {
+  margin-top: 18px;
+  padding-top: 18px;
+  border-top: 1px solid var(--border);
+}
+
+@media (max-width: 720px) {
+  .topbar { padding: 14px 16px; }
+  main { padding: 18px 16px 48px; }
+}
+@media (max-width: 560px) {
+  .topbar { flex-direction: column; align-items: stretch; }
+  .topbar-actions { justify-content: space-between; }
+  /* This USED to also force #langSwitch (the floating login-screen pill,
+     not the dashboard's own already-static .lang-switch--inline copy) out
+     of "position: fixed" into normal document flow. On the login screen
+     that put it as a sibling ABOVE #loginScreen, taking up real layout
+     height there for the first time - exposing a strip of <body>'s own
+     background (which carries a faint green-tinted gradient meant to peek
+     out only at the very top/corner of the viewport) as a stray colored
+     bar above the login card, on whichever phone/viewport-height
+     combination made that gap visible. Removed - the login switch now
+     stays "position: fixed" (floating, out of flow) at every width, same
+     as it already correctly behaves on desktop. */
+}
