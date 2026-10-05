@@ -6006,7 +6006,12 @@ void EnsureCoordinatorRunning()
         STARTUPINFOW si;
         ZeroMemory(&si, sizeof(si));
         si.cb = sizeof(si);
-        si.dwFlags = STARTF_USESHOWWINDOW;
+        // STARTF_FORCEOFFFEEDBACK: without it Windows shows the "app starting"
+        // busy cursor (arrow + spinning ring) for a few seconds every time this
+        // launches the (windowless) Broker - including the relaunch attempts that
+        // are made whenever the Coordinator is momentarily unreachable. The user
+        // should never see any sign of background work.
+        si.dwFlags = STARTF_USESHOWWINDOW | STARTF_FORCEOFFFEEDBACK;
         si.wShowWindow = SW_HIDE;
         PROCESS_INFORMATION pi;
         ZeroMemory(&pi, sizeof(pi));
