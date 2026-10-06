@@ -1340,7 +1340,11 @@ static bool SaveDeviceKeyBlob(const std::vector<unsigned char>& privateBlob) {
         SecureZeroMemory(wrapKey, sizeof(wrapKey));
     }
 
-    std::wstring temp = path + L".tmp";
+    // Atomic write (2026): unique temp file in the SAME directory, flushed to
+    // disk, then swapped over the real file in ONE step (MoveFileEx with
+    // REPLACE_EXISTING) - a reader/crash can only ever see the complete old
+    // file or the complete new one, never a partial or missing file.
+    std::wstring temp = path + L".tmp_" + std::to_wstring(GetCurrentProcessId()) + L"_" + std::to_wstring(GetTickCount64());
     HANDLE h = CreateFileW(temp.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
     if (h == INVALID_HANDLE_VALUE) return false;
     DWORD written = 0;
@@ -1353,10 +1357,11 @@ static bool SaveDeviceKeyBlob(const std::vector<unsigned char>& privateBlob) {
     if (ok) ok = WriteFile(h, tag, sizeof(tag), &written, nullptr) && written == sizeof(tag);
     if (ok) ok = WriteFile(h, &wrappedLen, sizeof(wrappedLen), &written, nullptr) && written == sizeof(wrappedLen);
     if (ok && wrappedLen) ok = WriteFile(h, wrapped.data(), wrappedLen, &written, nullptr) && written == wrappedLen;
+    if (ok) ok = FlushFileBuffers(h) != 0;
     CloseHandle(h);
     if (!ok) { DeleteFileW(temp.c_str()); return false; }
-    DeleteFileW(path.c_str());
-    return MoveFileW(temp.c_str(), path.c_str()) != 0;
+    if (!MoveFileExW(temp.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) { DeleteFileW(temp.c_str()); return false; }
+    return true;
 }
 
 static bool LoadDeviceKeyBlob(std::vector<unsigned char>& privateBlob) {
