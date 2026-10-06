@@ -69,6 +69,12 @@ struct ParsedResponse
     // Server Signature قابل اعتبارسنجی... verify کند."
     std::string rawCanonical;         // valid if kind == Rejected or Lease
     std::string rawSignatureB64;      // valid if kind == Rejected or Lease
+    // 2026: the signed "bind" field of a free_checkin answer (hex SHA-256 of
+    // the request the server is answering - see nutricula_free_checkin_bind()
+    // in license_common.php). Empty for every other answer. Only meaningful
+    // together with kind == Rejected (the free_checkin answer travels in the
+    // signed NL3-REJECT framing, with reason "free_ok" for "all clear").
+    std::string bind;                 // valid if kind == Rejected (may be empty)
     VerifiedLease lease;               // valid only if kind == Lease
     VerifiedChallenge challenge;       // valid only if kind == Challenge
 };

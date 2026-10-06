@@ -59,6 +59,12 @@ constexpr int TIER_UPDATE_REQUIRED = -50; // "please update the EA" - see Coordi
 // block triggered), so a blocked license was never actually reflected to
 // MQL at all.
 constexpr int TIER_BLOCKED = -100;
+// The Broker reports that the local license file exists but is locked /
+// access-denied / blocked by an antivirus (CoordinatorCore.h: TIER_FILE_LOCKED).
+// Arrives unsigned (like TIER_FAILED). Once seen it is LATCHED for the rest of
+// this DLL instance's life (g_fileLockedLatched) - Check_Core_Integrity() then
+// returns -5 forever, which is the EA's cue to alert and remove itself.
+constexpr int TIER_FILE_LOCKED = -5;
 constexpr int PENDING_IDLE = -1;
 constexpr int PENDING_COMM_FAIL = -2;
 constexpr int PENDING_REFRESH_IN_PROGRESS = -3;
@@ -300,6 +306,8 @@ constexpr unsigned long long NUT_HS_VALID_MS = 30ULL * 60ULL * 1000ULL; // 30 mi
 // sitting in its 30-minute window, which is what lets a single bad attempt
 // be reported immediately instead of only once the old grant expires.
 std::atomic<bool> g_hsEverAttempted{false};
+// Latched by Nutricula_Poll when the Broker reports TIER_FILE_LOCKED (-5); never cleared.
+std::atomic<bool> g_fileLockedLatched{false};
 std::atomic<bool> g_hsLastAttemptOk{false};
 
 // Same idea, for the Coordinator/server side of Poll() rather than the EA
@@ -1876,6 +1884,11 @@ double __stdcall Zenith_Star_137(double p1, double pt2, int junk) {
 //         (exhausted its own verification attempts). All of these collapse
 //         to the same code on purpose - the project owner wants ANY of them
 //         treated identically (Alert + remove), not distinguished.
+//   -5    The local license file exists but is locked / access-denied / blocked
+//         by an antivirus, so the Broker cannot read it (2026). FINAL and
+//         latched for the life of this DLL instance: once reported it is never
+//         cleared, so the EA alerts and removes itself. A missing file is NOT
+//         this (free install); an unreadable-content file is ignored as if absent.
 //  -50    TIER_UPDATE_REQUIRED, unchanged.
 // -100    TIER_BLOCKED, unchanged.
 //   1     TIER_FREE, unchanged.
@@ -1886,6 +1899,7 @@ double __stdcall Zenith_Star_137(double p1, double pt2, int junk) {
 // status, its dispatcher id, or its MQL-side wrapper's name/signature, so
 // nothing on the MQL side needs to change for this alone.
 int __stdcall Check_Core_Integrity() {
+    if (g_fileLockedLatched.load()) return -5;   // FINAL: license file locked/blocked (antivirus, lock, access denied) - latched, EA must alert and remove itself
     if (!g_hsEverAttempted.load()) return 0;
     if (!g_hsLastAttemptOk.load()) return -2;   // most recent attempt was wrong - immediate, regardless of any earlier grant still technically valid
     if (!HandshakeValid()) return -2;           // was right before, but that grant has since lapsed with no fresh attempt
@@ -6088,7 +6102,7 @@ void SendRefreshRequest()
 // "checked every microsecond" (too slow to ship).
 constexpr unsigned long long TIER_REVERIFY_INTERVAL_MS = 3000; // 3 seconds
 std::atomic<unsigned long long> g_lastReverifyTickMs{0};
-std::atomic<bool> g_lastReverifyResult{true}; // cached outcome between real re-verifications
+std::atomic<int> g_lastReverifyTier{TIER_LICENSED}; // cached outcome between real re-verifications (TIER_LICENSED / TIER_FREE = license period ended / TIER_FAILED = anti-tamper failure)
 
 // Shared anti-tamper gate - see its forward declaration (right before
 // EffectiveTier, near the top of this file) for the full explanation of
@@ -6109,7 +6123,7 @@ int AntiTamperCheckedTier(int rawTier)
     {
         // Within the rate-limit window - use the last real result rather
         // than re-running expensive crypto on every hot-path call.
-        return g_lastReverifyResult.load() ? TIER_LICENSED : TIER_FREE;
+        return g_lastReverifyTier.load();
     }
 
     // Time for a real re-verification. The actual anti-tamper point: the
@@ -6120,17 +6134,33 @@ int AntiTamperCheckedTier(int rawTier)
     // Patching the tier directly in memory (e.g. via a debugger or
     // Cheat-Engine-style tool) no longer has unlimited effect: it is
     // caught and reverted within TIER_REVERIFY_INTERVAL_MS at the latest.
-    bool ok = !IsDebuggerAttached();
-    if (ok)
+    // Tier policy (2026, project owner's rule): a licensed claim may fall to
+    // TIER_FREE (1) for exactly ONE reason - the license period has ended.
+    // Any other failed re-verification (debugger attached, the cached claim
+    // no longer matching, or the cached signed canonical no longer verifying)
+    // is an anti-tamper / integrity failure and goes straight to TIER_FAILED
+    // (Check_Core_Integrity reports -2).
+    int result = TIER_LICENSED;
+    if (IsDebuggerAttached())
+    {
+        result = TIER_FAILED;
+    }
+    else
     {
         std::lock_guard<NutMutex> lock(g_verifiedCacheMutex);
-        ok = (g_verifiedTierClaim == TIER_LICENSED) &&
-             ServerSignatureVerify::Verify(g_verifiedCanonical, g_verifiedSignatureB64) &&
-             (g_verifiedLicenseExpiresAt == 0 || g_verifiedLicenseExpiresAt > ThinDllNowUnixSeconds());
+        if (g_verifiedTierClaim != TIER_LICENSED ||
+            !ServerSignatureVerify::Verify(g_verifiedCanonical, g_verifiedSignatureB64))
+        {
+            result = TIER_FAILED;
+        }
+        else if (g_verifiedLicenseExpiresAt != 0 && g_verifiedLicenseExpiresAt <= ThinDllNowUnixSeconds())
+        {
+            result = TIER_FREE; // the only allowed 2 -> 1 downgrade: license period over
+        }
     }
-    g_lastReverifyResult.store(ok);
+    g_lastReverifyTier.store(result);
     g_lastReverifyTickMs.store(nowTick);
-    return ok ? TIER_LICENSED : TIER_FREE;
+    return result;
 }
 
 } // namespace
@@ -6258,7 +6288,7 @@ extern "C" __declspec(dllexport) void __cdecl Pavo_Sync_85()
         unsigned long long lastVerifiedTick = g_lastVerifiedTierTickMs.load();
         if (lastVerifiedTick != 0 && (GetTickCount64() - lastVerifiedTick) > static_cast<unsigned long long>(STALE_COORDINATOR_DEGRADE_SECONDS) * 1000ULL)
         {
-            SetTier(TIER_FREE);
+            SetTier(TIER_FAILED); // 2026 rule: no silent 2 -> 1 downgrade; only license expiry may do that
         }
         g_pending.store(PENDING_COMM_FAIL);
         g_pollEverCompleted.store(true);
@@ -6310,7 +6340,10 @@ extern "C" __declspec(dllexport) void __cdecl Pavo_Sync_85()
 
         if (sigOk && status.tier == TIER_LICENSED)
         {
-            SetTier(TIER_LICENSED);
+            // Order matters (2026): fill the verified cache FIRST and only
+            // then publish the raw tier. A reader that sees raw tier
+            // TIER_LICENSED must never find a stale cache, because a failed
+            // re-verification now means -2 (not just a brief FREE blip).
             g_lastVerifiedTierTickMs.store(GetTickCount64());
             {
                 std::lock_guard<NutMutex> lock(g_verifiedCacheMutex);
@@ -6319,6 +6352,7 @@ extern "C" __declspec(dllexport) void __cdecl Pavo_Sync_85()
                 g_verifiedTierClaim = TIER_LICENSED;
                 g_verifiedLicenseExpiresAt = ParseLicenseExpiresAt(canonical);
             }
+            SetTier(TIER_LICENSED);
             // Force GetLicenseTier's own rate-limited cache to re-check
             // immediately on the next call rather than serving a stale
             // cached result from before this fresh verification.
@@ -6383,6 +6417,15 @@ extern "C" __declspec(dllexport) void __cdecl Pavo_Sync_85()
         // failure OF the polling mechanism itself) - Check_Core_Integrity
         // folds this into "-2" separately, via g_tier, not via this flag.
         SetTier(TIER_FAILED);
+        g_lastPollOutcomeOk.store(true);
+    }
+    else if (status.tier == TIER_FILE_LOCKED)
+    {
+        // Unsigned by design, like TIER_FAILED: it only ever LOWERS what this
+        // install may do (nobody gains by forging it), and the Broker itself
+        // was identity-verified by QueryCoordinatorStatus above. Latched.
+        g_fileLockedLatched.store(true);
+        SetTier(TIER_FILE_LOCKED);
         g_lastPollOutcomeOk.store(true);
     }
     else

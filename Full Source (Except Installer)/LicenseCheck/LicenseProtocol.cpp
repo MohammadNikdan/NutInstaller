@@ -321,6 +321,7 @@ ParsedResponse LicenseProtocol::ParseLeaseOrChallenge(const std::string& plainte
         result.requestedAt = ParseU64(fields["requested_at"]);
         result.rawCanonical = signedCanonical;
         result.rawSignatureB64 = signatureB64;
+        if (fields.count("bind")) result.bind = fields["bind"]; // covered by the signature above
         return result;
     }
 
