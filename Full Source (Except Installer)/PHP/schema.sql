@@ -191,6 +191,39 @@ CREATE TABLE nutricula_unlicensed_checkins (
     KEY idx_last_seen (last_seen_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+/* Statistics only (2026) - the counterpart of nutricula_unlicensed_checkins
+   for free_checkin requests that FAILED full validation. A device lands in
+   nutricula_unlicensed_checkins only after it passed every check (not banned,
+   artifact hashes match its build's manifest, on the latest version); every
+   device that did NOT pass lands here instead, so banned, outdated and
+   tampered installs are still recorded - just not mixed into the healthy
+   free-user numbers. One row per computer (identified by machine_id and/or
+   device_public_key_hash, same rule as the unlicensed table), with the most
+   recent reason and a counter per reason. Pruned after
+   REJECTED_CHECKINS_RETENTION_DAYS (90) days of silence - see
+   nutricula_track_rejected_checkin() in license_common.php. */
+CREATE TABLE nutricula_rejected_checkins (
+    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+    machine_id CHAR(64) NULL,
+    device_public_key_hash CHAR(64) NULL,
+    first_seen_at DATETIME NOT NULL,
+    last_seen_at DATETIME NOT NULL,
+    /* 'banned' | 'update_required' | 'artifact_mismatch' - what the server
+       said the LAST time this computer checked in. */
+    last_reason VARCHAR(32) NOT NULL,
+    banned_count INT UNSIGNED NOT NULL DEFAULT 0,
+    update_required_count INT UNSIGNED NOT NULL DEFAULT 0,
+    artifact_mismatch_count INT UNSIGNED NOT NULL DEFAULT 0,
+    platform_profile ENUM('windows','windows_vm','macos_wine','linux_wine') NULL,
+    last_build_id VARCHAR(64) NULL,
+    last_observed_ip VARCHAR(45) NULL,
+    PRIMARY KEY (id),
+    UNIQUE KEY uq_rejected_machine_id (machine_id),
+    UNIQUE KEY uq_rejected_device_hash (device_public_key_hash),
+    KEY idx_rejected_last_seen (last_seen_at),
+    KEY idx_rejected_reason (last_reason, last_seen_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 /* One row per successfully-used transfer key. The UNIQUE key on
    transfer_key_hash is what actually enforces "a transfer key can only be
    used once" at the database level (not just application logic) - the same
@@ -357,7 +390,14 @@ CREATE TABLE nutricula_minus2_log (
     /* Fixed, short, machine-readable cause - one of: 'artifact_mismatch'
        (server-confirmed tamper/hash mismatch), 'transport_exhausted'
        (10 attempts, no usable server response), 'machineid_generation_failed'
-       (local hardware-ID generation failed). See the table comment above
+       (local hardware-ID generation failed), 'artifact_check_failed' (local
+       missing file / hash mismatch / invalid manifest), 'license_file_invalid'
+       (local license file fails decrypt/signature), 'free_checkin_failed'
+       (free install: no usable signed server answer - offline, 'no', HTTP error,
+       bad/forged answer - beyond the silence tolerance, or on first contact),
+       'server_rejected' (the server DID answer, with a signed Reject that maps
+       to -2 but is not an artifact_mismatch, e.g. signature_invalid or an
+       unabsorbed challenge_* - the exact reason is in reason_detail). See the table comment above
        for the full reasoning and for which causes can NEVER appear here. */
     reason_code VARCHAR(64) NOT NULL,
     /* Free-text elaboration for support - e.g. exactly which hash field(s)

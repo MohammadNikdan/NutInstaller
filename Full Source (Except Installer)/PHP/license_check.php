@@ -19,7 +19,7 @@ const CHECK_ALLOWED_FIELDS = [
     'v', 'stage', 'license_id', 'machine_id', 'machine_id_alt', 'device_key_hash', 'local_ip',
     'challenge_id', 'signature', 'build_id', 'ex5_hash', 'ex4_hash', 'dll32_hash', 'dll64_hash',
     'machineid32_hash', 'machineid64_hash', 'broker_hash',
-    'refresh_token', 'platform_profile',
+    'refresh_token', 'platform_profile', 'nonce',
 ];
 const CHALLENGE_STAGE_FIELDS = ['v', 'stage', 'license_id', 'machine_id', 'machine_id_alt', 'device_key_hash', 'local_ip'];
 /* Free-tier telemetry (2026): a check-in the Coordinator sends periodically
@@ -34,11 +34,13 @@ const CHALLENGE_STAGE_FIELDS = ['v', 'stage', 'license_id', 'machine_id', 'machi
    as every other request (Transport Key), so it is not readable in transit,
    but carries no cryptographic proof of device ownership beyond that - by
    design, since nothing is being authorized. See
-   nutricula_track_unlicensed_checkin() for what gets recorded, and the
-   "reject reasons that map to TIER_FREE" handling below for how a
-   MISMATCHED-but-real lease (Layer 1 catches it locally, but the Coordinator
-   still owns a real license_id) is tracked through the existing
-   challenge/verify path instead of this one.
+   nutricula_track_unlicensed_checkin() for what gets recorded - and note
+   it is recorded ONLY after this request passed full validation (not
+   banned, artifact hashes match the build's manifest, latest version);
+   refused devices go to nutricula_rejected_checkins instead. A MISMATCHED-
+   but-real lease (the Coordinator still owns a real license_id) is not
+   tracked by the challenge/verify path any more: after a Reject that leaves
+   it at TIER_FREE, the Coordinator sends this same free_checkin itself.
    2026 hardening (owner's explicit request - "security mechanisms shouldn't
    depend on license type, free or pro"): build_id and the 7 artifact hashes
    below are now ALSO REQUIRED here, exactly as mandatory as they are on the
@@ -63,6 +65,11 @@ const FREE_CHECKIN_STAGE_FIELDS = [
     // diagnostic, attached to the -2 log row when this check-in turns out to
     // be an artifact_mismatch. See nutricula_normalize_platform_profile().
     'platform_profile',
+    // 2026: random per-request value (32 hex chars) the Coordinator chooses;
+    // echoed back inside the signed answer together with a digest of this
+    // request, binding the answer to exactly this request (see the
+    // free_checkin handler).
+    'nonce',
 ];
 /* build_id/ex5_hash/dll32_hash/dll64_hash/machineid32_hash/machineid64_hash/
    broker_hash: Artifact Evidence (architecture points 47-49/88) - the
@@ -100,22 +107,39 @@ function nutricula_cleanup_old_challenges(mysqli $conn): void
 /* Lightweight defense against unauthenticated challenge spam now that
    issuing a challenge itself carries no time lock (see the note at the
    'challenge' stage below for why that moved to verify-after-signature).
-   This does not gate on WHO is asking, only on HOW OFTEN for this specific
-   license - legitimate traffic is at most one challenge roughly every 55
-   minutes, so this threshold is nowhere near legitimate usage. */
-function nutricula_challenge_rate_ok(mysqli $conn, int $licenseDbId, int $now): bool
+   This does not gate on WHO is asking, only on HOW OFTEN - legitimate
+   traffic is at most one challenge roughly every few minutes, so these
+   thresholds are nowhere near legitimate usage.
+
+   2026 change: the fields needed to ask for a challenge are not secret, so
+   the old single per-license counter let ANYONE who knew a victim's ids
+   saturate it and make the real device's challenge requests get
+   "challenge_rate_limited" (and, worse, the rejected attempts themselves
+   were counted, so the counter could never drain while the spam continued).
+   Now:
+     - only challenges that were actually ISSUED count (reason IS NULL) -
+       rejected attempts no longer feed the counter, and
+     - the main limit is per (license, observed IP): at most 5 issued
+       challenges per minute from the same IP for the same license, so a
+       spammer on another IP can never use up the real device's allowance;
+     - a looser per-license ceiling (30 issued per minute from all IPs
+       together) remains purely as a safety cap on database churn. */
+function nutricula_challenge_rate_ok(mysqli $conn, int $licenseDbId, int $now, string $observedIp): bool
 {
     $cutoff = date('Y-m-d H:i:s', $now - 60);
     $stmt = $conn->prepare(
-        "SELECT COUNT(*) c FROM nutricula_license_activity
-         WHERE license_id=? AND request_type='challenge' AND occurred_at>=?"
+        "SELECT COALESCE(SUM(observed_ip = ?), 0) AS from_this_ip, COUNT(*) AS total
+         FROM nutricula_license_activity
+         WHERE license_id=? AND request_type='challenge' AND reason IS NULL AND occurred_at>=?"
     );
     if (!$stmt) return true; // fail open on a logging-path error, not security-critical
-    $stmt->bind_param('is', $licenseDbId, $cutoff);
+    $stmt->bind_param('sis', $observedIp, $licenseDbId, $cutoff);
     $stmt->execute();
-    $count = (int)($stmt->get_result()->fetch_assoc()['c'] ?? 0);
+    $row = $stmt->get_result()->fetch_assoc() ?: [];
     $stmt->close();
-    return $count < 5;
+    $fromThisIp = (int)($row['from_this_ip'] ?? 0);
+    $total = (int)($row['total'] ?? 0);
+    return $fromThisIp < 5 && $total < 30;
 }
 
 try {
@@ -175,180 +199,165 @@ try {
         }
 
         /* Same per-IP rate limit machinery already used elsewhere in this
-           file (e.g. the challenge stage below) - a single install pinging
-           roughly every 30 minutes is completely normal and unaffected,
-           while someone scripting rapid-fire fake check-ins to inflate the
-           free-tier count gets throttled the same way any other endpoint
-           here already throttles abuse.
-           Reuse the connection opened above (which already ran
-           SET time_zone='+00:00' at line 99) - a previous version reopened a
-           SECOND connection here, which leaked the first and, more
-           importantly, ran without the UTC session tz, so the NOW() writes in
-           nutricula_track_unlicensed_checkin below landed in the server's
-           default timezone instead of UTC. */
+           file - a single install pinging roughly every 30 minutes is
+           completely normal and unaffected, while someone scripting rapid-
+           fire fake check-ins to inflate the free-tier count gets throttled.
+           Reuses the connection opened above (which already ran
+           SET time_zone='+00:00'), so the NOW() writes below land in UTC. */
         nutricula_rate_limit_check($conn, $config, 'free_checkin');
 
+        /* Per-request nonce (2026): chosen by the Coordinator, echoed back
+           inside the SIGNED answer together with a digest of everything this
+           request reported (see $bind below). That is what stops a local
+           proxy from answering a tampered install with a genuine "free_ok"
+           the server issued for somebody else's - or a cleaned-up copy of its
+           own - request: the answer is only valid for exactly the identity,
+           artifact hashes and nonce the Coordinator itself sent. */
+        $checkinNonce = strtolower(trim((string)($fields['nonce'] ?? '')));
+        if (!preg_match('/\A[0-9a-f]{32}\z/', $checkinNonce)) {
+            throw new RuntimeException('Invalid nonce.');
+        }
+
         $checkinPlatformProfile = nutricula_normalize_platform_profile($fields['platform_profile'] ?? null);
-        // Admin panel (2026, build-adoption tracking): read defensively here
-        // (not via nutricula_required_field) purely for statistics - the
-        // REAL required/well-formed check for build_id happens below and
-        // still governs the actual artifact_mismatch decision; this copy
-        // only ever feeds the admin dashboard's "which version is this
-        // install on" view, so a missing/malformed value here simply means
-        // "nothing to record yet", never a request failure.
-        $trackingBuildId = isset($fields['build_id']) ? trim((string)$fields['build_id']) : null;
-        if ($trackingBuildId === '' || ($trackingBuildId !== null && strlen($trackingBuildId) > 64)) $trackingBuildId = null;
-        nutricula_track_unlicensed_checkin($conn, $checkinMachineId, $checkinDeviceKeyHash, $checkinPlatformProfile, $trackingBuildId);
+        $checkinIp = nutricula_client_ip($config);
 
-        /* Admin panel (2026): a banned free-tier device is rejected
-           unconditionally, before even looking at artifact/version checks -
-           an admin ban is a deliberate, manual decision and must win over
-           everything else. 'banned' feeds into the exact same signed-Reject
-           construction as 'artifact_mismatch'/'update_required' below ($reason
-           drives it), and is mapped client-side to the SAME TIER_BLOCKED
-           outcome as a clone-detected license block (see CoordinatorCore.cpp's
-           reject-reason mapping) - a ban and a clone-block both mean "fully
-           stop", not just "demoted to free". */
-        $bannedUpfront = nutricula_is_banned($conn, null, $checkinMachineId, $checkinDeviceKeyHash);
+        // build_id/hashes read defensively first (a banned device is rejected
+        // without needing them to be valid); the strict required/well-formed
+        // check happens below for everyone else.
+        $buildId = trim((string)($fields['build_id'] ?? ''));
+        $ex5Hash = strtolower(trim((string)($fields['ex5_hash'] ?? '')));
+        $ex4Hash = strtolower(trim((string)($fields['ex4_hash'] ?? '')));
+        $dll32Hash = strtolower(trim((string)($fields['dll32_hash'] ?? '')));
+        $dll64Hash = strtolower(trim((string)($fields['dll64_hash'] ?? '')));
+        $machineid32Hash = strtolower(trim((string)($fields['machineid32_hash'] ?? '')));
+        $machineid64Hash = strtolower(trim((string)($fields['machineid64_hash'] ?? '')));
+        $brokerHash = strtolower(trim((string)($fields['broker_hash'] ?? '')));
 
-        /* 2026 hardening (owner's explicit request - "security mechanisms
-           shouldn't depend on license type, free or pro"): a free-tier
-           install now gets the SAME authenticated mandatory-update and
-           server-authoritative artifact-hash validation Premium/Transfer
-           already receive via the challenge/verify flow, instead of an
-           unconditional, unauthenticated "OK". build_id/the 7 hashes are
-           REQUIRED here, exactly like the verify stage - no backward-compat
-           allowance, since there is no older Coordinator build in the field
-           to accommodate (Nutricula has not shipped publicly yet). */
-        if ($bannedUpfront) {
-            // Admin ban wins outright - skip artifact/version validation
-            // entirely, there is no point spending a manifest lookup on a
-            // device that's being rejected unconditionally either way.
-            $reason = 'banned';
-        } else {
-        $buildId = trim(nutricula_required_field($fields, 'build_id'));
-        $ex5Hash = strtolower(trim(nutricula_required_field($fields, 'ex5_hash')));
-        $ex4Hash = strtolower(trim(nutricula_required_field($fields, 'ex4_hash')));
-        $dll32Hash = strtolower(trim(nutricula_required_field($fields, 'dll32_hash')));
-        $dll64Hash = strtolower(trim(nutricula_required_field($fields, 'dll64_hash')));
-        $machineid32Hash = strtolower(trim(nutricula_required_field($fields, 'machineid32_hash')));
-        $machineid64Hash = strtolower(trim(nutricula_required_field($fields, 'machineid64_hash')));
-        $brokerHash = strtolower(trim(nutricula_required_field($fields, 'broker_hash')));
+        $bind = nutricula_free_checkin_bind([
+            (string)$checkinMachineId, (string)$checkinDeviceKeyHash, $buildId,
+            $ex5Hash, $ex4Hash, $dll32Hash, $dll64Hash, $machineid32Hash, $machineid64Hash, $brokerHash,
+            $checkinNonce,
+        ]);
 
-        $wellFormed = ($buildId !== '' && strlen($buildId) <= 64);
-        foreach ([$ex5Hash, $ex4Hash, $dll32Hash, $dll64Hash, $machineid32Hash, $machineid64Hash, $brokerHash] as $h) {
-            if (!preg_match('/\A[0-9a-f]{64}\z/', $h)) $wellFormed = false;
-        }
-
-        // Malformed Artifact Evidence is treated identically to
-        // well-formed-but-wrong below (artifact_mismatch) rather than a
-        // hard error - there is no per-device signature on this stage to
-        // tell "tampered" apart from "simply dropped/truncated in transit",
-        // and either way the Coordinator now treats the outcome identically
-        // (TIER_FAILED / "-2", not just a demotion to TIER_FREE - see the
-        // client-side mapping in CoordinatorCore.cpp).
-        $manifestRow = null;
-        if ($wellFormed) {
-            $manifestStmt = $conn->prepare(
-                'SELECT version, ex5_sha256, ex4_sha256, dll32_sha256, dll64_sha256,
-                        machineid32_sha256, machineid64_sha256,
-                        broker32_sha256, broker64_sha256
-                 FROM nutricula_build_manifests WHERE build_id=? LIMIT 1'
-            );
-            if ($manifestStmt) {
-                $manifestStmt->bind_param('s', $buildId);
-                $manifestStmt->execute();
-                $manifestRow = $manifestStmt->get_result()->fetch_assoc();
-                $manifestStmt->close();
-            }
-        }
-
-        // Accepts EITHER the 32-bit or 64-bit expected Broker hash - see
-        // the identical reasoning at the verify stage's $brokerMatches.
-        $brokerMatches = $manifestRow && (
-            hash_equals((string)$manifestRow['broker32_sha256'], $brokerHash) ||
-            hash_equals((string)$manifestRow['broker64_sha256'], $brokerHash)
-        );
-        $artifactsOk = $wellFormed && $manifestRow &&
-            hash_equals((string)$manifestRow['ex5_sha256'], $ex5Hash) &&
-            hash_equals((string)$manifestRow['ex4_sha256'], $ex4Hash) &&
-            hash_equals((string)$manifestRow['dll32_sha256'], $dll32Hash) &&
-            hash_equals((string)$manifestRow['dll64_sha256'], $dll64Hash) &&
-            hash_equals((string)$manifestRow['machineid32_sha256'], $machineid32Hash) &&
-            hash_equals((string)$manifestRow['machineid64_sha256'], $machineid64Hash) &&
-            $brokerMatches;
-
+        /* Full validation FIRST, recording LAST (owner's rule, 2026): a device
+           only lands in nutricula_unlicensed_checkins once it is confirmed not
+           banned, running exactly the artifacts of a known build, and on the
+           latest version. Every other outcome is recorded in
+           nutricula_rejected_checkins (banned / outdated / tampered devices)
+           instead - they are still counted, just not as healthy free users.
+           Order: ban -> artifact hashes -> version -> record -> answer. */
         $reason = null;
-        if (!$artifactsOk) {
-            $reason = 'artifact_mismatch';
-            // 2026 hardening: same -2/support logging as the verify stage's
-            // artifact_mismatch - see that site's comment for the full
-            // reasoning. Builds as precise a detail string as this request
-            // lets us determine (malformed fields, no manifest row at all,
-            // or exactly which hash field(s) genuinely mismatched).
-            if (!$wellFormed) {
-                $mismatchDetail = 'malformed build_id/hash field(s)';
-            } elseif (!$manifestRow) {
-                $mismatchDetail = 'no manifest row found for build_id=' . $buildId;
-            } else {
-                $mismatchedFields = [];
-                if (!hash_equals((string)$manifestRow['ex5_sha256'], $ex5Hash)) $mismatchedFields[] = 'ex5_hash';
-                if (!hash_equals((string)$manifestRow['ex4_sha256'], $ex4Hash)) $mismatchedFields[] = 'ex4_hash';
-                if (!hash_equals((string)$manifestRow['dll32_sha256'], $dll32Hash)) $mismatchedFields[] = 'dll32_hash';
-                if (!hash_equals((string)$manifestRow['dll64_sha256'], $dll64Hash)) $mismatchedFields[] = 'dll64_hash';
-                if (!hash_equals((string)$manifestRow['machineid32_sha256'], $machineid32Hash)) $mismatchedFields[] = 'machineid32_hash';
-                if (!hash_equals((string)$manifestRow['machineid64_sha256'], $machineid64Hash)) $mismatchedFields[] = 'machineid64_hash';
-                if (!$brokerMatches) $mismatchedFields[] = 'broker_hash';
-                $mismatchDetail = 'build_id=' . $buildId . '; mismatched field(s): ' . implode(', ', $mismatchedFields);
-            }
-            nutricula_log_minus2(
-                $conn, 'free', 'artifact_mismatch', $mismatchDetail,
-                null, null,
-                $checkinMachineId, null, $checkinDeviceKeyHash, $buildId, nutricula_client_ip($config),
-                nutricula_normalize_platform_profile($fields['platform_profile'] ?? null)
-            );
-        } else {
-            $latestVersion = (string)($config['latest_version'] ?? '');
-            $installedVersion = (string)($manifestRow['version'] ?? '');
-            if ($latestVersion !== '' && $installedVersion !== '' &&
-                version_compare($installedVersion, $latestVersion, '<')) {
-                $reason = 'update_required';
-            }
-        }
-        } // end !$bannedUpfront
 
-        $responseBody = 'NL3-FREE-OK';
-        if ($reason !== null) {
-            // Same signed-Reject format and server signing key the
-            // Premium/Transfer verify stage uses (nutricula_reject() /
-            // nutricula_server_sign()) - the Coordinator's existing
-            // LicenseProtocol::DecryptAndVerify already knows how to verify
-            // this exact format, so nothing new is needed client-side to
-            // trust it. No per-device signature is involved or required -
-            // this endpoint is only vouching for "this build's artifacts",
-            // not for license ownership.
-            $now2 = time();
-            $canonical = 'reason=' . $reason . '|requested_at=' . $now2 . '|retry_after_seconds=0';
-            try {
-                $sig = nutricula_server_sign($canonical, $config);
-                $responseBody = 'NL3-REJECT|' . $canonical . '|server_signature=' . $sig;
-            } catch (Throwable $e) {
-                // Signing failed (e.g. key file unreadable) - fail open to
-                // the harmless plain-OK default, same spirit as
-                // nutricula_reject()'s own fallback.
-                $responseBody = 'NL3-FREE-OK';
+        // 1) Admin ban wins outright - an admin ban is a deliberate, manual
+        //    decision and is mapped client-side to TIER_BLOCKED (-100).
+        if (nutricula_is_banned($conn, null, $checkinMachineId, $checkinDeviceKeyHash)) {
+            $reason = 'banned';
+        }
+
+        // 2) Artifact evidence: same server-authoritative validation the
+        //    Premium verify stage applies ("security mechanisms shouldn't
+        //    depend on license type"). Malformed evidence is treated the same
+        //    as well-formed-but-wrong (artifact_mismatch).
+        $manifestRow = null;
+        if ($reason === null) {
+            $wellFormed = ($buildId !== '' && strlen($buildId) <= 64);
+            foreach ([$ex5Hash, $ex4Hash, $dll32Hash, $dll64Hash, $machineid32Hash, $machineid64Hash, $brokerHash] as $h) {
+                if (!preg_match('/\A[0-9a-f]{64}\z/', $h)) $wellFormed = false;
+            }
+
+            if ($wellFormed) {
+                $manifestStmt = $conn->prepare(
+                    'SELECT version, ex5_sha256, ex4_sha256, dll32_sha256, dll64_sha256,
+                            machineid32_sha256, machineid64_sha256,
+                            broker32_sha256, broker64_sha256
+                     FROM nutricula_build_manifests WHERE build_id=? LIMIT 1'
+                );
+                if ($manifestStmt) {
+                    $manifestStmt->bind_param('s', $buildId);
+                    $manifestStmt->execute();
+                    $manifestRow = $manifestStmt->get_result()->fetch_assoc();
+                    $manifestStmt->close();
+                }
+            }
+
+            // Accepts EITHER the 32-bit or 64-bit expected Broker hash - see
+            // the identical reasoning at the verify stage's $brokerMatches.
+            $brokerMatches = $manifestRow && (
+                hash_equals((string)$manifestRow['broker32_sha256'], $brokerHash) ||
+                hash_equals((string)$manifestRow['broker64_sha256'], $brokerHash)
+            );
+            $artifactsOk = $wellFormed && $manifestRow &&
+                hash_equals((string)$manifestRow['ex5_sha256'], $ex5Hash) &&
+                hash_equals((string)$manifestRow['ex4_sha256'], $ex4Hash) &&
+                hash_equals((string)$manifestRow['dll32_sha256'], $dll32Hash) &&
+                hash_equals((string)$manifestRow['dll64_sha256'], $dll64Hash) &&
+                hash_equals((string)$manifestRow['machineid32_sha256'], $machineid32Hash) &&
+                hash_equals((string)$manifestRow['machineid64_sha256'], $machineid64Hash) &&
+                $brokerMatches;
+
+            if (!$artifactsOk) {
+                $reason = 'artifact_mismatch';
+                // Same -2/support logging as the verify stage's
+                // artifact_mismatch, with as precise a detail string as this
+                // request lets us determine.
+                if (!$wellFormed) {
+                    $mismatchDetail = 'malformed build_id/hash field(s)';
+                } elseif (!$manifestRow) {
+                    $mismatchDetail = 'no manifest row found for build_id=' . $buildId;
+                } else {
+                    $mismatchedFields = [];
+                    if (!hash_equals((string)$manifestRow['ex5_sha256'], $ex5Hash)) $mismatchedFields[] = 'ex5_hash';
+                    if (!hash_equals((string)$manifestRow['ex4_sha256'], $ex4Hash)) $mismatchedFields[] = 'ex4_hash';
+                    if (!hash_equals((string)$manifestRow['dll32_sha256'], $dll32Hash)) $mismatchedFields[] = 'dll32_hash';
+                    if (!hash_equals((string)$manifestRow['dll64_sha256'], $dll64Hash)) $mismatchedFields[] = 'dll64_hash';
+                    if (!hash_equals((string)$manifestRow['machineid32_sha256'], $machineid32Hash)) $mismatchedFields[] = 'machineid32_hash';
+                    if (!hash_equals((string)$manifestRow['machineid64_sha256'], $machineid64Hash)) $mismatchedFields[] = 'machineid64_hash';
+                    if (!$brokerMatches) $mismatchedFields[] = 'broker_hash';
+                    $mismatchDetail = 'build_id=' . $buildId . '; mismatched field(s): ' . implode(', ', $mismatchedFields);
+                }
+                nutricula_log_minus2(
+                    $conn, 'free', 'artifact_mismatch', $mismatchDetail,
+                    null, null,
+                    $checkinMachineId, null, $checkinDeviceKeyHash, ($buildId !== '' ? substr($buildId, 0, 64) : null), $checkinIp,
+                    $checkinPlatformProfile
+                );
+            } else {
+                // 3) Latest-version gate (mandatory update).
+                $latestVersion = (string)($config['latest_version'] ?? '');
+                $installedVersion = (string)($manifestRow['version'] ?? '');
+                if ($latestVersion !== '' && $installedVersion !== '' &&
+                    version_compare($installedVersion, $latestVersion, '<')) {
+                    $reason = 'update_required';
+                }
             }
         }
+
+        // 4) Record - exactly one of the two tables, and only now that every
+        //    check above has run. build_id is only stored when it is at least
+        //    plausibly a build id (<= 64 chars), matching the column size.
+        $trackingBuildId = ($buildId !== '' && strlen($buildId) <= 64) ? $buildId : null;
+        if ($reason === null) {
+            nutricula_track_unlicensed_checkin($conn, $checkinMachineId, $checkinDeviceKeyHash, $checkinPlatformProfile, $trackingBuildId);
+        } else {
+            nutricula_track_rejected_checkin($conn, $checkinMachineId, $checkinDeviceKeyHash, $reason, $checkinPlatformProfile, $trackingBuildId, $checkinIp);
+        }
+
+        /* 5) Answer - ALWAYS a signed message now (also for "all clear"): an
+              unsigned "OK" could be forged by anyone holding the transport
+              key, which would defeat the "no answer is -2" rule. The signed
+              canonical carries $bind, so the Coordinator can verify the
+              answer belongs to exactly its own request. Signing failure is a
+              server error ('no'), never a silent fail-open. */
+        $answerReason = ($reason !== null) ? $reason : 'free_ok';
+        $canonical = 'reason=' . $answerReason . '|requested_at=' . time() . '|retry_after_seconds=0|bind=' . $bind;
+        $sig = nutricula_server_sign($canonical, $config);
+        $responseBody = 'NL3-REJECT|' . $canonical . '|server_signature=' . $sig;
 
         $conn->close();
 
         http_response_code(200);
         header('Content-Type: text/plain; charset=UTF-8');
-        try {
-            echo nutricula_gcm_encrypt($responseBody, $config);
-        } catch (Throwable $e) {
-            echo 'no';
-        }
+        echo nutricula_gcm_encrypt($responseBody, $config);
         exit;
     }
 
@@ -380,24 +389,17 @@ try {
     if (!preg_match('/\A[0-9A-F]{64}\z/', $deviceKeyHash)) throw new RuntimeException('Invalid device key hash.');
     if ($localIp !== '' && filter_var($localIp, FILTER_VALIDATE_IP) === false) throw new RuntimeException('Invalid local IP.');
 
-    /* Wraps nutricula_reject() to also record a free-tier check-in first,
-       for every reject reason EXCEPT the two that do NOT result in
-       TIER_FREE client-side (update_required -> TIER_UPDATE_REQUIRED,
-       blocked -> TIER_BLOCKED - see CoordinatorCore.cpp's tier mapping).
-       Every other reason here - license_not_found, machine_mismatch,
-       device_key_mismatch, license_inactive, license_expired,
-       artifact_mismatch, signature_invalid, challenge_*, too_early, etc. -
-       all leave the client at TIER_FREE, and per the "track every free-tier
-       outcome, however it happens" requirement, all of them get tracked
-       identically here rather than requiring a separate tracking call
-       hand-added at each individual reject site (error-prone with this
-       many call sites - centralizing it here means a future new reject
-       reason is tracked correctly by default, not by remembering to add a
-       line at the new call site). */
-    $rejectTracked = function (string $reason, int $retryAfterSeconds = 0) use ($config, $conn, $machineId, $deviceKeyHash): never {
-        if ($reason !== 'update_required' && $reason !== 'blocked' && $reason !== 'banned') {
-            nutricula_track_unlicensed_checkin($conn, $machineId, $deviceKeyHash);
-        }
+    /* Thin wrapper kept so every reject site below reads the same. It used
+       to also record a free-tier check-in for the reject reasons that leave
+       the client at TIER_FREE (license_not_found, machine_mismatch, ...).
+       That is gone (2026, owner's rule): a device is only recorded as a
+       free-tier user in nutricula_unlicensed_checkins after a free_checkin
+       that PASSED full validation (ban, artifact hashes, latest version) -
+       none of which is known at this point of the licensed flow. The
+       Coordinator sends that free_checkin itself right after such a Reject
+       (see CoordinatorCore.cpp), so these devices are still counted, just
+       with verified data. */
+    $rejectTracked = function (string $reason, int $retryAfterSeconds = 0) use ($config): never {
         nutricula_reject($config, $reason, $retryAfterSeconds);
     };
 
@@ -493,12 +495,9 @@ try {
            issuance, so it has nothing to do with "was this device's identity
            copied" and correctly does not touch the time lock at all. */
 
-        if (!nutricula_challenge_rate_ok($conn, $licenseDbId, $now)) {
+        if (!nutricula_challenge_rate_ok($conn, $licenseDbId, $now, $observedIp)) {
             nutricula_log_activity($conn, $licenseDbId, $machineId, $deviceKeyHash, $localIp, $observedIp, 'challenge', 'challenge_rate_limited', $riskScore);
-            // Do NOT close $conn here: $rejectTracked records a free-tier
-            // check-in (nutricula_track_unlicensed_checkin) that needs the
-            // connection open; nutricula_reject exits immediately afterward
-            // and PHP closes the connection on exit anyway.
+            // nutricula_reject exits immediately; PHP closes the connection.
             $rejectTracked('challenge_rate_limited', 60);
         }
 
@@ -778,13 +777,13 @@ try {
            been proven valid at this point, so a rejection here genuinely
            means "correct device credentials, but too soon" - exactly the
            "identity/device key was copied" signal this is meant to catch.
-           Set to a low 9-minute floor (min_request_gap_seconds) since the
+           Set to a low floor (min_request_gap_seconds, ~3 minutes) since the
            actual anti-clone protection now lives in the rotating refresh
            token below, not in this timer - this floor only exists to stop
            pure request flooding, not to detect cloning by itself. */
         $lock = nutricula_check_and_touch_time_lock($conn, $licenseDbId, $minGapSeconds, $finalNow);
         if (!$lock['allowed']) {
-            $conn->commit(); // the challenge-used and time-lock touches must still persist
+            $conn->commit(); // the challenge-used mark must still persist (a too_early reject no longer touches the timer)
             nutricula_log_activity($conn, $licenseDbId, $machineId, $deviceKeyHash, $localIp, $observedIp, 'verify', 'too_early', $riskScore);
             // Keep $conn open for $rejectTracked's free-tier check-in record
             // (the commit above already persisted the time-lock touch).

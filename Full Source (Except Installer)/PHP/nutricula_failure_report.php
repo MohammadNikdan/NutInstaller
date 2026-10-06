@@ -24,6 +24,20 @@ require_once __DIR__ . '/license_common.php';
        problem", which is useful information too.
      - 'machineid_generation_failed': local hardware-ID generation failed
        before any network attempt was even possible.
+     - 'artifact_check_failed' (2026): a local integrity check failed - an
+       installed file is missing, its SHA-256 differs from the signed
+       manifest, or manifest.txt itself is missing/invalid. Free and licensed
+       installs alike now go straight to -2 for this.
+     - 'license_file_invalid' (2026): the local license file exists but fails
+       decryption or signature verification (tampered, corrupted, wrong keys).
+     - 'free_checkin_failed' (2026): a FREE install got no usable, signed,
+       request-bound answer from free_checkin (offline, 'no', HTTP error,
+       forged/mismatched answer) for longer than the silence tolerance, or on
+       its very first contact - published as -2 exactly like a licensed install.
+     - 'server_rejected' (2026): the server answered with a genuine signed
+       Reject whose tier is -2 but that is not artifact_mismatch (for example
+       signature_invalid, or challenge_* once the soft-reject allowance is
+       used up); the exact reject reason is in reason_detail.
 
    Deliberately carries NO per-device signature and proves no license
    ownership - it is pure, unauthenticated telemetry about an already-
@@ -48,6 +62,10 @@ const FAILURE_REPORT_ALLOWED_FIELDS = [
 const FAILURE_REPORT_ALLOWED_REASONS = [
     'transport_exhausted',
     'machineid_generation_failed',
+    'artifact_check_failed',   // local: missing artifact / hash differs / manifest invalid (2026 -2 rule)
+    'license_file_invalid',    // no longer sent by the Broker (an unreadable-content license file is now ignored as if absent); kept so old logs/builds stay valid
+    'free_checkin_failed',     // free install: no usable signed answer beyond the silence tolerance / on first contact (2026)
+    'server_rejected',         // server answered with a signed Reject that maps to -2 (not artifact_mismatch - that one is logged server-side)
 ];
 
 try {

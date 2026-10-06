@@ -210,7 +210,7 @@ try {
            challenge/verify minimum-gap restriction. */
         $lock = nutricula_check_and_touch_time_lock($conn, $licenseId, $minGapSeconds, $now);
         if (!$lock['allowed']) {
-            $conn->commit(); // the time-lock touch itself must still persist
+            $conn->commit(); // release the row lock (a rejected request no longer touches the timer)
             nutricula_log_activity($conn, $licenseId, $machineId, $deviceKeyHash, $localIp, $observedIp, 'signup', 'too_early', $riskScore);
             $conn->close();
             nutricula_reject($config, 'too_early', $lock['retry_after_seconds']);
@@ -236,8 +236,16 @@ try {
            - Currently blocked -> rejected outright below, same as any
              other blocked request.
            This intentionally reuses nutricula_check_and_rotate_token
-           rather than any separate reset-to-clean logic. */
-        $tokenResult = nutricula_check_and_rotate_token($conn, $config, $existing, '');
+           rather than any separate reset-to-clean logic.
+
+           2026 change: re-signup may only MARK the license suspicious, it
+           can never be the event that blocks it ($allowBlock = false):
+           - not suspicious -> becomes suspicious (new token issued)
+           - already suspicious -> stays suspicious (new token issued, NOT
+             escalated, NOT cleared) - only a later verify presenting a
+             genuinely stale token can turn that into the block
+           - already blocked -> rejected below, as before. */
+        $tokenResult = nutricula_check_and_rotate_token($conn, $config, $existing, '', false);
         if ($tokenResult['action'] === 'blocked') {
             $conn->commit(); // persist the blocked_until write
             nutricula_log_activity($conn, $licenseId, $machineId, $deviceKeyHash, $localIp, $observedIp, 'signup', 'blocked', $riskScore);

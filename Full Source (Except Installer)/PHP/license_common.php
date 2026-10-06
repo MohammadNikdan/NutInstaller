@@ -255,6 +255,10 @@ function nutricula_generate_refresh_token(): string
     to avoid a race between two near-simultaneous requests for the same
     license.
 
+    $allowBlock (default true): false is used ONLY by re-signup, which may mark
+    a license suspicious but must never be the event that blocks it (see the
+    branch below). A license that is ALREADY blocked is rejected in both modes.
+
     Returns an array: ['action' => 'proceed'|'blocked', 'new_token' => ?string]
     - 'proceed': caller should continue issuing a normal lease; if
       new_token is non-null, it MUST be embedded in the lease canonical
@@ -262,7 +266,7 @@ function nutricula_generate_refresh_token(): string
       the same UPDATE the caller already does for this license row.
     - 'blocked': caller MUST call nutricula_reject($config, 'blocked') and
       stop - blocked_until has already been set by this function. */
-function nutricula_check_and_rotate_token(mysqli $conn, array $config, array $license, string $clientToken): array
+function nutricula_check_and_rotate_token(mysqli $conn, array $config, array $license, string $clientToken, bool $allowBlock = true): array
 {
     $now = time();
     $blockedUntil = (int)($license['blocked_until'] ?? 0);
@@ -293,6 +297,26 @@ function nutricula_check_and_rotate_token(mysqli $conn, array $config, array $li
 
     // Stale token (any generation distance - we deliberately never compare
     // "how old", only "is it the current one").
+    if ($wasSuspicious && !$allowBlock) {
+        // Re-signup path ($allowBlock = false): a re-signup is only ever
+        // allowed to MARK the license suspicious, never to block it. Already
+        // suspicious -> stays suspicious (it is NOT cleared and NOT escalated);
+        // the token still rotates forward because the caller issues a fresh
+        // lease carrying it. Only a later verify (allowBlock = true) that
+        // presents a genuinely stale token can escalate to the block - so e.g.
+        // installing twice in a row can never lock the license out by itself.
+        $newToken = nutricula_generate_refresh_token();
+        $stmt = $conn->prepare(
+            'UPDATE nutricula_licenses
+             SET current_refresh_token_hash = ?, token_suspicious = 1
+             WHERE id = ?'
+        );
+        $newHash = hash('sha256', $newToken);
+        $stmt->bind_param('si', $newHash, $license['id']);
+        $stmt->execute();
+        $stmt->close();
+        return ['action' => 'proceed', 'new_token' => $newToken];
+    }
     if ($wasSuspicious) {
         // Second consecutive stale-token event -> block both machines for
         // clone_block_hours, clear the suspicious flag (so the license is
@@ -336,9 +360,15 @@ function nutricula_check_and_rotate_token(mysqli $conn, array $config, array $li
  * blocks on the row lock until the first request's transaction commits and
  * its last_request_time update becomes visible.
  *
- * Always updates last_request_time to $now, whether the request is allowed
- * or rejected - this is deliberate: a rejected request itself starts the
- * next minimum-gap interval over again, exactly like an accepted one does.
+ * last_request_time is updated ONLY when the request is allowed (2026
+ * change). A rejected too_early request no longer restarts the interval:
+ * previously a client that kept retrying (or a restart right after an
+ * interrupted request) kept pushing the window forward and could stay locked
+ * out indefinitely. Now the lock always opens $minGapSeconds after the last
+ * ACCEPTED request, and retry_after_seconds is measured from that moment.
+ * Flooding is still bounded by the per-IP rate limiter and the per-license
+ * challenge limiter, and clone detection lives in the rotating refresh
+ * token, not in this timer.
  *
  * There is intentionally no upper bound - only "has at least $minGapSeconds
  * passed" is checked. A NULL last_request_time (this license's very first
@@ -358,11 +388,13 @@ function nutricula_check_and_touch_time_lock(mysqli $conn, int $licenseDbId, int
     $elapsed = $last === null ? null : ($now - $last);
     $allowed = $last === null || $elapsed >= $minGapSeconds;
 
-    $update = $conn->prepare('UPDATE nutricula_licenses SET last_request_time=? WHERE id=?');
-    if (!$update) throw new RuntimeException('DB prepare failed.');
-    $update->bind_param('ii', $now, $licenseDbId);
-    if (!$update->execute()) throw new RuntimeException('DB update failed (time lock).');
-    $update->close();
+    if ($allowed) {
+        $update = $conn->prepare('UPDATE nutricula_licenses SET last_request_time=? WHERE id=?');
+        if (!$update) throw new RuntimeException('DB prepare failed.');
+        $update->bind_param('ii', $now, $licenseDbId);
+        if (!$update->execute()) throw new RuntimeException('DB update failed (time lock).');
+        $update->close();
+    }
 
     return [
         'allowed' => $allowed,
@@ -422,21 +454,31 @@ function nutricula_track_unlicensed_checkin(mysqli $conn, ?string $machineId, ?s
         // machine_id first (more stable across device-key resets), then
         // device_key_hash. Either match is treated as "this same computer".
         $existingId = null;
+        $existingAge = null; // seconds since this computer's row was last written
         if ($machineId !== null) {
-            $stmt = $conn->prepare('SELECT id, device_public_key_hash FROM nutricula_unlicensed_checkins WHERE machine_id = ? LIMIT 1');
+            $stmt = $conn->prepare('SELECT id, TIMESTAMPDIFF(SECOND, last_seen_at, NOW()) AS age FROM nutricula_unlicensed_checkins WHERE machine_id = ? LIMIT 1');
             $stmt->bind_param('s', $machineId);
             $stmt->execute();
             $row = $stmt->get_result()->fetch_assoc();
             $stmt->close();
-            if ($row) $existingId = (int)$row['id'];
+            if ($row) { $existingId = (int)$row['id']; $existingAge = (int)$row['age']; }
         }
         if ($existingId === null && $deviceKeyHash !== null) {
-            $stmt = $conn->prepare('SELECT id FROM nutricula_unlicensed_checkins WHERE device_public_key_hash = ? LIMIT 1');
+            $stmt = $conn->prepare('SELECT id, TIMESTAMPDIFF(SECOND, last_seen_at, NOW()) AS age FROM nutricula_unlicensed_checkins WHERE device_public_key_hash = ? LIMIT 1');
             $stmt->bind_param('s', $deviceKeyHash);
             $stmt->execute();
             $row = $stmt->get_result()->fetch_assoc();
             $stmt->close();
-            if ($row) $existingId = (int)$row['id'];
+            if ($row) { $existingId = (int)$row['id']; $existingAge = (int)$row['age']; }
+        }
+
+        // Write throttle (2026): a computer already recorded less than
+        // CHECKIN_WRITE_MIN_GAP_SEC ago is not written again. A real install
+        // checks in every ~30 min, so this never loses data; it only stops a
+        // flood of requests for the same device from turning into a flood of
+        // UPDATEs (the answer is still returned by the caller as usual).
+        if ($existingId !== null && $existingAge !== null && $existingAge >= 0 && $existingAge < CHECKIN_WRITE_MIN_GAP_SEC) {
+            return;
         }
 
         if ($existingId !== null) {
@@ -495,6 +537,132 @@ function nutricula_track_unlicensed_checkin(mysqli $conn, ?string $machineId, ?s
         $stmt->close();
     } catch (Throwable $e) {
         error_log('[Nutricula unlicensed tracking] ' . $e->getMessage());
+    }
+}
+
+/* Retention for nutricula_rejected_checkins - same opportunistic,
+   LIMIT-bounded housekeeping pattern as nutricula_minus2_log. 90 days: long
+   enough to see a device that keeps coming back with tampered files or an
+   outdated build, short enough to keep the table small. */
+const REJECTED_CHECKINS_RETENTION_DAYS = 90;
+
+/* Same-device write throttle shared by nutricula_track_unlicensed_checkin() and
+   nutricula_track_rejected_checkin(): a computer whose row was written less
+   than this many seconds ago is not written again (see the comment where it is
+   used). 10 minutes. Declared before first use at call time - PHP resolves
+   constants when the function runs, so ordering within the file is irrelevant. */
+const CHECKIN_WRITE_MIN_GAP_SEC = 600;
+
+/**
+ * Digest that binds a free_checkin ANSWER to the exact request it answers:
+ * SHA-256 over a fixed prefix plus every identity/artifact field the
+ * Coordinator reported and its per-request nonce. The server puts it inside
+ * the signed canonical; CoordinatorCore.cpp recomputes it from what it
+ * actually sent and accepts the answer only on an exact match. $parts order
+ * (machine_id, device_key_hash, build_id, ex5, ex4, dll32, dll64, machineid32,
+ * machineid64, broker, nonce) MUST stay identical on both sides.
+ */
+function nutricula_free_checkin_bind(array $parts): string
+{
+    return hash('sha256', implode('|', array_merge(['NL3-FREE-BIND'], $parts)));
+}
+
+/**
+ * Statistics only - records a device whose free_checkin was REFUSED, so it is
+ * still counted (and visible in the admin panel) even though it is not a
+ * healthy free-tier user and therefore is NOT in nutricula_unlicensed_checkins.
+ * $reason is one of 'banned', 'update_required', 'artifact_mismatch'; anything
+ * else is ignored. One row per computer (found by machine_id and/or
+ * device_public_key_hash, same identification rule as the unlicensed table),
+ * with a per-reason counter and the most recent reason. Never throws.
+ */
+function nutricula_track_rejected_checkin(mysqli $conn, ?string $machineId, ?string $deviceKeyHash, string $reason, ?string $platformProfile = null, ?string $buildId = null, ?string $observedIp = null): void
+{
+    static $counterColumn = [
+        'banned' => 'banned_count',
+        'update_required' => 'update_required_count',
+        'artifact_mismatch' => 'artifact_mismatch_count',
+    ];
+    if (!isset($counterColumn[$reason])) return;
+    $col = $counterColumn[$reason]; // from the fixed map above - safe to interpolate
+    $machineId = ($machineId !== null && $machineId !== '') ? $machineId : null;
+    $deviceKeyHash = ($deviceKeyHash !== null && $deviceKeyHash !== '') ? $deviceKeyHash : null;
+    $buildId = ($buildId !== null && $buildId !== '') ? $buildId : null;
+    if ($machineId === null && $deviceKeyHash === null) return;
+
+    try {
+        if (mt_rand(1, 50) === 1) {
+            $conn->query(
+                'DELETE FROM nutricula_rejected_checkins
+                 WHERE last_seen_at < (NOW() - INTERVAL ' . REJECTED_CHECKINS_RETENTION_DAYS . ' DAY)
+                 LIMIT 200'
+            );
+        }
+
+        $existingId = null;
+        $existingAge = null;
+        $existingReason = null;
+        if ($machineId !== null) {
+            $stmt = $conn->prepare('SELECT id, last_reason, TIMESTAMPDIFF(SECOND, last_seen_at, NOW()) AS age FROM nutricula_rejected_checkins WHERE machine_id = ? LIMIT 1');
+            $stmt->bind_param('s', $machineId);
+            $stmt->execute();
+            $row = $stmt->get_result()->fetch_assoc();
+            $stmt->close();
+            if ($row) { $existingId = (int)$row['id']; $existingAge = (int)$row['age']; $existingReason = (string)$row['last_reason']; }
+        }
+        if ($existingId === null && $deviceKeyHash !== null) {
+            $stmt = $conn->prepare('SELECT id, last_reason, TIMESTAMPDIFF(SECOND, last_seen_at, NOW()) AS age FROM nutricula_rejected_checkins WHERE device_public_key_hash = ? LIMIT 1');
+            $stmt->bind_param('s', $deviceKeyHash);
+            $stmt->execute();
+            $row = $stmt->get_result()->fetch_assoc();
+            $stmt->close();
+            if ($row) { $existingId = (int)$row['id']; $existingAge = (int)$row['age']; $existingReason = (string)$row['last_reason']; }
+        }
+
+        // Same write throttle as the unlicensed tracker - but only while the
+        // reason is unchanged (a NEW reason, e.g. a device that was outdated
+        // and is now banned, is always written).
+        if ($existingId !== null && $existingAge !== null && $existingAge >= 0 &&
+            $existingAge < CHECKIN_WRITE_MIN_GAP_SEC && $existingReason === $reason) {
+            return;
+        }
+
+        if ($existingId !== null) {
+            $stmt = $conn->prepare(
+                "UPDATE nutricula_rejected_checkins
+                 SET last_seen_at = NOW(),
+                     last_reason = ?,
+                     $col = $col + 1,
+                     machine_id = COALESCE(machine_id, ?),
+                     device_public_key_hash = COALESCE(device_public_key_hash, ?),
+                     platform_profile = COALESCE(?, platform_profile),
+                     last_build_id = COALESCE(?, last_build_id),
+                     last_observed_ip = COALESCE(?, last_observed_ip)
+                 WHERE id = ?"
+            );
+            $stmt->bind_param('ssssssi', $reason, $machineId, $deviceKeyHash, $platformProfile, $buildId, $observedIp, $existingId);
+            $stmt->execute();
+            $stmt->close();
+            return;
+        }
+
+        $stmt = $conn->prepare(
+            "INSERT INTO nutricula_rejected_checkins
+             (machine_id, device_public_key_hash, first_seen_at, last_seen_at, last_reason,
+              $col, platform_profile, last_build_id, last_observed_ip)
+             VALUES (?, ?, NOW(), NOW(), ?, 1, ?, ?, ?)"
+        );
+        $stmt->bind_param('ssssss', $machineId, $deviceKeyHash, $reason, $platformProfile, $buildId, $observedIp);
+        if (!$stmt->execute()) {
+            // Benign race: a concurrent check-in from the same computer
+            // inserted first - not worth logging.
+            if ($conn->errno !== 1062) {
+                error_log('[Nutricula rejected tracking] insert failed: ' . $conn->error);
+            }
+        }
+        $stmt->close();
+    } catch (Throwable $e) {
+        error_log('[Nutricula rejected tracking] ' . $e->getMessage());
     }
 }
 
