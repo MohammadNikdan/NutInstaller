@@ -71,9 +71,17 @@ function nutricula_validate_config(array $config): void
     $requirePositiveInt($config, 'challenge_ttl_seconds');
     $requirePositiveInt($config, 'min_request_gap_seconds');
 
-    if (!array_key_exists('trust_cloudflare_connecting_ip', $config) ||
-        !is_bool($config['trust_cloudflare_connecting_ip'])) {
-        $errors[] = 'trust_cloudflare_connecting_ip must be a boolean (true/false).';
+    /* Optional (2026): shared secret that the Cloudflare "Modify Request
+       Header" rule adds to every request (header X-Nutricula-Edge). Empty or
+       absent = Cloudflare not used / header not trusted. When set it must be
+       long enough to be unguessable. The old trust_cloudflare_connecting_ip /
+       trusted_proxy_cidrs keys are no longer used; leftover copies in an
+       existing license_config.php are simply ignored. */
+    if (array_key_exists('cloudflare_origin_secret', $config)) {
+        $cfSecret = $config['cloudflare_origin_secret'];
+        if (!is_string($cfSecret) || ($cfSecret !== '' && strlen($cfSecret) < 32)) {
+            $errors[] = 'cloudflare_origin_secret must be a string of at least 32 characters (or empty to disable).';
+        }
     }
 
     if (!empty($errors)) {
@@ -675,10 +683,21 @@ function nutricula_client_ip(array $config): string
         throw new RuntimeException('Invalid REMOTE_ADDR.');
     }
 
-    if (!empty($config['trust_cloudflare_connecting_ip']) && nutricula_ip_in_cidrs($remote, (array)($config['trusted_proxy_cidrs'] ?? []))) {
-        $cf = trim((string)($_SERVER['HTTP_CF_CONNECTING_IP'] ?? ''));
-        if (filter_var($cf, FILTER_VALIDATE_IP)) {
-            return $cf;
+    /* Behind Cloudflare the TCP peer ($remote) is a Cloudflare edge address,
+       and the real visitor is in CF-Connecting-IP. That header is only
+       believed when the request ALSO carries our secret header
+       (X-Nutricula-Edge), which a Cloudflare Transform Rule adds to every
+       proxied request and which nobody hitting the origin directly knows.
+       No Cloudflare IP list to keep up to date. A request without the right
+       secret simply falls back to the raw connection IP - always safe. */
+    $secret = (string)($config['cloudflare_origin_secret'] ?? '');
+    if ($secret !== '') {
+        $sent = (string)($_SERVER['HTTP_X_NUTRICULA_EDGE'] ?? '');
+        if ($sent !== '' && hash_equals($secret, $sent)) {
+            $cf = trim((string)($_SERVER['HTTP_CF_CONNECTING_IP'] ?? ''));
+            if (filter_var($cf, FILTER_VALIDATE_IP)) {
+                return $cf;
+            }
         }
     }
 
@@ -1005,32 +1024,6 @@ function nutricula_record_request_timing(array $config, float $startTime): void
     } catch (Throwable $e) {
         error_log('[Nutricula request timing] ' . $e->getMessage());
     }
-}
-
-function nutricula_ip_in_cidrs(string $ip, array $cidrs): bool
-{
-    $ipBin = @inet_pton($ip);
-    if ($ipBin === false) return false;
-
-    foreach ($cidrs as $cidr) {
-        $cidr = trim((string)$cidr);
-        if ($cidr === '' || strpos($cidr, '/') === false) continue;
-        [$network, $bitsText] = explode('/', $cidr, 2);
-        $networkBin = @inet_pton(trim($network));
-        $bits = (int)$bitsText;
-        if ($networkBin === false || strlen($networkBin) !== strlen($ipBin)) continue;
-        $maxBits = strlen($ipBin) * 8;
-        if ($bits < 0 || $bits > $maxBits) continue;
-
-        $fullBytes = intdiv($bits, 8);
-        $remaining = $bits % 8;
-        if ($fullBytes > 0 && substr($ipBin, 0, $fullBytes) !== substr($networkBin, 0, $fullBytes)) continue;
-        if ($remaining === 0) return true;
-
-        $mask = (0xFF << (8 - $remaining)) & 0xFF;
-        if ((ord($ipBin[$fullBytes]) & $mask) === (ord($networkBin[$fullBytes]) & $mask)) return true;
-    }
-    return false;
 }
 
 function nutricula_required_field(array $fields, string $name): string
