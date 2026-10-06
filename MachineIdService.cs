@@ -410,10 +410,21 @@ namespace NutriculaInstaller
             using (Stream input = assembly.GetManifestResourceStream(ResourceName))
             {
                 if (input == null) throw new MachineIdException("A required internal component was not found.");
-                string tempPath = dllPath + ".tmp";
-                using (FileStream output = new FileStream(tempPath, FileMode.Create, FileAccess.Write, FileShare.None)) input.CopyTo(output);
-                if (File.Exists(dllPath)) File.Delete(dllPath);
-                File.Move(tempPath, dllPath);
+                string tempPath = AtomicFile.NewTempPath(dllPath);
+                try
+                {
+                    using (FileStream output = AtomicFile.CreateTemp(tempPath))
+                    {
+                        input.CopyTo(output);
+                        output.Flush(true);
+                    }
+                    AtomicFile.Replace(tempPath, dllPath);
+                }
+                catch
+                {
+                    AtomicFile.TryDelete(tempPath);
+                    throw;
+                }
             }
             return dllPath;
         }

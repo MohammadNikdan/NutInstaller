@@ -51,6 +51,7 @@
     <Compile Include="Models.cs" />
     <Compile Include="AppConfig.cs" />
     <Compile Include="InstallerService.cs" />
+    <Compile Include="AtomicFile.cs" />
     <Compile Include="UninstallService.cs" />
     <Compile Include="MachineIdService.cs" />
     <Compile Include="CryptoService.cs" />

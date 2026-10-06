@@ -311,7 +311,7 @@ namespace NutriculaInstaller
 
                 string scriptPath = Path.Combine(
                     Path.GetTempPath(), "NutriculaUninstallCleanup_" + Guid.NewGuid().ToString("N") + ".cmd");
-                File.WriteAllText(scriptPath, script);
+                AtomicFile.WriteAllText(scriptPath, script);
 
                 Process.Start(new ProcessStartInfo
                 {

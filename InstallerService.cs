@@ -706,7 +706,7 @@ namespace NutriculaInstaller
                 string thisExePath = System.Reflection.Assembly.GetExecutingAssembly().Location;
                 if (!string.IsNullOrEmpty(thisExePath) && File.Exists(thisExePath))
                 {
-                    File.Copy(thisExePath, uninstallExePath, overwrite: true);
+                    AtomicFile.Copy(thisExePath, uninstallExePath);
                 }
 
                 using (RegistryKey key = Registry.CurrentUser.CreateSubKey(
@@ -1264,8 +1264,10 @@ namespace NutriculaInstaller
                 string dir = Path.GetDirectoryName(path);
                 if (string.IsNullOrEmpty(dir)) throw new IOException("Could not determine Common\\Files directory.");
                 Directory.CreateDirectory(dir);
-                if (File.Exists(path)) File.Delete(path);
-                File.WriteAllBytes(path, rawResponseBytes ?? new byte[0]);
+                // Atomic: written to a temp file, flushed, then swapped over the
+                // real file in one step - the Broker/EA can never read a partial
+                // license file, and the old one is never deleted first.
+                AtomicFile.WriteAllBytes(path, rawResponseBytes ?? new byte[0]);
                 if (!File.Exists(path)) throw new IOException("License file was not created.");
                 if (rawResponseBytes != null && new FileInfo(path).Length != rawResponseBytes.Length)
                     throw new IOException("License file size verification failed.");
@@ -1323,11 +1325,21 @@ namespace NutriculaInstaller
                 if (input == null) throw new FileNotFoundException("Embedded resource not found: " + item.ManifestName);
                 string destinationFileName = overrideFileName ?? item.FileName;
                 string destination = LongPath(Path.Combine(destinationDirectory, destinationFileName));
-                string temp = destination + ".nutricula_tmp";
-                using (FileStream output = new FileStream(temp, FileMode.Create, FileAccess.Write, FileShare.None, 64 * 1024, true))
-                    await input.CopyToAsync(output, 64 * 1024, token).ConfigureAwait(true);
-                if (File.Exists(destination)) File.Delete(destination);
-                File.Move(temp, destination);
+                string temp = AtomicFile.NewTempPath(destination);
+                try
+                {
+                    using (FileStream output = AtomicFile.CreateTemp(temp, 64 * 1024, true))
+                    {
+                        await input.CopyToAsync(output, 64 * 1024, token).ConfigureAwait(true);
+                        output.Flush(true);
+                    }
+                    AtomicFile.Replace(temp, destination);
+                }
+                catch
+                {
+                    AtomicFile.TryDelete(temp);
+                    throw;
+                }
             }
         }
 
