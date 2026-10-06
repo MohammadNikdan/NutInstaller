@@ -209,6 +209,10 @@
           <option value="artifact_mismatch" data-i18n="minus2_reason_artifact_mismatch">دستکاری یا خرابی فایل‌های برنامه</option>
           <option value="transport_exhausted" data-i18n="minus2_reason_transport_exhausted">عدم موفقیت در ارتباط با سرور لایسنس</option>
           <option value="machineid_generation_failed" data-i18n="minus2_reason_machineid_failed">خطا در شناسایی سخت‌افزار دستگاه</option>
+          <option value="artifact_check_failed" data-i18n="minus2_reason_artifact_check_failed">فایل برنامه روی دستگاه ناقص یا دستکاری شده (تشخیص محلی)</option>
+          <option value="license_file_invalid" data-i18n="minus2_reason_license_file_invalid">فایل لایسنس روی دستگاه خراب یا دستکاری شده</option>
+          <option value="free_checkin_failed" data-i18n="minus2_reason_free_checkin_failed">نسخهٔ رایگان: پاسخ معتبر از سرور نیامد</option>
+          <option value="server_rejected" data-i18n="minus2_reason_server_rejected">رد شدن توسط سرور (امضای نامعتبر، چالش و ...)</option>
         </select>
         <select id="minus2Kind">
           <option value="" data-i18n="minus2_kind_all">رایگان و پریمیوم</option>
@@ -219,6 +223,28 @@
       </div>
       <div id="minus2Results"></div>
       <div id="minus2Pager" class="pager"></div>
+    </section>
+
+    <!-- Devices whose free check-in was refused: banned / outdated / tampered.
+         They are deliberately NOT part of the free-user counts above. -->
+    <section class="panel">
+      <div class="panel-head">
+        <h2 data-i18n="rejected_title">دستگاه‌های ردشده (بن‌شده، نسخهٔ قدیمی، دستکاری‌شده)</h2>
+      </div>
+      <p class="small muted" data-i18n="rejected_hint">این دستگاه‌ها هنگام بررسی رایگان رد شده‌اند و در آمار کاربران رایگان فعال حساب نمی‌شوند.</p>
+      <div id="rejectedSummary" class="small muted"></div>
+      <div class="search-row">
+        <input id="rejectedQuery" type="text" data-i18n-placeholder="rejected_placeholder" placeholder="machine_id یا device_key_hash">
+        <select id="rejectedReason">
+          <option value="" data-i18n="rejected_reason_all">همه علت‌ها</option>
+          <option value="banned" data-i18n="rejected_reason_banned">بن‌شده</option>
+          <option value="update_required" data-i18n="rejected_reason_update_required">نسخهٔ قدیمی (نیاز به به‌روزرسانی)</option>
+          <option value="artifact_mismatch" data-i18n="rejected_reason_artifact_mismatch">دستکاری یا خرابی فایل‌ها</option>
+        </select>
+        <button id="rejectedSearchBtn" class="btn primary" data-i18n="search_btn">جستجو</button>
+      </div>
+      <div id="rejectedResults"></div>
+      <div id="rejectedPager" class="pager"></div>
     </section>
 
     <!-- Fingerprint sign-in management - last card on purpose -->

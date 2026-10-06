@@ -6,7 +6,7 @@
 // instantly when you open the installed PWA, before the first live fetch
 // completes.
 
-const CACHE_NAME = 'nutricula-admin-shell-v22';
+const CACHE_NAME = 'nutricula-admin-shell-v23';
 const SHELL_FILES = [
   './',
   './index.html',

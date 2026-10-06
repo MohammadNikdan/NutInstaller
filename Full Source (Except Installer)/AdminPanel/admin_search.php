@@ -124,6 +124,25 @@ try {
         $stmt->close();
     }
 
+    // Devices whose free_checkin was refused (banned / outdated / tampered) -
+    // they are not in nutricula_unlicensed_checkins (verified free installs
+    // only), so an exact machine_id / device_key_hash search shows them here.
+    $rejectedDevices = [];
+    if (($scope === 'all' || $scope === 'free') && preg_match('/\A[0-9A-Fa-f]{64}\z/', $q)) {
+        $upper = strtoupper($q);
+        $stmt = $conn->prepare(
+            'SELECT id, machine_id, device_public_key_hash, platform_profile, first_seen_at, last_seen_at,
+                    last_reason, banned_count, update_required_count, artifact_mismatch_count, last_build_id
+             FROM nutricula_rejected_checkins WHERE machine_id = ? OR device_public_key_hash = ?
+             ORDER BY last_seen_at DESC LIMIT 20'
+        );
+        $stmt->bind_param('ss', $upper, $upper);
+        $stmt->execute();
+        $res = $stmt->get_result();
+        while ($row = $res->fetch_assoc()) { $rejectedDevices[] = $row; }
+        $stmt->close();
+    }
+
     // Attach current ban status to each result so the frontend can show a
     // single ban/unban toggle without a second round trip.
     $banLookup = function (array $rows, string $keyCol, bool $byLicense) use ($conn): array {
@@ -145,11 +164,13 @@ try {
     };
     $licenses = $banLookup($licenses, 'id', true);
     $freeDevices = $banLookup($freeDevices, 'machine_id', false);
+    $rejectedDevices = $banLookup($rejectedDevices, 'machine_id', false);
 
     $conn->close();
     nutricula_admin_send_json([
         'licenses' => $licenses, 'licenses_total' => $licensesTotal,
         'free_devices' => $freeDevices, 'free_devices_total' => $freeDevicesTotal,
+        'rejected_devices' => $rejectedDevices,
         'page' => $page, 'page_size' => $pageSize,
     ]);
 

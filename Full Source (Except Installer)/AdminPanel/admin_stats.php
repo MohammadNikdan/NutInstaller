@@ -581,7 +581,7 @@ try {
 
     // ------------------------------------------------------------------
     // Build/version adoption among CURRENTLY ACTIVE installs (within the
-    // selected window), free + premium combined, grouped by version via
+    // selected window), free (verified + outdated-rejected) + premium combined, grouped by version via
     // nutricula_build_manifests. "Latest" = the manifest with the most
     // recent created_at (i.e. the most recently published build row) -
     // this panel doesn't read the public license_config.php, so it derives
@@ -604,12 +604,29 @@ try {
              SELECT last_build_id, 'premium' src FROM nutricula_licenses
              WHERE status='active' AND last_seen_at IS NOT NULL
                AND last_seen_at >= FROM_UNIXTIME(?) AND last_seen_at <= FROM_UNIXTIME(?) AND last_build_id IS NOT NULL
+             UNION ALL
+             /* Free installs that are OUTDATED are no longer in
+                nutricula_unlicensed_checkins (only fully verified devices are) -
+                they live in nutricula_rejected_checkins with last_reason
+                'update_required'. Counted here as free, once per computer: a
+                device that ALSO has a row in the unlicensed table inside this
+                same window (it checked in fine just before the version became
+                mandatory) is already counted above and is skipped. */
+             SELECT r.last_build_id, 'free' src FROM nutricula_rejected_checkins r
+             WHERE r.last_reason = 'update_required'
+               AND r.last_seen_at >= FROM_UNIXTIME(?) AND r.last_seen_at <= FROM_UNIXTIME(?) AND r.last_build_id IS NOT NULL
+               AND NOT EXISTS (
+                   SELECT 1 FROM nutricula_unlicensed_checkins u
+                   WHERE u.last_seen_at >= FROM_UNIXTIME(?) AND u.last_seen_at <= FROM_UNIXTIME(?)
+                     AND ((u.machine_id IS NOT NULL AND u.machine_id = r.machine_id)
+                          OR (u.device_public_key_hash IS NOT NULL AND u.device_public_key_hash = r.device_public_key_hash))
+               )
          ) t
          LEFT JOIN nutricula_build_manifests m ON m.build_id = t.last_build_id
          GROUP BY COALESCE(m.version, 'unknown')
          ORDER BY total_count DESC"
     );
-    $stmt->bind_param('iiii', $sinceTs, $untilTs, $sinceTs, $untilTs);
+    $stmt->bind_param('iiiiiiii', $sinceTs, $untilTs, $sinceTs, $untilTs, $sinceTs, $untilTs, $sinceTs, $untilTs);
     $stmt->execute();
     $res = $stmt->get_result();
     $totalWithBuildInfo = 0;

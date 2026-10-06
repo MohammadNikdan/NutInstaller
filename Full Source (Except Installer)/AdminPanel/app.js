@@ -79,6 +79,26 @@ const DICT = {
     minus2_kind_all: 'رایگان و پریمیوم',
     minus2_kind_free: 'فقط رایگان',
     minus2_kind_premium: 'فقط پریمیوم',
+    minus2_reason_artifact_check_failed: 'فایل برنامه روی دستگاه ناقص یا دستکاری شده (تشخیص محلی)',
+    minus2_reason_license_file_invalid: 'فایل لایسنس روی دستگاه خراب یا دستکاری شده',
+    minus2_reason_free_checkin_failed: 'نسخهٔ رایگان: پاسخ معتبر از سرور نیامد',
+    minus2_reason_server_rejected: 'رد شدن توسط سرور (امضای نامعتبر، چالش و ...)',
+
+    rejected_title: 'دستگاه‌های ردشده (بن‌شده، نسخهٔ قدیمی، دستکاری‌شده)',
+    rejected_hint: 'این دستگاه‌ها هنگام بررسی رایگان رد شده‌اند و در آمار کاربران رایگان فعال حساب نمی‌شوند.',
+    rejected_placeholder: 'machine_id یا device_key_hash',
+    rejected_reason_all: 'همه علت‌ها',
+    rejected_reason_banned: 'بن‌شده',
+    rejected_reason_update_required: 'نسخهٔ قدیمی (نیاز به به‌روزرسانی)',
+    rejected_reason_artifact_mismatch: 'دستکاری یا خرابی فایل‌ها',
+    rejected_summary: 'در بازهٔ ۳۰ روز اخیر: {banned} بن‌شده، {update_required} نسخهٔ قدیمی، {artifact_mismatch} دستکاری‌شده',
+    th_last_reason: 'آخرین علت',
+    th_counts: 'تعداد دفعات',
+    th_build: 'نسخه (build)',
+    rejected_installs_title: 'دستگاه‌های ردشده',
+    counts_banned: 'بن',
+    counts_outdated: 'قدیمی',
+    counts_tampered: 'دستکاری',
 
     card_free_active: 'کاربران رایگان فعال',
     card_premium_active: 'کاربران پریمیوم فعال',
@@ -274,6 +294,26 @@ const DICT = {
     minus2_kind_all: 'Free & premium',
     minus2_kind_free: 'Free only',
     minus2_kind_premium: 'Premium only',
+    minus2_reason_artifact_check_failed: 'App file missing or modified on the device (local check)',
+    minus2_reason_license_file_invalid: 'License file on the device is corrupted or modified',
+    minus2_reason_free_checkin_failed: 'Free install: no valid answer from the server',
+    minus2_reason_server_rejected: 'Rejected by the server (invalid signature, challenge, …)',
+
+    rejected_title: 'Rejected devices (banned, outdated, tampered)',
+    rejected_hint: 'These devices were refused at the free check-in and are not counted as active free users.',
+    rejected_placeholder: 'machine_id or device_key_hash',
+    rejected_reason_all: 'All reasons',
+    rejected_reason_banned: 'Banned',
+    rejected_reason_update_required: 'Outdated build (update required)',
+    rejected_reason_artifact_mismatch: 'Files tampered or corrupted',
+    rejected_summary: 'Last 30 days: {banned} banned, {update_required} outdated, {artifact_mismatch} tampered',
+    th_last_reason: 'Last reason',
+    th_counts: 'Times seen',
+    th_build: 'Build',
+    rejected_installs_title: 'Rejected devices',
+    counts_banned: 'banned',
+    counts_outdated: 'outdated',
+    counts_tampered: 'tampered',
 
     card_free_active: 'Active free users',
     card_premium_active: 'Active premium users',
@@ -567,6 +607,7 @@ function setLang(lang) {
   if ($('searchInput') && $('searchInput').value.trim()) runSearch(state.searchPage || 1);
   loadBannedList();
   searchMinus2(state.minus2Page || 1);
+  searchRejected(state.rejectedPage || 1);
   if (!$('dashboard').hidden) loadPasskeys();
 }
 
@@ -1501,6 +1542,26 @@ function renderSearchResults(data) {
     rowsHtml.push('</tbody></table></div>');
   }
 
+  if (data.rejected_devices && data.rejected_devices.length) {
+    rowsHtml.push(`<h3 class="small muted">${t('rejected_installs_title')}</h3>`);
+    rowsHtml.push('<div class="table-wrap"><table><thead><tr>' +
+      `<th>${t('th_machine_id')}</th><th>${t('th_os')}</th><th>${t('th_last_reason')}</th><th>${t('th_build')}</th><th>${t('th_first_seen')}</th><th>${t('th_last_seen')}</th><th>${t('th_ban')}</th><th></th>` +
+      '</tr></thead><tbody>');
+    for (const r of data.rejected_devices) {
+      rowsHtml.push(`<tr>
+        <td>${escapeHtml((r.machine_id || '').slice(0, 16))}…</td>
+        <td>${escapeHtml(r.platform_profile || '-')}</td>
+        <td>${escapeHtml(rejectedReasonLabel(r.last_reason))}</td>
+        <td>${escapeHtml(r.last_build_id || '-')}</td>
+        <td>${escapeHtml(fmtDateTime(r.first_seen_at))}</td>
+        <td>${escapeHtml(fmtDateTime(r.last_seen_at))}</td>
+        <td>${r.banned ? `<span class="badge banned">${t('badge_banned')}</span>` : `<span class="badge ok">${t('badge_free')}</span>`}</td>
+        <td><button class="btn small ${r.banned ? '' : 'danger'}" data-ban-free="${escapeHtml(r.machine_id || '')}" data-device-hash="${escapeHtml(r.device_public_key_hash || '')}" data-action="${r.banned ? 'unban' : 'ban'}">${r.banned ? t('action_unban') : t('action_ban')}</button></td>
+      </tr>`);
+    }
+    rowsHtml.push('</tbody></table></div>');
+  }
+
   if (!rowsHtml.length) {
     box.innerHTML = `<div class="empty-state">${t('nothing_found')}</div>`;
     $('searchPager').innerHTML = '';
@@ -1640,6 +1701,21 @@ function renderPager(pagerElId, page, total, pageSize, onPage) {
   if (nextBtn) nextBtn.addEventListener('click', () => onPage(page + 1));
 }
 
+// Human label for a -2 reason code; unknown/future codes fall back to the raw
+// code so a new server-side reason is never shown blank.
+function minus2ReasonLabel(code) {
+  const map = {
+    artifact_mismatch: 'minus2_reason_artifact_mismatch',
+    transport_exhausted: 'minus2_reason_transport_exhausted',
+    machineid_generation_failed: 'minus2_reason_machineid_failed',
+    artifact_check_failed: 'minus2_reason_artifact_check_failed',
+    license_file_invalid: 'minus2_reason_license_file_invalid',
+    free_checkin_failed: 'minus2_reason_free_checkin_failed',
+    server_rejected: 'minus2_reason_server_rejected',
+  };
+  return map[code] ? t(map[code]) : (code || '-');
+}
+
 function renderMinus2(data) {
   const box = $('minus2Results');
   if (!data.rows.length) {
@@ -1650,7 +1726,7 @@ function renderMinus2(data) {
   const rows = data.rows.map((r) => `<tr>
     <td>${escapeHtml(fmtDateTime(r.occurred_at))}</td>
     <td>${escapeHtml(r.install_kind)}</td>
-    <td>${escapeHtml(r.reason_code)}</td>
+    <td>${escapeHtml(minus2ReasonLabel(r.reason_code))}</td>
     <td>${escapeHtml(r.user_email || '-')}</td>
     <td>${escapeHtml((r.machine_id || '').slice(0, 16))}${r.machine_id ? '…' : '-'}</td>
     <td>${escapeHtml(r.platform_profile || '-')}</td>
@@ -1660,6 +1736,63 @@ function renderMinus2(data) {
     <th>${t('th_time')}</th><th>${t('th_type')}</th><th>${t('th_cause')}</th><th>${t('th_email')}</th><th>${t('th_machine_id')}</th><th>${t('th_os')}</th><th>${t('th_details')}</th>
   </tr></thead><tbody>${rows}</tbody></table></div>`;
   renderPager('minus2Pager', data.page, data.total, data.page_size, searchMinus2);
+}
+
+// ------------------------------------------------- Rejected devices ---
+
+$('rejectedSearchBtn').addEventListener('click', () => searchRejected(1));
+$('rejectedQuery').addEventListener('keydown', (e) => { if (e.key === 'Enter') searchRejected(1); });
+
+function rejectedReasonLabel(reason) {
+  const key = 'rejected_reason_' + reason;
+  return DICT.fa[key] !== undefined ? t(key) : (reason || '-');
+}
+
+async function searchRejected(page) {
+  state.rejectedPage = page;
+  const q = $('rejectedQuery').value.trim();
+  const reason = $('rejectedReason').value;
+  const box = $('rejectedResults');
+  box.innerHTML = `<div class="empty-state">${t('searching')}</div>`;
+  try {
+    const params = new URLSearchParams({ page: String(page), page_size: '50', days: '30' });
+    if (q) params.set('q', q);
+    if (reason) params.set('reason', reason);
+    const data = await api('admin_rejected.php?' + params.toString());
+    renderRejected(data);
+  } catch (e) {
+    box.innerHTML = `<div class="empty-state">${t('error_prefix')}${e.message}</div>`;
+  }
+}
+
+function renderRejected(data) {
+  const box = $('rejectedResults');
+  const sm = data.summary || {};
+  $('rejectedSummary').textContent = t('rejected_summary', {
+    banned: fmtNum(sm.banned || 0),
+    update_required: fmtNum(sm.update_required || 0),
+    artifact_mismatch: fmtNum(sm.artifact_mismatch || 0),
+  });
+  if (!data.rows.length) {
+    box.innerHTML = `<div class="empty-state">${t('nothing_found')}</div>`;
+    $('rejectedPager').innerHTML = '';
+    return;
+  }
+  const rows = data.rows.map((r) => `<tr>
+    <td>${escapeHtml(fmtDateTime(r.last_seen_at))}</td>
+    <td>${escapeHtml(rejectedReasonLabel(r.last_reason))}</td>
+    <td>${escapeHtml(t('counts_banned'))} ${fmtNum(r.banned_count)} · ${escapeHtml(t('counts_outdated'))} ${fmtNum(r.update_required_count)} · ${escapeHtml(t('counts_tampered'))} ${fmtNum(r.artifact_mismatch_count)}</td>
+    <td>${escapeHtml((r.machine_id || '').slice(0, 16))}${r.machine_id ? '…' : '-'}</td>
+    <td>${escapeHtml(r.platform_profile || '-')}</td>
+    <td>${escapeHtml(r.last_build_id || '-')}</td>
+    <td>${escapeHtml(r.last_observed_ip || '-')}</td>
+    <td>${escapeHtml(fmtDateTime(r.first_seen_at))}</td>
+    <td>${r.banned ? `<span class="badge banned">${t('badge_banned')}</span>` : ''}</td>
+  </tr>`).join('');
+  box.innerHTML = `<div class="table-wrap"><table><thead><tr>
+    <th>${t('th_last_seen')}</th><th>${t('th_last_reason')}</th><th>${t('th_counts')}</th><th>${t('th_machine_id')}</th><th>${t('th_os')}</th><th>${t('th_build')}</th><th>${t('th_ip')}</th><th>${t('th_first_seen')}</th><th>${t('th_ban')}</th>
+  </tr></thead><tbody>${rows}</tbody></table></div>`;
+  renderPager('rejectedPager', data.page, data.total, data.page_size, searchRejected);
 }
 
 // ------------------------------------------------------------- Startup ---
