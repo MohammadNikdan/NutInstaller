@@ -67,15 +67,11 @@ return [
        license_common.php for the full state machine. */
     'clone_block_hours' => 24,
 
-    /* Set true ONLY when the origin is locked to trusted Cloudflare proxy ranges. */
-    'trust_cloudflare_connecting_ip' => false,
-
-    /* Keep this list current with Cloudflare's published IP ranges if the option above is enabled. */
-    'trusted_proxy_cidrs' => [
-        // '173.245.48.0/20',
-        // '103.21.244.0/22',
-        // '103.22.200.0/22',
-        // '103.31.4.0/22',
-        // ...
-    ],
+    /* Cloudflare real-visitor-IP trust. Leave '' if you do NOT use Cloudflare.
+       If you do: create a Cloudflare "Request Header Transform Rule" that sets the
+       static header  X-Nutricula-Edge  to a long random secret, and put the SAME
+       secret here (at least 32 characters, letters and digits). The server then
+       believes CF-Connecting-IP only on requests that carry that secret, so no
+       Cloudflare IP list is needed. Keep SSL/TLS mode on Full (strict). */
+    'cloudflare_origin_secret' => '',
 ];
