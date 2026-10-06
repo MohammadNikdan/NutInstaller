@@ -53,8 +53,9 @@ return [
 
     /* THE enforced anti-abuse gate. A new request (challenge, or an existing-
        license signup) for the same license/device is rejected as too_early
-       if fewer than this many seconds have passed since the last request
-       (successful or rejected) for that license. Set well below the
+       if fewer than this many seconds have passed since the last ACCEPTED
+       request for that license (a rejected too_early request does NOT restart
+       the interval). Set well below the
        client's own minimum random offset (4:00) so a legitimate client
        following its own schedule never trips this - 3 minutes leaves the
        same ~61-second margin as before. There is deliberately NO upper
