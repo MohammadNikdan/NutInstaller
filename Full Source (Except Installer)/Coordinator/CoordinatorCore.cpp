@@ -49,6 +49,109 @@ constexpr long long MAX_RANDOM_OFFSET_SEC = 900;   // 15:00
 // all, regardless of how much of its own natural validity remains.
 constexpr long long MAX_SERVER_SILENCE_SEC = 21 * 60; // 21:00
 
+// Soft handling of "throttling / race" Rejects (2026). These Rejects mean
+// "not right now / try again with a fresh challenge", never "this install is
+// wrong":
+//   too_early              - previous request accepted < min gap ago (only ever
+//                            returned after the device signature verified)
+//   challenge_rate_limited - too many challenges issued recently
+//   challenge_already_used / challenge_expired / challenge_not_found
+//                          - the challenge raced with another request (e.g. a
+//                            second Broker, or someone else asked for a challenge
+//                            for this license and invalidated ours)
+// Instead of demoting a perfectly valid licensed install (or, under the -2
+// rule, killing the EA) the Coordinator keeps trusting the cached,
+// signature-verified lease and simply retries later with a fresh challenge.
+//
+// SECURITY - why this cannot be used to keep a lease alive that the server
+// would refuse. These Rejects carry no binding to a license or request, so a
+// cracker who also owns ANY valid second license (or who replays old
+// captures) can obtain genuine, signed ones and feed them to this Broker via a
+// local proxy. Therefore this handling is deliberately inert as an attack:
+//   1. A soft Reject NEVER renews the server-contact clock (no
+//      UpdateClockAnchor). The cached lease is still trusted only within
+//      MAX_SERVER_SILENCE_SEC (21 min) of the last GENUINE contact - exactly
+//      the tolerance a plain blocked network already gets. The anchor is
+//      persisted, so restarting the Broker does not reset that bound.
+//   2. At most SOFT_REJECT_MAX_STREAK absorptions in a row; after that (or
+//      once the 21 minutes are used up) the ordinary Reject policy applies
+//      (-2 for these reasons).
+//   3. The Reject's own server timestamp must be fresh
+//      (SOFT_REJECT_MAX_AGE_SEC), so old captured Rejects cannot be replayed.
+//   4. Every real verdict is NOT soft: banned, artifact_mismatch,
+//      update_required, license_inactive/expired/not_found, machine_mismatch,
+//      device_key_mismatch, signature_invalid and blocked are all evaluated by
+//      the server BEFORE any of these throttling checks (blocked, the only one
+//      checked after the time lock, at worst arrives one retry later).
+constexpr long long SOFT_REJECT_MARGIN_SEC = 20;
+constexpr long long SOFT_REJECT_MIN_WAIT_SEC = 30;
+constexpr long long SOFT_REJECT_MAX_WAIT_SEC = 600;
+constexpr long long SOFT_REJECT_MAX_AGE_SEC = 300;
+constexpr int SOFT_REJECT_MAX_STREAK = 3;
+
+bool IsSoftRejectReason(const std::string& reason)
+{
+    return reason == "too_early" || reason == "challenge_rate_limited" ||
+           reason == "challenge_already_used" || reason == "challenge_expired" ||
+           reason == "challenge_not_found";
+}
+
+// Tier policy for a signature-verified server Reject (2026, project owner's
+// rule). A licensed install drops from 2 to 1 only when the server says the
+// license itself is not (or no longer) usable for this install:
+//   license_expired      - the license period has ended
+//   license_inactive     - the license was deactivated
+//   license_not_found    - no such license on the server
+//   machine_mismatch     - license belongs to a different machine
+//   device_key_mismatch  - license belongs to a different device key
+// The two other non-licensed outcomes keep their own conditions:
+// "update_required" -> -50 and "blocked"/"banned" -> -100. (too_early and
+// challenge_rate_limited never get here while the soft handling above
+// applies - they keep the cached lease.) EVERY other reason - artifact_mismatch,
+// signature_invalid, challenge_* and anything the server may add later - is a
+// verification/consistency problem and collapses straight to TIER_FAILED
+// (published as -2), identically for free and licensed installs.
+int TierForRejectReason(const std::string& reason)
+{
+    if (reason == "license_expired" || reason == "license_inactive" ||
+        reason == "license_not_found" || reason == "machine_mismatch" ||
+        reason == "device_key_mismatch") return TIER_FREE;
+    if (reason == "update_required") return TIER_UPDATE_REQUIRED;
+    if (reason == "blocked" || reason == "banned") return TIER_BLOCKED;
+    return TIER_FAILED;
+}
+
+// What a signed, request-bound free_checkin ANSWER means (2026). Only the four
+// answers a free_checkin can legitimately produce are recognized; anything
+// else - above all any licensed-path reason such as license_not_found, which
+// maps to TIER_FREE in TierForRejectReason - is NOT a verdict here (returns
+// -1): otherwise a genuine signed Reject captured from a different request
+// could be fed to a tampered install to make it look "free and fine".
+//   free_ok           - all clear                          -> TIER_FREE
+//   banned            - admin ban                          -> TIER_BLOCKED (-100)
+//   update_required   - mandatory update                   -> TIER_UPDATE_REQUIRED (-50)
+//   artifact_mismatch - server-confirmed tamper/hash diff  -> TIER_FAILED (-2)
+int FreeVerdictTier(const std::string& reason)
+{
+    if (reason == "free_ok") return TIER_FREE;
+    if (reason == "banned") return TIER_BLOCKED;
+    if (reason == "update_required") return TIER_UPDATE_REQUIRED;
+    if (reason == "artifact_mismatch") return TIER_FAILED;
+    return -1;
+}
+
+// Outcome of one free-tier verification round (see runFreeCheckin in
+// WorkerLoop).
+struct FreeRoundOutcome
+{
+    bool ran = false;          // a network round was actually attempted (it was due)
+    bool gotVerdict = false;   // a genuine, bound, signed answer arrived
+    bool failedNow = false;    // no verdict AND the tolerance ran out -> TIER_FAILED set
+    int tier = TIER_FREE;      // verdict tier (valid when gotVerdict) / TIER_FAILED (failedNow)
+    std::string canonical;     // signed canonical to publish (empty for FREE / FAILED)
+    std::string signatureB64;
+};
+
 // Free-tier telemetry only (2026): how often an ACTUAL network free_checkin
 // request is sent when there is no lease at all. Deliberately much longer
 // than the paid-tier verify window above - this is pure statistics (which
@@ -57,8 +160,37 @@ constexpr long long MAX_SERVER_SILENCE_SEC = 21 * 60; // 21:00
 // fast local "do I have a lease" determination itself is NOT slowed down by
 // this - the Coordinator still wakes on the same MIN_RANDOM_OFFSET_SEC
 // cycle and sets TIER_FREE immediately either way; only the network POST
-// itself is throttled to this interval via m_lastFreeCheckinSentAt.
+// itself is throttled to this interval via m_freeNextAttemptAt.
 constexpr long long FREE_CHECKIN_INTERVAL_SEC = 1800; // 30:00
+
+// Free-tier "no answer is -2" rule (2026, project owner's explicit request - a
+// free install must be exactly as strict as a licensed one: silence or a
+// non-answer is never "all clear"). Two clocks, deliberately separate:
+//
+//  TRUST clock - the persisted Clock Anchor (the server timestamp of the last
+//  genuinely signature-verified answer; see UpdateClockAnchor). It advances
+//  ONLY on a genuine, request-bound, signed answer, and it survives Broker
+//  restarts, so neither failed attempts nor restarting/killing the Broker nor
+//  cutting the VPN can ever buy time. A free install may keep running without
+//  a genuine answer for at most FREE_MAX_SERVER_SILENCE_SEC (40 min = the 30:00
+//  cadence + 10:00 of retries, the free-tier counterpart of the licensed
+//  path's 21:00 MAX_SERVER_SILENCE_SEC); past that, or on the very first
+//  contact when there is no anchor at all, the outcome is TIER_FAILED (-2).
+//
+//  ATTEMPT clock - m_freeNextAttemptAt, only the pacing of requests: 30:00 after
+//  a genuine answer, a doubling back-off from FREE_RETRY_INTERVAL_SEC after a
+//  failed round. Each round is FREE_ATTEMPTS_PER_ROUND (3) tries 2 s apart. So
+//  a failed attempt does not move the trust clock (no free time), yet the
+//  server is not hammered either. There is deliberately NO grace beyond the
+//  limit - see SilenceStillTolerated.
+constexpr long long FREE_RETRY_INTERVAL_SEC = 120;          // 2:00 - first retry delay
+constexpr long long FREE_RETRY_MAX_SEC = 480;               // 8:00 - cap of the doubling back-off
+constexpr long long FREE_MAX_SERVER_SILENCE_SEC = 40 * 60;  // 40:00
+// A free round is deliberately lighter than a licensed one: 3 tries 2 s apart
+// (a licensed refresh uses MAX_ATTEMPTS = 10). Failed rounds are retried with a
+// doubling back-off (2, 4, 8, 8... min, +-20% jitter) so an outage or a
+// rate-limited shared IP is never hammered by every free install at once.
+constexpr int FREE_ATTEMPTS_PER_ROUND = 3;
 
 // EA-activity gate (2026): how long a "the EA/DLL pinged us over the pipe"
 // signal (see CoordinatorCore::NoteEaActivity) stays "recent" before
@@ -160,10 +292,68 @@ std::string GenerateRandomNumberField()
     return s;
 }
 
+std::string ToLowerAscii(std::string v)
+{
+    for (char& c : v) if (c >= 'A' && c <= 'Z') c = static_cast<char>(c - 'A' + 'a');
+    return v;
+}
+
+std::string ToUpperAscii(std::string v)
+{
+    for (char& c : v) if (c >= 'a' && c <= 'z') c = static_cast<char>(c - 'a' + 'A');
+    return v;
+}
+
+std::string HexEncode(const unsigned char* data, size_t len)
+{
+    static const char* digits = "0123456789abcdef";
+    std::string out;
+    out.reserve(len * 2);
+    for (size_t i = 0; i < len; i++)
+    {
+        out.push_back(digits[data[i] >> 4]);
+        out.push_back(digits[data[i] & 0x0F]);
+    }
+    return out;
+}
+
+// Lowercase hex SHA-256 of a string; empty on failure (callers treat empty as
+// "cannot bind" = the round simply fails, never a pass).
+std::string Sha256HexOfString(const std::string& data)
+{
+    unsigned char digest[32] = {};
+    bool ok = false;
+    BCRYPT_ALG_HANDLE alg = nullptr;
+    if (BCryptOpenAlgorithmProvider(&alg, BCRYPT_SHA256_ALGORITHM, nullptr, 0) >= 0)
+    {
+        BCRYPT_HASH_HANDLE hash = nullptr;
+        if (BCryptCreateHash(alg, &hash, nullptr, 0, nullptr, 0, 0) >= 0)
+        {
+            ok = BCryptHashData(hash, (PUCHAR)data.data(), (ULONG)data.size(), 0) >= 0 &&
+                 BCryptFinishHash(hash, digest, 32, 0) >= 0;
+            BCryptDestroyHash(hash);
+        }
+        BCryptCloseAlgorithmProvider(alg, 0);
+    }
+    return ok ? HexEncode(digest, 32) : std::string();
+}
+
+// 16 random bytes as 32 hex chars - the per-request nonce of a free_checkin.
+std::string RandomNonceHex32()
+{
+    unsigned char buf[16] = {};
+    if (BCryptGenRandom(nullptr, buf, sizeof(buf), BCRYPT_USE_SYSTEM_PREFERRED_RNG) < 0)
+    {
+        for (int i = 0; i < 16; i++) buf[i] = static_cast<unsigned char>(SecureRandomBelow(256));
+    }
+    return HexEncode(buf, sizeof(buf));
+}
+
 struct LocalFileState
 {
     bool fileExists = false;
     bool fileValid = false;
+    bool fileLocked = false;    // exists but cannot be opened/read right now (lock / access denied / antivirus) -> TIER_FILE_LOCKED (-5)
     bool hasLease = false;
     VerifiedLease lease;
     long long requestedAt = 0;
@@ -264,20 +454,39 @@ std::wstring GetClockAnchorFilePathW()
 // backward past the wall clock's own forward progress" logic below) -
 // it cannot be used to push the estimate further ahead than the real
 // wall clock already independently shows.
+// Authentication tag of an anchor record (2026). The record is "w|t|mac" with
+// mac = SHA-256 over the two values plus a constant compiled into this binary.
+// A record that is missing, hand-edited, truncated or in the old
+// unauthenticated format fails the check and is treated as NO anchor, which
+// every caller handles strictly (see SilenceStillTolerated): deleting or
+// editing the file never buys time, and cannot be used to fake "fresh contact".
+// Forging a valid record needs the constant, i.e. reverse-engineering this
+// binary - the same bar as patching the Broker outright.
+std::string AnchorMac(long long w, unsigned long long t)
+{
+    char buf[160];
+    int n = sprintf_s(buf, "NUTRICULA-CLOCKANCHOR-V3|%lld|%llu|k7Qx2mV9pL4wZ8tR", w, t);
+    if (n <= 0) return std::string();
+    return Sha256HexOfString(std::string(buf, buf + n));
+}
+
 bool LoadClockAnchor(ClockAnchor& out)
 {
     std::wstring path = GetClockAnchorFilePathW();
     if (path.empty()) return false;
-    HANDLE h = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr,
+    HANDLE h = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
         OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
     if (h == INVALID_HANDLE_VALUE) return false;
-    char buf[64] = {};
+    char buf[256] = {};
     DWORD readBytes = 0;
     bool ok = ReadFile(h, buf, sizeof(buf) - 1, &readBytes, nullptr) != 0;
     CloseHandle(h);
     if (!ok || readBytes == 0) return false;
     long long w = 0; unsigned long long t = 0;
-    if (sscanf_s(buf, "%lld|%llu", &w, &t) != 2) return false;
+    char mac[80] = {};
+    if (sscanf_s(buf, "%lld|%llu|%64s", &w, &t, mac, static_cast<unsigned>(sizeof(mac))) != 3) return false;
+    std::string expected = AnchorMac(w, t);
+    if (expected.empty() || expected != mac) return false;
     out.wallClockUnix = w;
     out.tickCountMs = t;
     return true;
@@ -287,8 +496,10 @@ void SaveClockAnchor(const ClockAnchor& anchor)
 {
     std::wstring path = GetClockAnchorFilePathW();
     if (path.empty()) return;
-    char buf[64] = {};
-    int len = sprintf_s(buf, "%lld|%llu", anchor.wallClockUnix, anchor.tickCountMs);
+    std::string mac = AnchorMac(anchor.wallClockUnix, anchor.tickCountMs);
+    if (mac.empty()) return;
+    char buf[256] = {};
+    int len = sprintf_s(buf, "%lld|%llu|%s", anchor.wallClockUnix, anchor.tickCountMs, mac.c_str());
     if (len <= 0) return;
     WriteLicenseFileAtomic(path, std::string(buf, buf + len));
 }
@@ -370,20 +581,76 @@ long long EstimatedNow()
     return estimated;
 }
 
+// Called after a round in which NO genuine server answer arrived. True = the
+// install may keep its last verdict for now, false = it must become -2.
+// Strictly: a VALID anchor exists AND the last genuine answer is not older than
+// the limit (MAX_SERVER_SILENCE_SEC for licensed, FREE_MAX_SERVER_SILENCE_SEC for
+// free). No valid anchor (never contacted, deleted, edited, old format) = false
+// at once. Deliberately NO grace period (project owner's decision): any
+// purely local grace could be repeated by someone who controls the machine,
+// and no local state can prevent that without a server round trip.
+bool SilenceStillTolerated(long long maxSilenceSec)
+{
+    ClockAnchor a;
+    if (!LoadClockAnchor(a)) return false;
+    return (EstimatedNow() - a.wallClockUnix) <= maxSilenceSec;
+}
+
+// While a failed round is still tolerated, never schedule the next attempt
+// later than the moment the limit is crossed, so -2 is not delayed by a long
+// back-off interval (a fresh round then decides it, within ~1 s of the limit).
+long long ClampToSilenceDeadline(long long delaySec, long long maxSilenceSec)
+{
+    ClockAnchor a;
+    if (!LoadClockAnchor(a)) return delaySec;
+    long long until = (a.wallClockUnix + maxSilenceSec) - EstimatedNow() + 1;
+    if (until < 5) until = 5;
+    return delaySec < until ? delaySec : until;
+}
+
 LocalFileState EvaluateLocalFile()
 {
     LocalFileState state;
     std::wstring path = GetLicenseFilePathW();
     if (path.empty()) return state;
 
-    HANDLE h = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
-    if (h == INVALID_HANDLE_VALUE) return state;
+    // Shared with every access mode (READ|WRITE|DELETE): this reader must never be
+    // what blocks the atomic MoveFileEx replacement of the file by a writer.
+    HANDLE h = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+        nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (h == INVALID_HANDLE_VALUE)
+    {
+        // Only "the file is there but something blocks it" is TIER_FILE_LOCKED.
+        // File/path not found = no license file at all (free install); any other
+        // open error is treated the same way (nothing usable, nothing to blame).
+        DWORD err = GetLastError();
+        if (err == ERROR_SHARING_VIOLATION || err == ERROR_LOCK_VIOLATION || err == ERROR_ACCESS_DENIED ||
+            err == ERROR_VIRUS_INFECTED || err == ERROR_VIRUS_DELETED)
+        {
+            state.fileExists = true;
+            state.fileLocked = true;
+        }
+        return state;
+    }
     std::vector<char> buf(65536);
     DWORD readBytes = 0;
     std::string raw;
-    if (ReadFile(h, buf.data(), (DWORD)buf.size(), &readBytes, nullptr) && readBytes > 0)
-        raw.assign(buf.data(), readBytes);
+    bool readOk = ReadFile(h, buf.data(), (DWORD)buf.size(), &readBytes, nullptr) != 0;
+    DWORD readErr = readOk ? 0 : GetLastError();
     CloseHandle(h);
+    if (!readOk)
+    {
+        // Opened, but the read itself was refused (antivirus on-access scan,
+        // lock taken after the open) - same meaning as failing to open.
+        if (readErr == ERROR_LOCK_VIOLATION || readErr == ERROR_ACCESS_DENIED ||
+            readErr == ERROR_SHARING_VIOLATION || readErr == ERROR_VIRUS_INFECTED || readErr == ERROR_VIRUS_DELETED)
+        {
+            state.fileExists = true;
+            state.fileLocked = true;
+        }
+        return state;
+    }
+    if (readBytes > 0) raw.assign(buf.data(), readBytes);
     if (raw.empty()) return state;
     state.fileExists = true;
 
@@ -519,6 +786,17 @@ void CoordinatorCore::WorkerLoop()
     {
         LocalFileState local = EvaluateLocalFile();
 
+        // A license file that is readable but whose content is invalid (cannot
+        // be decrypted / its signature does not verify: tampered, corrupted,
+        // issued under other keys) is IGNORED as if it did not exist: this
+        // install is treated as an ordinary free install (the free round below
+        // decides the tier). The file itself is left untouched on disk. Files
+        // are always written atomically (temp file + replace), so a half-written
+        // file is never read; an unreadable-because-locked file is a different
+        // case (local.fileLocked, TIER_FILE_LOCKED) and is not affected here.
+        if (local.fileExists && !local.fileValid && !local.fileLocked)
+            local = LocalFileState();
+
         // Expired-license handling (2026, product decision): once a
         // license is LOCALLY determined to be expired, this machine is
         // meant to behave exactly as if it never had a license at all -
@@ -643,6 +921,10 @@ void CoordinatorCore::WorkerLoop()
             if (local.hasLease && machineMatches)
             {
                 long long target = local.requestedAt + randomOffset;
+                // Back-off after a soft too_early Reject (see
+                // SOFT_REJECT_* above) - never earlier than the lease's own
+                // persisted schedule, only later.
+                if (m_softRetryNotBefore > target) target = m_softRetryNotBefore;
                 long long waitSeconds = target - EstimatedNow();
                 if (waitSeconds > 0)
                 {
@@ -653,6 +935,22 @@ void CoordinatorCore::WorkerLoop()
                     // loop re-checks whether a refresh is genuinely due yet.
                     ResetEvent(m_wakeEvent);
                     WaitForSingleObject(m_wakeEvent, static_cast<DWORD>(waitSeconds * 1000));
+                    continue;
+                }
+            }
+
+            // Back-off after an ordinary Reject / a failed round (see the pacing
+            // block at the end of the licensed branch). Checked before anything
+            // expensive (artifact hashing, machine IDs, network). Waits in short
+            // slices so the idle-exit logic below still gets to run.
+            if (m_rejectRetryNotBefore != 0 && local.requestedAt == m_rejectForLeaseRequestedAt)
+            {
+                long long gateWait = m_rejectRetryNotBefore - EstimatedNow();
+                if (gateWait > 0)
+                {
+                    if (gateWait > 30) gateWait = 30;
+                    ResetEvent(m_wakeEvent);
+                    WaitForSingleObject(m_wakeEvent, static_cast<DWORD>(gateWait) * 1000);
                     continue;
                 }
             }
@@ -748,15 +1046,63 @@ void CoordinatorCore::WorkerLoop()
                 CoordinatorProtocol::ARTIFACT_MACHINEID32_NAME,
                 CoordinatorProtocol::ARTIFACT_MACHINEID64_NAME,
                 m_coordinatorFileName, expectedBrokerHash);
+            // Local -2 rule (2026, project owner's explicit rule): ANY missing
+            // artifact, hash mismatch or invalid/unverifiable manifest
+            // signature is an integrity failure and is published as TIER_FAILED
+            // (-2) directly - identically for free and licensed installs. It
+            // used to be a silent "skip this cycle, keep whatever was
+            // published" retry loop, which hid tampering and broken installs
+            // behind an apparently normal tier. No network refresh is sent
+            // while integrity is broken (as before). The tier recovers on its
+            // own as soon as a later pass finds everything intact again.
+            auto publishFailedTier = [&]()
+            {
+                m_state.tier.store(TIER_FAILED);
+                m_state.pending.store(PENDING_IDLE);
+                std::lock_guard<std::mutex> lock(m_state.resultMutex);
+                m_state.lastCanonical.clear();
+                m_state.lastSignatureB64.clear();
+            };
+            auto reportLocalFailure = [&](const std::string& reasonCode, const std::string& detail)
+            {
+                long long nowForReport = EstimatedNow();
+                if (m_lastFailureReportSentAt != 0 &&
+                    nowForReport - m_lastFailureReportSentAt < FAILURE_REPORT_INTERVAL_SEC) return;
+                std::string failurePlatformProfile;
+                MachineIdBridge::GetPlatformProfile(failurePlatformProfile);
+                ReportFailureBestEffort(
+                    reasonCode, detail,
+                    local.fileExists ? "licensed" : "free",
+                    "", "", "",
+                    local.hasLease ? local.lease.licenseId : std::string(),
+                    manifest.buildId,
+                    failurePlatformProfile);
+                m_lastFailureReportSentAt = nowForReport;
+            };
             if (!artifactsOk)
             {
-                // Do NOT touch m_state.tier here - an already-published
-                // Tier 2 from a prior, genuinely verified cycle remains
-                // valid until it naturally expires; this only prevents
-                // ISSUING A NEW one while integrity is broken. If
-                // nothing was ever published, tier stays at its
-                // constructor default (TIER_FREE), which is correct.
-                m_state.pending.store(PENDING_COMM_FAIL_RETRYING);
+                publishFailedTier();
+                reportLocalFailure("artifact_check_failed",
+                    manifest.valid
+                        ? "an installed artifact is missing or its SHA-256 differs from the signed manifest"
+                        : "manifest.txt is missing, malformed or its signature does not verify");
+                Sleep(5000);
+                continue;
+            }
+            // License file present but blocked (lock / access denied / antivirus):
+            // TIER_FILE_LOCKED (-5). Not an integrity verdict, so no -2 and no
+            // server report; no network request is made. Re-evaluated every
+            // cycle (the Broker itself keeps no latch) - the thin DLL latches it
+            // for the lifetime of that EA, which is what makes it final for the EA.
+            if (local.fileLocked)
+            {
+                m_state.tier.store(TIER_FILE_LOCKED);
+                m_state.pending.store(PENDING_IDLE);
+                {
+                    std::lock_guard<std::mutex> lock(m_state.resultMutex);
+                    m_state.lastCanonical.clear();
+                    m_state.lastSignatureB64.clear();
+                }
                 Sleep(5000);
                 continue;
             }
@@ -836,166 +1182,214 @@ void CoordinatorCore::WorkerLoop()
 
             std::string licenseIdForRequest = local.hasLease ? local.lease.licenseId : std::string();
 
-            if (licenseIdForRequest.empty())
+            // ---- Free-tier verification round (2026) -------------------------
+            // One round = up to FREE_ATTEMPTS_PER_ROUND (3) free_checkin requests, 2 s
+            // apart, until ONE genuine answer arrives. "Genuine" means ALL of:
+            //   * it decrypts (shared transport key) and carries a valid server
+            //     RSA signature (the signed NL3-REJECT framing; "all clear" is
+            //     reason "free_ok" - there is no unsigned "OK" any more), and
+            //   * its signed `bind` equals SHA-256 of exactly what THIS Broker
+            //     just sent (identity, the 7 artifact hashes and a fresh random
+            //     nonce) - so a local proxy cannot answer a tampered install
+            //     with an answer issued for a cleaned-up copy of the request, a
+            //     replayed answer, or some other device's answer, and
+            //   * its reason is one of free_ok / banned / update_required /
+            //     artifact_mismatch (see FreeVerdictTier).
+            // Anything else - transport failure, HTTP error, the literal "no",
+            // an undecryptable/unsigned/forged/unbound/unexpected answer - is a
+            // FAILED attempt, never "all clear". When a whole round fails the
+            // verdict stays as it was ONLY while the last genuine answer (the
+            // persisted Clock Anchor) is younger than FREE_MAX_SERVER_SILENCE_SEC;
+            // with an older anchor, or no anchor at all (first contact), the
+            // outcome becomes TIER_FAILED (-2) - the same "silence is not trust"
+            // rule the licensed path applies. The server records the device in
+            // nutricula_unlicensed_checkins ONLY when this answer is free_ok.
+            auto runFreeCheckin = [&]() -> FreeRoundOutcome
             {
-                // Free-tier telemetry (2026): there is no license_id at all
-                // to attempt a real challenge/verify with (no lease file,
-                // a corrupt/incomplete one, or one whose signature didn't
-                // even verify) - previously this meant the Coordinator
-                // made NO network contact whatsoever while sitting at
-                // TIER_FREE, silently, forever. Send a lightweight,
-                // unauthenticated-as-a-REQUEST "I am a free-tier install and
-                // still running" ping instead, so the vendor can actually
-                // see free-tier usage exists. No retry loop on failure
-                // (this is still just telemetry, not something worth
-                // burning the 10-attempt budget over) - but as of this
-                // hardening pass, the RESPONSE is genuinely inspected (see
-                // below), not discarded: it can carry an authenticated,
-                // server-signed update/tamper verdict even for a license-
-                // less install.
-                //
-                // Free installs always use the WithGuid variant (altMachineId),
-                // never the dual-machine_id complexity Premium needs - see
-                // Nutricula_GenerateMachineIdWithGuid's own comment, point 2.
-                // machine_id_alt is deliberately NOT sent here at all (this
-                // is the one stage where the server treats it as fully
-                // optional and never needs a fallback candidate).
-                //
-                // 2026 hardening (project owner's explicit request -
-                // "security mechanisms shouldn't depend on license type,
-                // free or pro"): also report the exact same Artifact
-                // Evidence (manifest/hash measurements) already computed
-                // above for the universal local-tamper gate and for
-                // Premium's own verify request - free of any extra cost to
-                // include here too. The server validates these against its
-                // OWN authoritative nutricula_build_manifests table (never
-                // trusting the client's bare values) and against
-                // latest_version, exactly like Premium's verify stage, and
-                // can send back a genuine signed Reject (update_required /
-                // artifact_mismatch) instead of a plain OK - see the
-                // response handling below, which (unlike before) actually
-                // inspects this response instead of discarding it.
-                std::map<std::string, std::string> checkinFields;
-                checkinFields["v"] = "3";
-                checkinFields["stage"] = "free_checkin";
-                checkinFields["machine_id"] = altMachineId;
-                checkinFields["device_key_hash"] = deviceKeyHash;
-                checkinFields["build_id"] = manifest.buildId;
-                checkinFields["ex5_hash"] = manifest.ex5Sha256;
-                checkinFields["ex4_hash"] = manifest.ex4Sha256;
-                checkinFields["dll32_hash"] = manifest.dll32Sha256;
-                checkinFields["dll64_hash"] = manifest.dll64Sha256;
-                checkinFields["machineid32_hash"] = manifest.machineid32Sha256;
-                checkinFields["machineid64_hash"] = manifest.machineid64Sha256;
-                checkinFields["broker_hash"] = expectedBrokerHash;
-                if (!platformProfile.empty()) checkinFields["platform_profile"] = platformProfile;
-                long long nowForCheckin = EstimatedNow();
-                bool dueForNetworkCheckin = (m_lastFreeCheckinSentAt == 0) ||
-                    (nowForCheckin - m_lastFreeCheckinSentAt >= FREE_CHECKIN_INTERVAL_SEC);
-                if (dueForNetworkCheckin)
+                FreeRoundOutcome out;
+                out.tier = m_freeTierOutcome.load();
+                long long nowFree = EstimatedNow();
+                if (m_freeNextAttemptAt != 0 && nowFree < m_freeNextAttemptAt) return out; // not due yet
+                out.ran = true;
+
+                const std::wstring freeHost = L"nutriculaexpert.com";
+                const std::wstring freePath = L"/license_validator_phps/license_check.php";
+                // Normalized once so request and bind use byte-identical values
+                // (the server uppercases ids and lowercases hashes the same way).
+                const std::string fMachineId = ToUpperAscii(altMachineId);
+                const std::string fDeviceKey = ToUpperAscii(deviceKeyHash);
+                const std::string fBuildId = manifest.buildId;
+                const std::string fEx5 = ToLowerAscii(manifest.ex5Sha256);
+                const std::string fEx4 = ToLowerAscii(manifest.ex4Sha256);
+                const std::string fDll32 = ToLowerAscii(manifest.dll32Sha256);
+                const std::string fDll64 = ToLowerAscii(manifest.dll64Sha256);
+                const std::string fMid32 = ToLowerAscii(manifest.machineid32Sha256);
+                const std::string fMid64 = ToLowerAscii(manifest.machineid64Sha256);
+                const std::string fBroker = ToLowerAscii(expectedBrokerHash);
+
+                std::string lastIssue = "no attempt made";
+                bool verdict = false;
+                for (int attempt = 1; attempt <= FREE_ATTEMPTS_PER_ROUND && !verdict; attempt++)
                 {
+                    if (attempt > 1) Sleep(2000);
+                    const std::string nonce = RandomNonceHex32();
+                    std::map<std::string, std::string> checkinFields;
+                    checkinFields["v"] = "3";
+                    checkinFields["stage"] = "free_checkin";
+                    // Free installs always use the WithGuid variant (altMachineId);
+                    // machine_id_alt is deliberately not sent here.
+                    checkinFields["machine_id"] = fMachineId;
+                    checkinFields["device_key_hash"] = fDeviceKey;
+                    checkinFields["build_id"] = fBuildId;
+                    checkinFields["ex5_hash"] = fEx5;
+                    checkinFields["ex4_hash"] = fEx4;
+                    checkinFields["dll32_hash"] = fDll32;
+                    checkinFields["dll64_hash"] = fDll64;
+                    checkinFields["machineid32_hash"] = fMid32;
+                    checkinFields["machineid64_hash"] = fMid64;
+                    checkinFields["broker_hash"] = fBroker;
+                    checkinFields["nonce"] = nonce;
+                    if (!platformProfile.empty()) checkinFields["platform_profile"] = platformProfile;
+
+                    const std::string expectedBind = Sha256HexOfString(
+                        "NL3-FREE-BIND|" + fMachineId + "|" + fDeviceKey + "|" + fBuildId + "|" +
+                        fEx5 + "|" + fEx4 + "|" + fDll32 + "|" + fDll64 + "|" + fMid32 + "|" + fMid64 + "|" +
+                        fBroker + "|" + nonce);
                     std::string checkinEnvelope = LicenseProtocol::BuildRequestEnvelope(checkinFields);
-                    if (!checkinEnvelope.empty())
+                    if (checkinEnvelope.empty() || expectedBind.empty())
                     {
-                        const std::wstring checkinHost = L"nutriculaexpert.com";
-                        const std::wstring checkinPath = L"/license_validator_phps/license_check.php";
-                        TransportResponse checkinResp = Transport::PostEnvelope(checkinHost, checkinPath, checkinEnvelope, 15000);
-                        // 2026 hardening: the response is now actually
-                        // inspected (no longer fire-and-forget). Two
-                        // outcomes are recognized:
-                        //  - A genuine, server-signature-verified Reject
-                        //    (the exact same signed format/key Premium's
-                        //    Reject uses) moves this install OFF TIER_FREE:
-                        //    "update_required" -> TIER_UPDATE_REQUIRED (the
-                        //    same mandatory-update gate Premium gets), and
-                        //    "artifact_mismatch" -> TIER_FAILED (confirmed
-                        //    tampering - collapses to "-2" via
-                        //    Check_Core_Integrity(), exactly like a
-                        //    communication failure, not a mere demotion -
-                        //    see the detailed comment at the assignment
-                        //    below). Any other reason stays at TIER_FREE.
-                        //  - The plain "NL3-FREE-OK" literal is checked
-                        //    FIRST, directly, and explicitly resets the
-                        //    persisted outcome back to TIER_FREE. It carries
-                        //    no signature and needs none: forging "all
-                        //    clear" grants an attacker nothing beyond the
-                        //    TIER_FREE already in effect, so authenticating
-                        //    it would add cost without adding security.
-                        // Anything else (a transport failure, a corrupted or
-                        // otherwise unparseable body) leaves m_freeTierOutcome
-                        // exactly as it was - see its own comment in
-                        // CoordinatorCore.h for why silence must never be
-                        // treated as "all clear".
-                        if (checkinResp.result == TransportResult::Ok)
+                        lastIssue = "failed to build the check-in request locally";
+                        continue;
+                    }
+
+                    TransportResponse resp = Transport::PostEnvelope(freeHost, freePath, checkinEnvelope, 15000);
+                    if (resp.result != TransportResult::Ok)
+                    {
+                        lastIssue = "transport failed (no response / HTTP error)";
+                        continue;
+                    }
+                    ParsedResponse parsed = LicenseProtocol::DecryptAndVerify(resp.body);
+                    if (parsed.kind == ResponseKind::LegacyNo)
+                    {
+                        lastIssue = "server answered 'no' (server-side error)";
+                        continue;
+                    }
+                    if (parsed.kind != ResponseKind::Rejected)
+                    {
+                        lastIssue = "answer could not be decrypted/verified, or was not a signed free_checkin answer";
+                        continue;
+                    }
+                    if (parsed.bind != expectedBind)
+                    {
+                        lastIssue = "signed answer is not bound to this request (replayed, forged or mismatched)";
+                        continue;
+                    }
+                    int verdictTier = FreeVerdictTier(parsed.rejectReason);
+                    if (verdictTier < 0)
+                    {
+                        lastIssue = "unexpected answer reason for free_checkin: " + parsed.rejectReason;
+                        continue;
+                    }
+
+                    // Genuine verdict.
+                    verdict = true;
+                    out.gotVerdict = true;
+                    out.tier = verdictTier;
+                    // FREE and FAILED publish no signed canonical (FAILED
+                    // "carries no signature by design"; FREE is the
+                    // unauthenticated default) - -50/-100 publish the Reject.
+                    if (verdictTier != TIER_FREE && verdictTier != TIER_FAILED)
+                    {
+                        out.canonical = parsed.rawCanonical;
+                        out.signatureB64 = parsed.rawSignatureB64;
+                    }
+                    m_freeTierOutcome.store(verdictTier);
+                    m_freeFailStreak = 0;
+                    // Trust clock: only a genuine answer moves it.
+                    UpdateClockAnchor(static_cast<long long>(parsed.requestedAt));
+                    m_freeNextAttemptAt = EstimatedNow() + FREE_CHECKIN_INTERVAL_SEC;
+                    {
+                        std::lock_guard<std::mutex> lock(m_state.resultMutex);
+                        m_state.lastCanonical = out.canonical;
+                        m_state.lastSignatureB64 = out.signatureB64;
+                    }
+                }
+
+                if (!verdict)
+                {
+                    // Trust clock first (decides whether this failed round is tolerated).
+                    ClockAnchor freeAnchor;
+                    bool haveFreeAnchor = LoadClockAnchor(freeAnchor);
+                    long long silenceSec = haveFreeAnchor ? (EstimatedNow() - freeAnchor.wallClockUnix) : -1;
+                    const bool freeTolerated = SilenceStillTolerated(FREE_MAX_SERVER_SILENCE_SEC);
+
+                    // Attempt clock: doubling back-off with jitter (clamped so a
+                    // tolerated failure is re-checked exactly when it would be decided).
+                    if (m_freeFailStreak < 16) m_freeFailStreak++;
+                    long long delaySec = FREE_RETRY_INTERVAL_SEC;
+                    for (int k = 1; k < m_freeFailStreak && delaySec < FREE_RETRY_MAX_SEC; k++) delaySec *= 2;
+                    if (delaySec > FREE_RETRY_MAX_SEC) delaySec = FREE_RETRY_MAX_SEC;
+                    long long jitter = delaySec / 5;
+                    delaySec += static_cast<long long>(SecureRandomBelow(static_cast<unsigned long long>(2 * jitter + 1))) - jitter;
+                    if (freeTolerated) delaySec = ClampToSilenceDeadline(delaySec, FREE_MAX_SERVER_SILENCE_SEC);
+                    m_freeNextAttemptAt = EstimatedNow() + delaySec;
+
+                    // Trust clock: -2 once the last genuine answer is older than
+                    // FREE_MAX_SERVER_SILENCE_SEC (no grace); with no valid
+                    // anchor (first contact) at once.
+                    if (!freeTolerated)
+                    {
+                        m_freeTierOutcome.store(TIER_FAILED);
+                        out.failedNow = true;
+                        out.tier = TIER_FAILED;
                         {
-                            std::string checkinPlaintext;
-                            if (LicenseProtocol::GcmDecrypt(checkinResp.body, checkinPlaintext) &&
-                                checkinPlaintext == "NL3-FREE-OK")
-                            {
-                                m_freeTierOutcome.store(TIER_FREE);
-                                std::lock_guard<std::mutex> lock(m_state.resultMutex);
-                                m_state.lastCanonical.clear();
-                                m_state.lastSignatureB64.clear();
-                            }
-                            else
-                            {
-                                ParsedResponse checkinParsed = LicenseProtocol::DecryptAndVerify(checkinResp.body);
-                                if (checkinParsed.kind == ResponseKind::Rejected)
-                                {
-                                    // "artifact_mismatch" -> TIER_FAILED
-                                    // (2026 hardening, project owner's
-                                    // explicit request): confirmed tampering
-                                    // must collapse to the same TIER_FAILED/
-                                    // "-2" outcome a communication failure
-                                    // already does - NOT merely demote to
-                                    // TIER_FREE - and identically whether
-                                    // this is a free or a licensed install.
-                                    // Check_Core_Integrity() already folds
-                                    // TIER_FAILED into -2 unconditionally, so
-                                    // this needs no DLL-side change. Per
-                                    // TIER_FAILED's own "carries no signature
-                                    // by design" contract, canonical/
-                                    // signature are cleared rather than
-                                    // published for this specific outcome.
-                                    int outcome = (checkinParsed.rejectReason == "update_required") ? TIER_UPDATE_REQUIRED
-                                        : (checkinParsed.rejectReason == "artifact_mismatch") ? TIER_FAILED
-                                        // Admin panel (2026): an admin-issued ban is
-                                        // the same "fully stop" outcome as a clone-
-                                        // detected block (TIER_BLOCKED) - free and
-                                        // premium installs are treated identically.
-                                        : (checkinParsed.rejectReason == "banned") ? TIER_BLOCKED
-                                        : TIER_FREE;
-                                    m_freeTierOutcome.store(outcome);
-                                    UpdateClockAnchor(static_cast<long long>(checkinParsed.requestedAt));
-                                    std::lock_guard<std::mutex> lock(m_state.resultMutex);
-                                    if (outcome == TIER_FAILED)
-                                    {
-                                        m_state.lastCanonical.clear();
-                                        m_state.lastSignatureB64.clear();
-                                    }
-                                    else
-                                    {
-                                        m_state.lastCanonical = checkinParsed.rawCanonical;
-                                        m_state.lastSignatureB64 = checkinParsed.rawSignatureB64;
-                                    }
-                                }
-                                // else: Invalid/unexpected - inconclusive,
-                                // leave the persisted outcome untouched.
-                            }
+                            std::lock_guard<std::mutex> lock(m_state.resultMutex);
+                            m_state.lastCanonical.clear();
+                            m_state.lastSignatureB64.clear();
+                        }
+                        long long nowForFreeReport = EstimatedNow();
+                        if (m_lastFailureReportSentAt == 0 ||
+                            nowForFreeReport - m_lastFailureReportSentAt >= FAILURE_REPORT_INTERVAL_SEC)
+                        {
+                            const std::string attemptsText = std::to_string(FREE_ATTEMPTS_PER_ROUND) + "/" +
+                                std::to_string(FREE_ATTEMPTS_PER_ROUND) + " attempts failed; last issue: " + lastIssue;
+                            std::string detail = haveFreeAnchor
+                                ? ("no genuine answer for " + std::to_string(silenceSec / 60) + " min (limit " +
+                                   std::to_string(FREE_MAX_SERVER_SILENCE_SEC / 60) + "); " + attemptsText)
+                                : ("first contact failed or anchor record missing/invalid; " + attemptsText);
+                            ReportFailureBestEffort(
+                                "free_checkin_failed", detail, "free",
+                                fMachineId, "", fDeviceKey, "", fBuildId, platformProfile);
+                            m_lastFailureReportSentAt = nowForFreeReport;
                         }
                     }
-                    m_lastFreeCheckinSentAt = nowForCheckin;
+                    // else: still inside the limit - keep the last
+                    // verdict (m_freeTierOutcome) untouched.
                 }
+                return out;
+            };
+
+            if (licenseIdForRequest.empty())
+            {
+                // No license_id at all (no lease file, a corrupt/incomplete one,
+                // or one whose signature did not verify) - a free-tier install.
+                // Run the verification round when it is due; the published tier
+                // is always the persisted outcome (m_freeTierOutcome).
+                runFreeCheckin();
                 m_state.tier.store(m_freeTierOutcome.load());
                 m_state.pending.store(PENDING_IDLE);
                 // Pace the free-tier cycle: re-evaluate locally about every
-                // MIN_RANDOM_OFFSET_SEC (the actual network free_checkin above
-                // is independently throttled to FREE_CHECKIN_INTERVAL_SEC).
-                // Without this wait, falling through to here would spin the
-                // loop (the bottom Sleep is skipped by the continue). Wakes
+                // MIN_RANDOM_OFFSET_SEC, but never sleep past the moment the
+                // next round is due (a failed round is retried after
+                // FREE_RETRY_INTERVAL_SEC). Without a wait here the loop would
+                // spin (the bottom Sleep is skipped by the continue). Wakes
                 // early if NoteEaActivity signals the event.
+                long long freeWaitSec = MIN_RANDOM_OFFSET_SEC;
+                long long untilNextRound = m_freeNextAttemptAt - EstimatedNow();
+                if (untilNextRound < freeWaitSec) freeWaitSec = untilNextRound;
+                if (freeWaitSec < 5) freeWaitSec = 5;
                 ResetEvent(m_wakeEvent);
-                WaitForSingleObject(m_wakeEvent, static_cast<DWORD>(MIN_RANDOM_OFFSET_SEC) * 1000);
+                WaitForSingleObject(m_wakeEvent, static_cast<DWORD>(freeWaitSec) * 1000);
                 continue;
             }
 
@@ -1047,7 +1441,12 @@ void CoordinatorCore::WorkerLoop()
             // moment. So !haveSilenceAnchor is a defensive fallback, not a
             // real path, when local.hasLease is already true; treat it as
             // "no information yet" rather than as silence.
-            bool withinServerSilenceTolerance = !haveSilenceAnchor ||
+            // 2026: no valid anchor (deleted, edited, replaced by an old-format
+            // file) is NOT "no information" any more - a lease can only exist
+            // because a verified answer created the anchor beside it, so a
+            // missing one means somebody removed it, and deleting it must never
+            // lift the silence cap. Strict: not within tolerance.
+            bool withinServerSilenceTolerance = haveSilenceAnchor &&
                 ((now - silenceAnchor.wallClockUnix) <= MAX_SERVER_SILENCE_SEC);
             bool localLeaseStillGood = local.hasLease && !local.licenseCurrentlyExpired && withinServerSilenceTolerance;
             long finalStable = localLeaseStillGood ? TIER_LICENSED : TIER_FAILED;
@@ -1063,12 +1462,42 @@ void CoordinatorCore::WorkerLoop()
             // effort, via ReportFailureBestEffort right after the loop - see
             // its own comment for the reasoning).
             bool gotServerDecision = false;
+            // The reason of the last ORDINARY (non-soft) signed Reject received this
+            // cycle, empty when none - used to report a -2 that the server
+            // decided for a reason other than artifact_mismatch (see below).
+            std::string lastRejectReason;
             // Best available description of why the LAST attempt in this
             // cycle failed to advance, for that same best-effort report's
             // reason_detail - updated at every point the loop below gives up
             // on an attempt and retries. Generic by design (this is a
             // diagnostic hint for support, not a decision input).
             std::string lastAttemptIssue = "no attempts made (license_id was empty)";
+
+            // Soft handling of throttling/race Rejects - see the SOFT_REJECT_*
+            // comment near the top of this file (including why it is safe).
+            // Returns true when the Reject was absorbed (caller then leaves the
+            // attempt loop with the cached lease still published); false ->
+            // ordinary Reject handling applies.
+            auto trySoftReject = [&](const ParsedResponse& p) -> bool
+            {
+                if (p.kind != ResponseKind::Rejected) return false;
+                if (!IsSoftRejectReason(p.rejectReason)) return false;
+                if (!(local.hasLease && machineMatches && localLeaseStillGood)) return false;
+                if (m_softRejectStreak >= SOFT_REJECT_MAX_STREAK) return false;
+                // Freshness: an old captured Reject must not be replayable.
+                long long ageSec = EstimatedNow() - static_cast<long long>(p.requestedAt);
+                if (ageSec < -SOFT_REJECT_MAX_AGE_SEC || ageSec > SOFT_REJECT_MAX_AGE_SEC) return false;
+                long long waitSec = p.retryAfterSeconds + SOFT_REJECT_MARGIN_SEC;
+                if (waitSec < SOFT_REJECT_MIN_WAIT_SEC) waitSec = SOFT_REJECT_MIN_WAIT_SEC;
+                if (waitSec > SOFT_REJECT_MAX_WAIT_SEC) waitSec = SOFT_REJECT_MAX_WAIT_SEC;
+                m_softRejectStreak++;
+                m_softRetryNotBefore = EstimatedNow() + waitSec;
+                // Deliberately NO UpdateClockAnchor here - a soft Reject is not
+                // proof of a genuine verdict for THIS license and must never
+                // extend how long the cached lease is trusted.
+                gotServerDecision = true;
+                return true;
+            };
 
             for (int attempt = 1; attempt <= MAX_ATTEMPTS && !licenseIdForRequest.empty(); attempt++)
             {
@@ -1096,8 +1525,11 @@ void CoordinatorCore::WorkerLoop()
                         if (!advance) lastAttemptIssue = "challenge response: could not decrypt/verify";
                     }
                 }
+                if (advance && trySoftReject(challengeParsed)) break;
                 if (advance && challengeParsed.kind == ResponseKind::Rejected)
                 {
+                    m_softRejectStreak = 0;
+                    m_softRetryNotBefore = 0;
                     // "update_required" (architecture extension - see
                     // CoordinatorCore.h's TIER_UPDATE_REQUIRED comment) maps
                     // to a distinct tier, not the ordinary TIER_FREE - still
@@ -1118,13 +1550,8 @@ void CoordinatorCore::WorkerLoop()
                     // deliberately cleared (not the Reject's own, which would
                     // otherwise mismatch the empty-signature TIER_FAILED path
                     // the DLL expects) rather than published.
-                    finalStable = (challengeParsed.rejectReason == "update_required") ? TIER_UPDATE_REQUIRED
-                        : (challengeParsed.rejectReason == "blocked") ? TIER_BLOCKED
-                        // Admin panel (2026): an admin ban maps to the same
-                        // TIER_BLOCKED outcome as a clone-detected block.
-                        : (challengeParsed.rejectReason == "banned") ? TIER_BLOCKED
-                        : (challengeParsed.rejectReason == "artifact_mismatch") ? TIER_FAILED
-                        : TIER_FREE;
+                    finalStable = TierForRejectReason(challengeParsed.rejectReason);
+                    lastRejectReason = challengeParsed.rejectReason;
                     finalCanonical = (finalStable == TIER_FAILED) ? std::string() : challengeParsed.rawCanonical;
                     finalSignatureB64 = (finalStable == TIER_FAILED) ? std::string() : challengeParsed.rawSignatureB64;
                     // Clock Anchor: this Reject's own requestedAt is authentic
@@ -1209,21 +1636,20 @@ void CoordinatorCore::WorkerLoop()
                     if (attempt < MAX_ATTEMPTS) Sleep(2000);
                     continue;
                 }
+                if (trySoftReject(verifyParsed)) break;
                 if (verifyParsed.kind == ResponseKind::Rejected)
                 {
+                    // Any other answer ends the soft too_early streak.
+                    m_softRejectStreak = 0;
+                    m_softRetryNotBefore = 0;
                     // "artifact_mismatch" -> TIER_FAILED (2026 hardening) -
                     // see the identical, more detailed comment at the
                     // challenge-stage Reject handling above for the full
                     // reasoning (confirmed tampering collapses to "-2",
                     // same as a communication failure, regardless of
                     // license type - the owner's explicit request).
-                    finalStable = (verifyParsed.rejectReason == "update_required") ? TIER_UPDATE_REQUIRED
-                        : (verifyParsed.rejectReason == "blocked") ? TIER_BLOCKED
-                        // Admin panel (2026): an admin ban maps to the same
-                        // TIER_BLOCKED outcome as a clone-detected block.
-                        : (verifyParsed.rejectReason == "banned") ? TIER_BLOCKED
-                        : (verifyParsed.rejectReason == "artifact_mismatch") ? TIER_FAILED
-                        : TIER_FREE;
+                    finalStable = TierForRejectReason(verifyParsed.rejectReason);
+                    lastRejectReason = verifyParsed.rejectReason;
                     finalCanonical = (finalStable == TIER_FAILED) ? std::string() : verifyParsed.rawCanonical;
                     finalSignatureB64 = (finalStable == TIER_FAILED) ? std::string() : verifyParsed.rawSignatureB64;
                     // Clock Anchor: same reasoning as the challenge-stage
@@ -1257,6 +1683,8 @@ void CoordinatorCore::WorkerLoop()
                 finalStable = TIER_LICENSED;
                 finalCanonical = reReadCheck.canonical;
                 finalSignatureB64 = reReadCheck.signatureB64;
+                m_softRejectStreak = 0;
+                m_softRetryNotBefore = 0;
                 // Clock Anchor: a freshly-issued, re-parsed-from-disk
                 // (and therefore signature-re-verified via EvaluateLocalFile's
                 // own DecryptAndVerify call) Lease's requestedAt is authentic
@@ -1264,6 +1692,56 @@ void CoordinatorCore::WorkerLoop()
                 UpdateClockAnchor(reReadCheck.requestedAt);
                 gotServerDecision = true;
                 break;
+            }
+
+            // A signed Reject that ended this licensed install at TIER_FREE
+            // (license expired/inactive/not found, machine or device key
+            // mismatch) leaves it a free-tier install from here on. It has NOT
+            // been verified as one yet (the challenge/verify exchange stopped
+            // before - or never carried - the ban/hash/version evidence the
+            // server needs), so run the very same free_checkin round now (when
+            // due - at most every 30 min): the server then validates ban, hashes
+            // and version and records the device in nutricula_unlicensed_checkins
+            // only if everything is fine, and this install gets the same -50 /
+            // -100 / -2 enforcement a never-licensed free install gets.
+            if (finalStable == TIER_FREE && gotServerDecision)
+            {
+                FreeRoundOutcome freeRound = runFreeCheckin();
+                if (freeRound.gotVerdict && freeRound.tier != TIER_FREE)
+                {
+                    finalStable = freeRound.tier;
+                    finalCanonical = freeRound.canonical;
+                    finalSignatureB64 = freeRound.signatureB64;
+                }
+                else if (freeRound.failedNow)
+                {
+                    finalStable = TIER_FAILED;
+                    finalCanonical.clear();
+                    finalSignatureB64.clear();
+                }
+            }
+
+            // -2 reporting for a server-decided -2 that is not artifact_mismatch
+            // (that one is already logged by license_check.php with full
+            // context): signature_invalid, challenge_* once the soft-reject
+            // allowance is used up, or any reason the server may add later. The
+            // exact reason goes into reason_detail. Throttled like every
+            // other report.
+            if (finalStable == TIER_FAILED && gotServerDecision && !lastRejectReason.empty() &&
+                lastRejectReason != "artifact_mismatch")
+            {
+                long long nowForRejectReport = EstimatedNow();
+                if (m_lastFailureReportSentAt == 0 ||
+                    nowForRejectReport - m_lastFailureReportSentAt >= FAILURE_REPORT_INTERVAL_SEC)
+                {
+                    ReportFailureBestEffort(
+                        "server_rejected",
+                        "server Reject reason: " + lastRejectReason,
+                        "licensed", machineId, machineIdAlt, deviceKeyHash,
+                        licenseIdForRequest, manifest.buildId,
+                        platformProfile);
+                    m_lastFailureReportSentAt = nowForRejectReport;
+                }
             }
 
             // -2 diagnostic reporting (2026): fires ONLY when the loop above
@@ -1288,6 +1766,36 @@ void CoordinatorCore::WorkerLoop()
                         licenseIdForRequest, manifest.buildId,
                         platformProfile);
                     m_lastFailureReportSentAt = nowForFailureReport;
+                }
+            }
+
+            // Pacing of the NEXT licensed attempt (2026). Before this the loop
+            // changed nothing it looks at after a Reject or a failed round, so it
+            // re-challenged every ~5 s (e.g. license_inactive, or a server that
+            // keeps erroring). Lease-bound: only while the local lease is still
+            // the one this decision was about, so a freshly activated or renewed
+            // lease is tried at once. A soft Reject keeps its own
+            // m_softRetryNotBefore handling and a successful Lease its own
+            // requested_at schedule - neither is touched here.
+            {
+                long long nowPace = EstimatedNow();
+                if (!lastRejectReason.empty())
+                {
+                    // Ordinary signed Reject: 30 min when it leaves FREE/-50/-100
+                    // (matches the free cadence), 5 min when it ends at -2.
+                    m_rejectForLeaseRequestedAt = local.requestedAt;
+                    m_rejectRetryNotBefore = nowPace + (finalStable == TIER_FAILED ? 300 : 1800);
+                }
+                else if (!gotServerDecision)
+                {
+                    // The whole round failed: retry in ~2 min (jittered), but
+                    // never later than the moment the silence verdict falls due.
+                    long long d = 120;
+                    long long jit = d / 5;
+                    d += static_cast<long long>(SecureRandomBelow(static_cast<unsigned long long>(2 * jit + 1))) - jit;
+                    if (finalStable != TIER_FAILED) d = ClampToSilenceDeadline(d, MAX_SERVER_SILENCE_SEC);
+                    m_rejectForLeaseRequestedAt = local.requestedAt;
+                    m_rejectRetryNotBefore = nowPace + d;
                 }
             }
 

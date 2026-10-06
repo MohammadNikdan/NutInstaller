@@ -51,6 +51,16 @@ constexpr int TIER_UPDATE_REQUIRED = -50;
 // device key are both cloned." Goes through the same server-signature
 // verification as every other Reject.
 constexpr int TIER_BLOCKED = -100;
+// The local license file EXISTS but cannot be opened/read right now because
+// something holds or blocks it (sharing/lock violation, access denied, or an
+// antivirus verdict such as ERROR_VIRUS_INFECTED). Unlike TIER_FAILED (-2) this
+// is NOT a verdict about the license or the install's integrity - the Broker
+// simply cannot see the file - so it gets its own code, which the thin DLL
+// latches for the rest of that EA's lifetime (a final state: the EA shows an
+// alert and removes itself). Carries no signature, like TIER_FAILED. A missing
+// file is NOT this case (that is an ordinary free install), and neither is a
+// readable file whose content is invalid (that file is ignored as if absent).
+constexpr int TIER_FILE_LOCKED = -5;
 constexpr int PENDING_IDLE = -1;
 constexpr int PENDING_COMM_FAIL_RETRYING = -2;
 constexpr int PENDING_REFRESH_IN_PROGRESS = -3;
@@ -106,13 +116,32 @@ private:
     std::atomic<bool> m_started{false};
     HANDLE m_wakeEvent = nullptr; // signaled by RequestRefreshIfDue to interrupt an idle wait early
     std::wstring m_coordinatorFileName;
-    // Free-tier telemetry (see WorkerLoop): the local "do I have a lease at
-    // all" check stays fast (same MIN_RANDOM_OFFSET_SEC cycle as everything
-    // else), but the actual network free_checkin call is independently
-    // rate-limited to roughly every 30 minutes via this timestamp - this is
-    // pure statistics, not a security-relevant check, so there is no need
-    // to burden the server with it as often as real license verification.
-    long long m_lastFreeCheckinSentAt = 0;
+    // Free-tier verification schedule (see WorkerLoop / runFreeCheckin): the
+    // earliest EstimatedNow() at which the next network free_checkin ROUND may
+    // start. 0 = never run yet in this process (due immediately). After a
+    // genuine, request-bound, signed answer it is pushed out by
+    // FREE_CHECKIN_INTERVAL_SEC (30:00); after a FAILED round (offline, 'no',
+    // HTTP error, forged/unbound answer) only by FREE_RETRY_INTERVAL_SEC
+    // (2:00), so a failure is retried soon but never hammers the server.
+    // This is purely the ATTEMPT clock. The TRUST clock - how long this install
+    // may keep running without a genuine answer - is the persisted Clock Anchor
+    // (last signature-verified server response), which only a genuine answer
+    // can advance, so neither a failed attempt nor a Broker restart buys time.
+    long long m_freeNextAttemptAt = 0;
+    // Consecutive failed free rounds (in memory) - drives the doubling retry
+    // back-off; reset by any genuine answer.
+    int m_freeFailStreak = 0;
+    // Back-off after an ordinary (non-soft) signed Reject of a LICENSED
+    // install (2026). Before this, a Reject changed nothing the loop looks at,
+    // so e.g. license_inactive was re-challenged every ~5 s forever. Set to
+    // EstimatedNow() + 30 min when the Reject leaves the install at
+    // TIER_FREE / -50 / -100, + 5 min when it ends at -2. It only applies while
+    // the local lease is still the one the Reject was about
+    // (m_rejectForLeaseRequestedAt) - a freshly activated/renewed lease is
+    // tried immediately. In memory on purpose: restarting the Broker only buys
+    // one fresh attempt, never a different verdict.
+    long long m_rejectRetryNotBefore = 0;
+    long long m_rejectForLeaseRequestedAt = 0;
     // Last time (EstimatedNow(), i.e. clock-anchor-protected, not raw wall
     // clock) the EA/DLL was heard from over the pipe - see NoteEaActivity.
     // 0 means "never" (covers both a fresh install where the EA hasn't
@@ -125,15 +154,17 @@ private:
     // 2026 hardening: the free-tier branch's own persisted verdict
     // (TIER_FREE or TIER_UPDATE_REQUIRED - see WorkerLoop's free_checkin
     // handling). The actual network check-in only happens every
-    // FREE_CHECKIN_INTERVAL_SEC (30:00), but the outer loop re-publishes a
+    // FREE_CHECKIN_INTERVAL_SEC (30:00) (or every FREE_RETRY_INTERVAL_SEC while
+    // failing), but the outer loop re-publishes a
     // tier far more often than that (every ~MIN_RANDOM_OFFSET_SEC) - without
     // this, a confirmed TIER_UPDATE_REQUIRED would flicker back to
     // TIER_FREE within minutes on every cycle that skips the network call,
     // not just the ones that make it. Sticky across cycles; only a fresh,
-    // verified server response (Reject or the explicit "NL3-FREE-OK"
-    // literal) ever changes it - a transport failure or an unparseable body
-    // leaves whatever was last confirmed untouched, same philosophy as the
-    // Premium/Transfer path's own "silence never downgrades trust" rule.
+    // verified, request-bound server answer (signed free_ok / banned /
+    // update_required / artifact_mismatch) changes it, or - 2026 rule - the
+    // absence of any genuine answer for longer than FREE_MAX_SERVER_SILENCE_SEC
+    // (or on the very first contact), which sets TIER_FAILED (-2), exactly like
+    // the licensed path's silence cap. Short silences keep the last verdict.
     std::atomic<int> m_freeTierOutcome{TIER_FREE};
     // EstimatedNow() at the moment Start() launched WorkerLoop - the idle-
     // self-exit basis (see WorkerLoop) for a freshly (re)started process
@@ -145,10 +176,20 @@ private:
     // CoordinatorCore.cpp) so a sustained local failure (e.g. a real,
     // ongoing network outage) reports itself to nutricula_failure_report.php
     // at most once per FAILURE_REPORT_INTERVAL_SEC, not once per WorkerLoop
-    // cycle - same cadence/throttle pattern as m_lastFreeCheckinSentAt
+    // cycle - same cadence/throttle pattern as the free check-in schedule
     // above, for the same reason (this is diagnostic telemetry, not a
     // security check).
     long long m_lastFailureReportSentAt = 0;
+    // 2026: soft handling of the server's "too_early" Reject (see
+    // CoordinatorCore.cpp, verify-stage Reject branch). m_softRetryNotBefore
+    // is the earliest wall-clock moment (EstimatedNow() domain) at which the
+    // next refresh attempt may be sent after such a Reject; it is in-memory
+    // only on purpose (the persisted lease schedule is the real timer - this
+    // only adds a short back-off on top of it). m_softRejectStreak bounds how
+    // many too_early answers in a row are absorbed this way before the
+    // ordinary Reject handling takes over again.
+    long long m_softRetryNotBefore = 0;
+    int m_softRejectStreak = 0;
 };
 
 } // namespace Coordinator

@@ -111,7 +111,7 @@ struct GetStatusMsg {
 // verified response available yet" (e.g. still Idle).
 struct StatusReplyMsg {
     MessageType type = MessageType::StatusReply;
-    int32_t tier = 0;           // INTERNAL_LICENSE_TIER - only ever 1, 2, -10, -50, or -100 when meaningful
+    int32_t tier = 0;           // INTERNAL_LICENSE_TIER - only ever 1, 2, -5, -10, -50, or -100 when meaningful (-5 = license file locked/blocked, unsigned, latched by the DLL)
     int32_t pending = -1;       // INTERNAL_LICENSE_TIER_PENDING
     uint32_t canonicalLen = 0;
     char canonical[4096];       // e.g. "v=3|reason=...|requested_at=..." or the lease canonical - NUL-padded
