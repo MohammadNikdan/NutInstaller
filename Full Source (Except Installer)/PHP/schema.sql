@@ -285,7 +285,8 @@ CREATE TABLE nutricula_rate_limits (
     window_start INT UNSIGNED NOT NULL,
     request_count INT UNSIGNED NOT NULL DEFAULT 1,
     PRIMARY KEY (id),
-    UNIQUE KEY uq_rate_key_window (rate_key, window_start)
+    UNIQUE KEY uq_rate_key_window (rate_key, window_start),
+    KEY idx_window_start (window_start)   -- serves the periodic cleanup DELETE and the admin panel's time-range reads
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 /* Response-time instrumentation for the admin panel's "server health"

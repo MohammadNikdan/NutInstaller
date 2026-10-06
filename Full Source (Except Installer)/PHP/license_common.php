@@ -929,12 +929,23 @@ function nutricula_rate_limit_check(mysqli $conn, array $config, string $endpoin
     }
 
     // Best-effort cleanup of old windows so this table doesn't grow
-    // unboundedly - cheap (indexed range delete), and safe to skip on
-    // failure since it's purely housekeeping, never a correctness
-    // requirement.
+    // unboundedly. Two deliberate choices:
+    //  1) Runs on only ~2% of requests (not every one): the table is tiny
+    //     either way, and a flood is exactly when we must NOT add an extra
+    //     write + table scan to every single request. Expired rows lingering
+    //     a few extra seconds is harmless - they are never read again.
+    //  2) Cutoff is 30 minutes, not 10: the admin panel's login throttle
+    //     (admin_common.php) stores rows in this same table with a
+    //     15-MINUTE window, and a 10-minute cutoff could delete its counter
+    //     mid-window and silently reset the lockout early. 30 min covers it.
+    // The DELETE is served by KEY idx_window_start (see schema.sql /
+    // schema_rate_limits_index.sql); without that index it still works, it
+    // just scans the whole (tiny) table, and only on ~2% of requests.
     try {
-        $cutoff = $windowStart - (10 * $windowSeconds);
-        $conn->query('DELETE FROM nutricula_rate_limits WHERE window_start < ' . (int)$cutoff . ' LIMIT 1000');
+        if (mt_rand(1, 50) === 1) {
+            $cutoff = $windowStart - (30 * 60);
+            $conn->query('DELETE FROM nutricula_rate_limits WHERE window_start < ' . (int)$cutoff . ' LIMIT 1000');
+        }
     } catch (Throwable $ignored) {}
 }
 
