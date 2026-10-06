@@ -224,14 +224,21 @@ std::string BuildDbInsertSql(
     return ss.str();
 }
 
+// Atomic (2026): temp file in the same directory, flushed, then swapped over the
+// target in one step - manifest.txt / database_insert.sql are never left half-written.
 bool WriteAllBytes(const std::wstring& path, const std::string& data)
 {
-    HANDLE h = CreateFileW(path.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    std::wstring tempPath = path + L".nutricula_tmp_" + std::to_wstring(GetCurrentProcessId()) + L"_" + std::to_wstring(GetTickCount64());
+    HANDLE h = CreateFileW(tempPath.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
     if (h == INVALID_HANDLE_VALUE) return false;
     DWORD written = 0;
-    BOOL ok = WriteFile(h, data.data(), (DWORD)data.size(), &written, nullptr);
+    bool ok = WriteFile(h, data.data(), (DWORD)data.size(), &written, nullptr) != 0 && written == data.size();
+    if (ok) ok = FlushFileBuffers(h) != 0;
     CloseHandle(h);
-    return ok && written == data.size();
+    if (!ok) { DeleteFileW(tempPath.c_str()); return false; }
+    ok = MoveFileExW(tempPath.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) != 0;
+    if (!ok) DeleteFileW(tempPath.c_str());
+    return ok;
 }
 
 // ----------------------------------------------------------------------
