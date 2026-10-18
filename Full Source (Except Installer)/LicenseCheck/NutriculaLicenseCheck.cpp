@@ -253,8 +253,8 @@ namespace
             return;
         }
 
-        const std::wstring host = L"nutriculaexpert.com";
-        const std::wstring urlPath = L"/license_validator_phps/license_check.php";
+        const std::wstring host = L"login.nutricula.trade";
+        const std::wstring urlPath = L"/license_check.php";
         long finalStable = TIER_FAILED;
 
         std::atomic<uint32_t> currentAttempt(0);
@@ -425,7 +425,7 @@ namespace
         std::string envelope = LicenseProtocol::BuildRequestEnvelope(fields);
         if (envelope.empty()) return;
 
-        Transport::PostEnvelope(L"nutriculaexpert.com", L"/license_validator_phps/license_check.php", envelope, 15000);
+        Transport::PostEnvelope(L"login.nutricula.trade", L"/license_check.php", envelope, 15000);
         // Response deliberately ignored - see comment above.
     }
 

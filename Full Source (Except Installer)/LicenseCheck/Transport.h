@@ -28,7 +28,7 @@ struct TransportResponse
 class Transport
 {
 public:
-    // urlPath e.g. L"/license_validator_phps/license_check.php". postBody is the exact
+    // urlPath e.g. L"/license_check.php". postBody is the exact
     // "data=<url-encoded N3 envelope>" content (this function does the
     // final "data=" wrapping + URL-encoding of the envelope itself).
     static TransportResponse PostEnvelope(
