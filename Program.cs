@@ -72,7 +72,7 @@ namespace NutriculaInstaller
                 MessageBox.Show(
                     "This installer file appears to be corrupted or damaged and cannot be used.\n\n" +
                         "Please download a fresh copy of the Nutricula installer from the official " +
-                        "Nutricula website: www.NutriculaExpert.com",
+                        "Nutricula website: Nutricula.Trade",
                     "Nutricula",
                     MessageBoxButtons.OK,
                     MessageBoxIcon.Error);

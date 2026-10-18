@@ -33,11 +33,11 @@ namespace NutriculaInstaller
 
         private const string FallbackVersion = "3.1";
         private const string FallbackGuideUrl = "https://www.youtube.com/";
-        private const string FallbackWebsiteUrl = "https://www.NutriculaExpert.com";
-        private const string FallbackSupportUrl = "https://t.me/nutriculaexpertsupport";
-        private const string FallbackPremiumPurchaseUrl = "https://www.NutriculaExpert.com";
-        private const string FallbackSignupUrl = "https://nutriculaexpert.com/license_validator_phps/nutricula_computer_based_signup.php";
-        private const string FallbackTransferUrl = "https://nutriculaexpert.com/license_validator_phps/nutricula_computer_based_signup_transfer.php";
+        private const string FallbackWebsiteUrl = "https://nutricula.trade";
+        private const string FallbackSupportUrl = "https://t.me/nutriculachat";
+        private const string FallbackPremiumPurchaseUrl = "https://nutricula.trade/purchase";
+        private const string FallbackSignupUrl = "https://login.nutricula.trade/nutricula_computer_based_signup.php";
+        private const string FallbackTransferUrl = "https://login.nutricula.trade/nutricula_computer_based_signup_transfer.php";
 
         private static readonly Lazy<AppConfigValues> values = new Lazy<AppConfigValues>(Load);
 
