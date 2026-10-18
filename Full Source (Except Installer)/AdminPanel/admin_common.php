@@ -51,7 +51,7 @@ nutricula_admin_security_headers();
 // system) - if a visitor can fetch this file's raw contents over HTTP, the
 // DB password and the admin password hash are both compromised.
 // ============================================================================
-const ADMIN_CONFIG_PATH = '/home/nutricul/domains/panel.nutriculaexpert.com/Private/admin_panel_config.php';
+const ADMIN_CONFIG_PATH = '/home/nutricul/Private/admin_panel_config.php';
 
 function nutricula_admin_load_config(): array
 {
