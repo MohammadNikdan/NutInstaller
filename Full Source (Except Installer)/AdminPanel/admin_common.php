@@ -118,10 +118,52 @@ function nutricula_admin_start_session(array $config): void
     session_start();
 }
 
+/* Optional shared secret for running this panel behind Cloudflare's proxy
+   (orange cloud). Read once per request from admin_panel_config.php's
+   'cloudflare_origin_secret'. Empty/absent/too short (< 32 chars) = disabled,
+   which is also the correct setting while the DNS record is gray. */
+function nutricula_admin_edge_secret(): string
+{
+    static $secret = null;
+    if ($secret !== null) return $secret;
+    $secret = '';
+    try {
+        if (is_file(ADMIN_CONFIG_PATH)) {
+            $cfg = require ADMIN_CONFIG_PATH;
+            $value = is_array($cfg) ? ($cfg['cloudflare_origin_secret'] ?? '') : '';
+            if (is_string($value) && strlen($value) >= 32) {
+                $secret = $value;
+            }
+        }
+    } catch (Throwable $e) {
+        $secret = '';
+    }
+    return $secret;
+}
+
 function nutricula_admin_client_ip(): string
 {
     $remote = trim((string)($_SERVER['REMOTE_ADDR'] ?? ''));
-    return filter_var($remote, FILTER_VALIDATE_IP) ? $remote : '0.0.0.0';
+    $ip = filter_var($remote, FILTER_VALIDATE_IP) ? $remote : '0.0.0.0';
+
+    /* Behind Cloudflare the TCP peer is a Cloudflare edge address and the
+       real visitor is in CF-Connecting-IP. That header is believed ONLY when
+       the request also carries our secret header (X-Nutricula-Edge), which a
+       Cloudflare Transform Rule adds to every proxied request - same
+       mechanism as the license endpoints (license_common.php). A request
+       without the right secret (gray cloud / direct to origin / forged)
+       simply keeps the raw connection IP. */
+    $secret = nutricula_admin_edge_secret();
+    if ($secret !== '') {
+        $sent = (string)($_SERVER['HTTP_X_NUTRICULA_EDGE'] ?? '');
+        if ($sent !== '' && hash_equals($secret, $sent)) {
+            $cf = trim((string)($_SERVER['HTTP_CF_CONNECTING_IP'] ?? ''));
+            if (filter_var($cf, FILTER_VALIDATE_IP)) {
+                return $cf;
+            }
+        }
+    }
+    return $ip;
 }
 
 /* Simple, self-contained login-attempt throttle, reusing the SAME
