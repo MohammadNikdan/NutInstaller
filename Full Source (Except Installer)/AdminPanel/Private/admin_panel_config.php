@@ -4,7 +4,7 @@
    admin_panel_config.php - fill in the three REPLACE_ME/REPLACE_WITH_...
    placeholders below, then upload this ONE file to your Private folder
    (the SAME outside-webroot folder license_config.php already lives in,
-   e.g. /home/nutricul/domains/nutriculaexpert.com/Private/) - never inside
+   e.g. /home/nutricul/Private/) - never inside
    any domain's public_html, not even the admin subdomain's. If
    admin_common.php's ADMIN_CONFIG_PATH constant doesn't already point at
    wherever you put it, update that constant to match.
