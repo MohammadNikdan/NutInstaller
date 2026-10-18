@@ -23,10 +23,10 @@ return [
        file. Matches the same file-path pattern as
        server_signing_private_key_path above - the actual secret value
        never lives directly in this config file. */
-    'transport_key_path' => '/home/nutricul/domains/nutriculaexpert.com/Private/Keys/TransportKey.txt',
+    'transport_key_path' => '/home/nutricul/Private/Keys/TransportKey.txt',
 
     /* Existing server-side RSA private key used to sign the final license lease. */
-    'server_signing_private_key_path' => '/home/nutricul/domains/nutriculaexpert.com/Private/Keys/ServerLicenseSigningKey_Private.pem',
+    'server_signing_private_key_path' => '/home/nutricul/Private/Keys/ServerLicenseSigningKey_Private.pem',
 
     /* The current released EA version, e.g. '3.1'. Compared (via PHP's
        version_compare) against the version recorded in nutricula_build_

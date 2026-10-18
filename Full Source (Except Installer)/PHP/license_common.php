@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 function nutricula_load_config(): array
 {
-    $path = '/home/nutricul/domains/nutriculaexpert.com/Private/license_config.php';
+    $path = '/home/nutricul/Private/license_config.php';
     if (!is_file($path)) {
         throw new RuntimeException('License configuration file is missing.');
     }
@@ -1425,13 +1425,12 @@ const NUTRICULA_TRANSFER_KEY_PRODUCT_ID = 11348;
     only makes one outbound EDD call, not two. */
 function nutricula_fetch_edd_sales(array $config, string $email): array
 {
-    // NOTE: assumed this EDD store lives at the same domain as everything
-    // else in this project (nutriculaexpert.com) - the old value here was
-    // nutriculaexpert.ir, which was stale/wrong everywhere else in this
-    // codebase too. If your EDD store is genuinely hosted elsewhere,
-    // correct this URL manually.
+    // The EDD store is the main WordPress site (nutricula.trade). The API
+    // is served by the store itself, so this host must stay the apex domain
+    // (login.nutricula.trade only serves the license endpoints). If the EDD
+    // store is ever moved elsewhere, correct this URL manually.
     $url =
-        'https://nutriculaexpert.com/edd-api/sales/' .
+        'https://nutricula.trade/edd-api/sales/' .
         '?key=' . urlencode((string)$config['edd']['api_key']) .
         '&token=' . urlencode((string)$config['edd']['api_token']) .
         '&number=100&email=' . urlencode($email);
