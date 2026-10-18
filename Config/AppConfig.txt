@@ -8,10 +8,10 @@ VERSION=3.1
 
 
 # Website button (globe icon, top-right of the window).
-WEBSITE_URL=https://www.NutriculaExpert.com
+WEBSITE_URL=https://nutricula.trade
 
 # Support button (send/telegram icon, top-right of the window).
-SUPPORT_URL=https://t.me/nutriculaexpertsupport
+SUPPORT_URL=https://t.me/nutriculachat
 
 
 
@@ -19,12 +19,12 @@ SUPPORT_URL=https://t.me/nutriculaexpertsupport
 INSTALLATION_GUIDE_URL=https://www.aparat.com/
 
 # "Buy Premium License" button (footer). Replace with your real purchase page.
-PREMIUM_PURCHASE_URL=https://www.NutriculaExpert.com/purchase
+PREMIUM_PURCHASE_URL=https://nutricula.trade/purchase
 
 
 
 # Server endpoint the installer POSTs to for a PREMIUM signup.
-SIGNUP_URL=https://nutriculaexpert.com/license_validator_phps/nutricula_computer_based_signup.php
+SIGNUP_URL=https://login.nutricula.trade/nutricula_computer_based_signup.php
 
 # Server endpoint the installer POSTs to for a license TRANSFER.
-TRANSFER_URL=https://nutriculaexpert.com/license_validator_phps/nutricula_computer_based_signup_transfer.php
+TRANSFER_URL=https://login.nutricula.trade/nutricula_computer_based_signup_transfer.php
