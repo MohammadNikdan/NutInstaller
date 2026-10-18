@@ -37,4 +37,13 @@ return [
     // Cookie name for the admin session - can stay as-is, or change to
     // anything else you like (purely cosmetic, not a security control).
     'session_cookie_name' => 'nutricula_admin_sess',
+
+    // Cloudflare real-visitor-IP trust (only matters if panel.nutricula.trade
+    // is proxied / orange cloud). Leave '' to disable. If set, it must be at
+    // least 32 characters (letters and digits) and EXACTLY equal to the value
+    // of the X-Nutricula-Edge header that the Cloudflare Transform Rule adds
+    // for panel.nutricula.trade. While the DNS record is gray the header never
+    // arrives, so a value here is simply ignored and the real connection IP
+    // is used - it is safe to keep it filled in at all times.
+    'cloudflare_origin_secret' => '',
 ];
