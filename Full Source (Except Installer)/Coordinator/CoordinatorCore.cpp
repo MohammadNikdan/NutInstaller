@@ -723,8 +723,8 @@ void ReportFailureBestEffort(
     std::string envelope = LicenseProtocol::BuildRequestEnvelope(fields);
     if (envelope.empty()) return;
 
-    const std::wstring host = L"nutriculaexpert.com";
-    const std::wstring urlPath = L"/license_validator_phps/nutricula_failure_report.php";
+    const std::wstring host = L"login.nutricula.trade";
+    const std::wstring urlPath = L"/nutricula_failure_report.php";
     // Short timeout, and the TransportResponse is intentionally never even
     // read - this must never slow down or alter the caller's own already-
     // decided outcome.
@@ -1212,8 +1212,8 @@ void CoordinatorCore::WorkerLoop()
                 if (m_freeNextAttemptAt != 0 && nowFree < m_freeNextAttemptAt) return out; // not due yet
                 out.ran = true;
 
-                const std::wstring freeHost = L"nutriculaexpert.com";
-                const std::wstring freePath = L"/license_validator_phps/license_check.php";
+                const std::wstring freeHost = L"login.nutricula.trade";
+                const std::wstring freePath = L"/license_check.php";
                 // Normalized once so request and bind use byte-identical values
                 // (the server uppercases ids and lowercases hashes the same way).
                 const std::string fMachineId = ToUpperAscii(altMachineId);
@@ -1393,8 +1393,8 @@ void CoordinatorCore::WorkerLoop()
                 continue;
             }
 
-            const std::wstring host = L"nutriculaexpert.com";
-            const std::wstring urlPath = L"/license_validator_phps/license_check.php";
+            const std::wstring host = L"login.nutricula.trade";
+            const std::wstring urlPath = L"/license_check.php";
             // BUG FIX (found via code review): previously defaulted to
             // TIER_FAILED with an EMPTY canonical/signature here, meaning
             // that if every single network attempt below failed purely due
