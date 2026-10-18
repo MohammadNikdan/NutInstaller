@@ -434,6 +434,10 @@ namespace NutriculaInstaller
             // which file another line actually copies.
             ResourceItem resEx5 = new ResourceItem("Nutricula.ex5", "NutriculaInstaller.Assets.Nutricula.ex5");
             ResourceItem resEx4 = new ResourceItem("Nutricula.ex4", "NutriculaInstaller.Assets.Nutricula.ex4");
+            // The UI font (the same Fonts\Outfit-Regular.ttf that is already embedded for the
+            // Installer's own window) is also copied into every MT4 terminal's MQL4\Files folder.
+            // Reused as-is - no second copy of the font file and no csproj change is needed.
+            ResourceItem resFont = new ResourceItem("Outfit-Regular.ttf", "NutriculaInstaller.Fonts.Outfit-Regular.ttf");
             ResourceItem resLicenseDll32 = new ResourceItem("NutriculaLicenseCheck32.dll", "NutriculaInstaller.Assets.NutriculaLicenseCheck32.dll");
             ResourceItem resLicenseDll64 = new ResourceItem("NutriculaLicenseCheck64.dll", "NutriculaInstaller.Assets.NutriculaLicenseCheck64.dll");
             ResourceItem resMachineId32 = new ResourceItem("MachineId32.dll", "NutriculaInstaller.Assets.MachineId32.dll");
@@ -506,6 +510,17 @@ namespace NutriculaInstaller
                     {
                         await CopyEmbeddedResourceAsync(resEx4, terminal.ExpertsPath, token).ConfigureAwait(true);
                         VerifyInstalledFile(Path.Combine(terminal.ExpertsPath, resEx4.FileName));
+
+                        // MT4 only: font file -> <terminal data path>\MQL4\Files\Outfit-Regular.ttf
+                        // (runs for every install mode - Free, Premium and Transfer - because all three
+                        // go through this method). REQUIRED, exactly like the other files above: if it
+                        // cannot be copied or verified, the exception propagates to this terminal's
+                        // catch block below and is reported as a failed install for this terminal.
+                        string mql4FilesPath = Path.Combine(terminal.TerminalPath, "MQL4", "Files");
+                        await EnsureDirectoryAsync(mql4FilesPath).ConfigureAwait(true);
+                        await CopyEmbeddedResourceAsync(resFont, mql4FilesPath, token).ConfigureAwait(true);
+                        VerifyInstalledFile(Path.Combine(mql4FilesPath, resFont.FileName));
+                        log("Copied " + resFont.FileName + " -> " + mql4FilesPath);
                     }
                     else
                     {

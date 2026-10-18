@@ -146,6 +146,10 @@ namespace NutriculaInstaller
                     }
                     string eaFile = terminal.Type == TerminalType.MT4 ? "Nutricula.ex4" : "Nutricula.ex5";
                     DeleteFileBestEffort(Path.Combine(terminal.ExpertsPath, eaFile), log);
+                    if (terminal.Type == TerminalType.MT4)
+                    {
+                        DeleteFileBestEffort(Path.Combine(terminal.TerminalPath, "MQL4", "Files", "Outfit-Regular.ttf"), log);
+                    }
                 }
                 log("Removed Nutricula files from " + terminals.Count + " MetaTrader terminal(s).");
             }
