@@ -1,11 +1,13 @@
 #include "CoordinatorCore.h"
 #include "ManifestVerify.h"
+#include "RuntimeMeasure.h"
 #include "CoordinatorProtocol.h"
 #include "../LicenseCheck/LicenseProtocol.h"
 #include "../LicenseCheck/MachineIdBridge.h"
 #include "../LicenseCheck/Transport.h"
 
 #include <bcrypt.h>
+#include <algorithm>
 #include <map>
 #include <vector>
 #include <cstdio>
@@ -235,6 +237,15 @@ constexpr long long IDLE_SELF_EXIT_SEC = 3600; // 60:00
 // diagnostic statistics, not a security-relevant check, so there's no
 // reason to report more often than this.
 constexpr long long FAILURE_REPORT_INTERVAL_SEC = 1800; // 30:00
+
+// How long "an EA is active but no terminal session can be measured" is
+// tolerated before it becomes a reported integrity failure. Long enough to
+// cover the ordinary case it exists for - a chart closed between the last
+// pipe call and this cycle - and short enough that a host where process or
+// module inspection genuinely does not work surfaces as a -2 the customer
+// can report, instead of an install that silently stops verifying forever.
+// See WorkerLoop's sessions.empty() branch.
+constexpr long long NO_SESSION_GRACE_SEC = 180; // 3:00
 
 // Deterministically derives the next-request offset from a lease's
 // refresh token - same token always yields the same offset (so a
@@ -733,11 +744,10 @@ void ReportFailureBestEffort(
 
 } // anonymous namespace
 
-void CoordinatorCore::Start(const std::wstring& coordinatorFileName)
+void CoordinatorCore::Start()
 {
     bool expected = false;
     if (!m_started.compare_exchange_strong(expected, true)) return;
-    m_coordinatorFileName = coordinatorFileName;
 
     std::wstring dir = GetOwnModuleDirectory();
     MachineIdBridge::Load(dir); // best-effort; if this fails, EvaluateLocalFile/refresh calls below simply keep failing gracefully rather than crashing
@@ -762,13 +772,128 @@ void CoordinatorCore::RequestRefreshIfDue()
     if (m_wakeEvent) SetEvent(m_wakeEvent);
 }
 
-void CoordinatorCore::NoteEaActivity()
+// How long a discovered session is reused before its module list is read
+// again. An EA polls every few seconds; enumerating a terminal's modules
+// that often would be pure waste. Re-discovery still happens often enough
+// that a DLL loaded or swapped mid-session is picked up on the next cycle,
+// and the actual integrity measurement (hashing) is redone every cycle
+// regardless of this - only the "which modules are loaded" lookup is
+// throttled here.
+constexpr unsigned long long SESSION_REDISCOVER_INTERVAL_MS = 20000;
+// A terminal that has not been heard from for this long is dropped even if
+// its process is somehow still alive, so a long-closed chart cannot keep
+// supplying Artifact Evidence.
+constexpr unsigned long long SESSION_MAX_AGE_MS = 15ull * 60 * 1000;
+// Hard ceiling on tracked terminals - far above any realistic number of
+// simultaneously open MetaTrader installs, and there purely so a stream of
+// short-lived connections can never grow this list without bound.
+constexpr size_t MAX_TRACKED_SESSIONS = 16;
+
+void CoordinatorCore::NoteEaActivity(HANDLE clientPipe)
 {
     m_lastEaActivityAt.store(EstimatedNow());
+
+    // Identify the process actually on the other end of this pipe and record
+    // where its Nutricula modules are really loaded from. This is the input
+    // the integrity check measures - see RuntimeMeasure.h. A failure to
+    // identify the client is deliberately NOT published as a tier here: this
+    // runs on a short-lived pipe thread, and the verdict belongs to
+    // WorkerLoop, which treats "no identifiable session" as "nothing to
+    // measure, make no network request" rather than as tampering.
+    if (clientPipe != nullptr && clientPipe != INVALID_HANDLE_VALUE)
+    {
+        ULONG pid = 0;
+        const bool gotPid = GetNamedPipeClientProcessId(clientPipe, &pid) != 0 && pid != 0;
+        const unsigned long long nowMs = GetTickCount64();
+
+        bool needDiscovery = true;
+        if (gotPid)
+        {
+            std::lock_guard<std::mutex> lock(m_sessionsMutex);
+            for (RuntimeMeasure::TerminalSession& s : m_sessions)
+            {
+                if (s.pid != static_cast<DWORD>(pid)) continue;
+                if (nowMs - s.noticedTickMs < SESSION_REDISCOVER_INTERVAL_MS)
+                {
+                    s.noticedTickMs = nowMs; // still the same process, still fresh
+                    needDiscovery = false;
+                }
+                break;
+            }
+        }
+
+        if (needDiscovery)
+        {
+            RuntimeMeasure::ManifestExpectations expectations;
+            {
+                std::lock_guard<std::mutex> lock(m_expectationsMutex);
+                expectations = m_expectations;
+            }
+            RuntimeMeasure::TerminalSession discovered;
+            std::string detail;
+            if (RuntimeMeasure::DiscoverSessionFromPipe(clientPipe, expectations, discovered, detail))
+            {
+                std::lock_guard<std::mutex> lock(m_sessionsMutex);
+                bool replaced = false;
+                for (RuntimeMeasure::TerminalSession& s : m_sessions)
+                {
+                    if (s.pid == discovered.pid)
+                    {
+                        s = discovered;
+                        replaced = true;
+                        break;
+                    }
+                }
+                if (!replaced)
+                {
+                    if (m_sessions.size() >= MAX_TRACKED_SESSIONS)
+                    {
+                        // Evict the least recently seen entry.
+                        size_t oldest = 0;
+                        for (size_t i = 1; i < m_sessions.size(); i++)
+                        {
+                            if (m_sessions[i].noticedTickMs < m_sessions[oldest].noticedTickMs) oldest = i;
+                        }
+                        m_sessions.erase(m_sessions.begin() + static_cast<long>(oldest));
+                    }
+                    m_sessions.push_back(discovered);
+                }
+            }
+        }
+    }
+
     // Also wake WorkerLoop immediately if it's sitting in the idle-gate
     // wait below - so an EA that just opened/reconnected gets picked up
     // right away instead of waiting out the rest of that wait's timeout.
     if (m_wakeEvent) SetEvent(m_wakeEvent);
+}
+
+// Drops terminals that have exited (or whose PID was reused by an unrelated
+// process) and ones that stopped talking to us long ago, then returns what
+// is left, most recently seen first.
+std::vector<RuntimeMeasure::TerminalSession> CoordinatorCore::SnapshotLiveSessions()
+{
+    const unsigned long long nowMs = GetTickCount64();
+    std::vector<RuntimeMeasure::TerminalSession> live;
+    {
+        std::lock_guard<std::mutex> lock(m_sessionsMutex);
+        std::vector<RuntimeMeasure::TerminalSession> kept;
+        kept.reserve(m_sessions.size());
+        for (const RuntimeMeasure::TerminalSession& s : m_sessions)
+        {
+            if (nowMs - s.noticedTickMs > SESSION_MAX_AGE_MS) continue;
+            if (!RuntimeMeasure::IsSessionProcessAlive(s)) continue;
+            kept.push_back(s);
+        }
+        m_sessions = kept;
+        live = kept;
+    }
+    std::sort(live.begin(), live.end(),
+        [](const RuntimeMeasure::TerminalSession& a, const RuntimeMeasure::TerminalSession& b)
+        {
+            return a.noticedTickMs > b.noticedTickMs;
+        });
+    return live;
 }
 
 void CoordinatorCore::GetPublished(int& outTier, int& outPending, std::string& outCanonical, std::string& outSignatureB64)
@@ -1028,24 +1153,20 @@ void CoordinatorCore::WorkerLoop()
             // hash per architecture. This exact compiled binary is only ever
             // ONE architecture - #ifdef _WIN64 is resolved once, at compile
             // time, by the compiler itself (defined by both MSVC and
-            // MinGW-w64 for 64-bit targets) - never a runtime guess. (The
-            // Windows Service host was removed in 2026; the Broker is now the
-            // sole Coordinator, so m_coordinatorFileName is always the
-            // Broker's own file name.)
+            // MinGW-w64 for 64-bit targets) - never a runtime guess. The same
+            // #ifdef picks the Machine ID DLL expectation, since the Broker
+            // only ever loads the build matching itself, and hostBits, which
+            // tells the server which of the two Broker columns its reported
+            // broker_hash must equal.
 #ifdef _WIN64
             const std::string& expectedBrokerHash = manifest.broker64Sha256;
+            const std::string& expectedHostMachineIdHash = manifest.machineid64Sha256;
+            const std::string hostBits = "64";
 #else
             const std::string& expectedBrokerHash = manifest.broker32Sha256;
+            const std::string& expectedHostMachineIdHash = manifest.machineid32Sha256;
+            const std::string hostBits = "32";
 #endif
-            bool artifactsOk = manifest.valid && ManifestVerify::VerifyArtifactsMatchManifest(
-                manifest, ownDir,
-                CoordinatorProtocol::ARTIFACT_EX5_NAME,
-                CoordinatorProtocol::ARTIFACT_EX4_NAME,
-                CoordinatorProtocol::ARTIFACT_DLL32_NAME,
-                CoordinatorProtocol::ARTIFACT_DLL64_NAME,
-                CoordinatorProtocol::ARTIFACT_MACHINEID32_NAME,
-                CoordinatorProtocol::ARTIFACT_MACHINEID64_NAME,
-                m_coordinatorFileName, expectedBrokerHash);
             // Local -2 rule (2026, project owner's explicit rule): ANY missing
             // artifact, hash mismatch or invalid/unverifiable manifest
             // signature is an integrity failure and is published as TIER_FAILED
@@ -1079,16 +1200,135 @@ void CoordinatorCore::WorkerLoop()
                     failurePlatformProfile);
                 m_lastFailureReportSentAt = nowForReport;
             };
-            if (!artifactsOk)
+            if (!manifest.valid)
             {
                 publishFailedTier();
                 reportLocalFailure("artifact_check_failed",
-                    manifest.valid
-                        ? "an installed artifact is missing or its SHA-256 differs from the signed manifest"
-                        : "manifest.txt is missing, malformed or its signature does not verify");
+                    "manifest.txt is missing, malformed or its signature does not verify");
                 Sleep(5000);
                 continue;
             }
+
+            // ---- Integrity, measured on what is ACTUALLY RUNNING (2026) ----
+            // Until this change the Coordinator hashed the copies of the EA
+            // and the DLLs that the Installer had left next to it, which
+            // could never catch the attack it existed for: a patched EA or
+            // DLL is run from where MetaTrader loads it, while those private
+            // copies stay pristine and keep matching. Every measurement now
+            // comes from the running image or the real loaded module - see
+            // RuntimeMeasure.h for the full reasoning, and for what this
+            // still cannot do.
+            // Republished for the pipe threads, which identify a connecting
+            // process by these hashes rather than by module file names.
+            RuntimeMeasure::ManifestExpectations expectations;
+            expectations.ex4Sha256 = manifest.ex4Sha256;
+            expectations.ex5Sha256 = manifest.ex5Sha256;
+            expectations.dll32Sha256 = manifest.dll32Sha256;
+            expectations.dll64Sha256 = manifest.dll64Sha256;
+            expectations.machineid32Sha256 = manifest.machineid32Sha256;
+            expectations.machineid64Sha256 = manifest.machineid64Sha256;
+            {
+                std::lock_guard<std::mutex> lock(m_expectationsMutex);
+                m_expectations = expectations;
+            }
+
+            RuntimeMeasure::HostEvidence hostEvidence =
+                RuntimeMeasure::MeasureHost(expectedBrokerHash, expectedHostMachineIdHash);
+            if (!hostEvidence.ok)
+            {
+                publishFailedTier();
+                reportLocalFailure("artifact_check_failed", hostEvidence.detail);
+                Sleep(5000);
+                continue;
+            }
+
+            // Every MetaTrader that is genuinely talking to us right now.
+            std::vector<RuntimeMeasure::TerminalSession> sessions = SnapshotLiveSessions();
+            if (sessions.empty())
+            {
+                // An EA was heard from within the activity window above, but
+                // no terminal process is alive and identifiable right now -
+                // it closed in between, or this host would not let us read
+                // its process/module information at all.
+                //
+                // The first case is ordinary and must never look like
+                // tampering, so for NO_SESSION_GRACE_SEC nothing happens: no
+                // network request (there is no Evidence to send) and the
+                // published tier is left exactly as it was.
+                //
+                // The second case would otherwise be invisible - an install
+                // that quietly never verifies again - so once the grace
+                // period is exhausted it becomes a reported -2 like any
+                // other integrity failure, with a detail that says what
+                // could not be done.
+                long long nowNoSession = EstimatedNow();
+                if (m_noMeasurableSessionSince == 0) m_noMeasurableSessionSince = nowNoSession;
+                if (nowNoSession - m_noMeasurableSessionSince >= NO_SESSION_GRACE_SEC)
+                {
+                    publishFailedTier();
+                    reportLocalFailure("artifact_check_failed",
+                        "an EA is active but the MetaTrader process using Nutricula could not be "
+                        "identified or its loaded modules could not be read, so integrity cannot be measured");
+                }
+                Sleep(5000);
+                continue;
+            }
+            m_noMeasurableSessionSince = 0;
+
+            // The gate covers EVERY live terminal, not just the one whose
+            // evidence gets reported: a second terminal running a patched EA
+            // must fail the whole machine, not hide behind a clean one.
+            RuntimeMeasure::SessionEvidence reportedEvidence;
+            const RuntimeMeasure::TerminalSession* reportedSession = nullptr;
+            std::string sessionFailureDetail;
+            for (const RuntimeMeasure::TerminalSession& session : sessions)
+            {
+                // MeasureSession resolves WHICH expectation applies itself -
+                // which module is really our DLL (by hash), and from its own
+                // loaded path whether this is an MQL4 or MQL5 terminal - so
+                // it gets the whole set rather than a pre-selected hash.
+                RuntimeMeasure::SessionEvidence evidence =
+                    RuntimeMeasure::MeasureSession(session, expectations);
+
+                // sessions is ordered most-recently-seen first, so the first
+                // entry is the one whose evidence is reported to the server.
+                if (reportedSession == nullptr)
+                {
+                    reportedEvidence = evidence;
+                    reportedSession = &session;
+                }
+                if (!evidence.ok && sessionFailureDetail.empty()) sessionFailureDetail = evidence.detail;
+            }
+            if (!sessionFailureDetail.empty() || reportedSession == nullptr || !reportedEvidence.ok)
+            {
+                publishFailedTier();
+                reportLocalFailure("artifact_check_failed",
+                    !sessionFailureDetail.empty() ? sessionFailureDetail
+                                                  : std::string("no measurable MetaTrader session"));
+                Sleep(5000);
+                continue;
+            }
+
+            // The exact values just measured, normalized once so that the
+            // request, the free-tier bind digest and the device-signed
+            // Evidence message all carry byte-identical strings (point 88:
+            // the Evidence must be bound to this very measurement, never to
+            // a separately computed - and therefore replayable - one).
+            const std::string fBuildId = manifest.buildId;
+            const std::string fEaKind = (reportedEvidence.mqlMajor == 4) ? "mt4" : "mt5";
+            const std::string fEaHash = ToLowerAscii(reportedEvidence.eaHash);
+            const std::string fDllHash = ToLowerAscii(reportedEvidence.dllHash);
+            // "-" when that process genuinely has no Machine ID DLL loaded,
+            // which is the normal case (nothing in the thin DLL loads it).
+            // An unloaded file cannot affect anything, so there is nothing to
+            // measure and nothing for the server to compare.
+            const std::string fTerminalMachineIdHash =
+                (reportedEvidence.terminalMachineIdHash == "-")
+                    ? std::string("-")
+                    : ToLowerAscii(reportedEvidence.terminalMachineIdHash);
+            const std::string fHostBits = hostBits;
+            const std::string fBrokerHash = ToLowerAscii(hostEvidence.brokerHash);
+            const std::string fHostMachineIdHash = ToLowerAscii(hostEvidence.machineIdHash);
             // License file present but blocked (lock / access denied / antivirus):
             // TIER_FILE_LOCKED (-5). Not an integrity verdict, so no -2 and no
             // server report; no network request is made. Re-evaluated every
@@ -1218,14 +1458,11 @@ void CoordinatorCore::WorkerLoop()
                 // (the server uppercases ids and lowercases hashes the same way).
                 const std::string fMachineId = ToUpperAscii(altMachineId);
                 const std::string fDeviceKey = ToUpperAscii(deviceKeyHash);
-                const std::string fBuildId = manifest.buildId;
-                const std::string fEx5 = ToLowerAscii(manifest.ex5Sha256);
-                const std::string fEx4 = ToLowerAscii(manifest.ex4Sha256);
-                const std::string fDll32 = ToLowerAscii(manifest.dll32Sha256);
-                const std::string fDll64 = ToLowerAscii(manifest.dll64Sha256);
-                const std::string fMid32 = ToLowerAscii(manifest.machineid32Sha256);
-                const std::string fMid64 = ToLowerAscii(manifest.machineid64Sha256);
-                const std::string fBroker = ToLowerAscii(expectedBrokerHash);
+                // The Artifact Evidence (fBuildId / fEaKind / fEaHash /
+                // fDllHash / fTerminalMachineIdHash / fHostBits /
+                // fBrokerHash / fHostMachineIdHash) is the measurement taken
+                // by the integrity gate above, captured there rather than
+                // recomputed here - see that gate's own comment.
 
                 std::string lastIssue = "no attempt made";
                 bool verdict = false;
@@ -1241,20 +1478,24 @@ void CoordinatorCore::WorkerLoop()
                     checkinFields["machine_id"] = fMachineId;
                     checkinFields["device_key_hash"] = fDeviceKey;
                     checkinFields["build_id"] = fBuildId;
-                    checkinFields["ex5_hash"] = fEx5;
-                    checkinFields["ex4_hash"] = fEx4;
-                    checkinFields["dll32_hash"] = fDll32;
-                    checkinFields["dll64_hash"] = fDll64;
-                    checkinFields["machineid32_hash"] = fMid32;
-                    checkinFields["machineid64_hash"] = fMid64;
-                    checkinFields["broker_hash"] = fBroker;
+                    checkinFields["ea_kind"] = fEaKind;
+                    checkinFields["ea_hash"] = fEaHash;
+                    checkinFields["dll_hash"] = fDllHash;
+                    checkinFields["term_mid_hash"] = fTerminalMachineIdHash;
+                    checkinFields["host_bits"] = fHostBits;
+                    checkinFields["broker_hash"] = fBrokerHash;
+                    checkinFields["host_mid_hash"] = fHostMachineIdHash;
                     checkinFields["nonce"] = nonce;
                     if (!platformProfile.empty()) checkinFields["platform_profile"] = platformProfile;
 
+                    // Field order here is the contract with
+                    // nutricula_free_checkin_bind() on the server - both
+                    // sides must list exactly these values in exactly this
+                    // order or no answer will ever verify.
                     const std::string expectedBind = Sha256HexOfString(
                         "NL3-FREE-BIND|" + fMachineId + "|" + fDeviceKey + "|" + fBuildId + "|" +
-                        fEx5 + "|" + fEx4 + "|" + fDll32 + "|" + fDll64 + "|" + fMid32 + "|" + fMid64 + "|" +
-                        fBroker + "|" + nonce);
+                        fEaKind + "|" + fEaHash + "|" + fDllHash + "|" + fTerminalMachineIdHash + "|" +
+                        fHostBits + "|" + fBrokerHash + "|" + fHostMachineIdHash + "|" + nonce);
                     std::string checkinEnvelope = LicenseProtocol::BuildRequestEnvelope(checkinFields);
                     if (checkinEnvelope.empty() || expectedBind.empty())
                     {
@@ -1579,14 +1820,14 @@ void CoordinatorCore::WorkerLoop()
                     "NUTRICULA-RUNTIME-V3|challenge_id=" + challengeParsed.challenge.challengeId +
                     "|nonce=" + challengeParsed.challenge.nonceB64 +
                     "|license_id=" + licenseIdForRequest + "|machine_id=" + machineId +
-                    "|build_id=" + manifest.buildId +
-                    "|ex5_hash=" + manifest.ex5Sha256 +
-                    "|ex4_hash=" + manifest.ex4Sha256 +
-                    "|dll32_hash=" + manifest.dll32Sha256 +
-                    "|dll64_hash=" + manifest.dll64Sha256 +
-                    "|machineid32_hash=" + manifest.machineid32Sha256 +
-                    "|machineid64_hash=" + manifest.machineid64Sha256 +
-                    "|broker_hash=" + expectedBrokerHash;
+                    "|build_id=" + fBuildId +
+                    "|ea_kind=" + fEaKind +
+                    "|ea_hash=" + fEaHash +
+                    "|dll_hash=" + fDllHash +
+                    "|term_mid_hash=" + fTerminalMachineIdHash +
+                    "|host_bits=" + fHostBits +
+                    "|broker_hash=" + fBrokerHash +
+                    "|host_mid_hash=" + fHostMachineIdHash;
                 std::string signatureB64;
                 if (!MachineIdBridge::SignChallenge(message, signatureB64))
                 {
@@ -1603,14 +1844,14 @@ void CoordinatorCore::WorkerLoop()
                 verifyFields["machine_id_alt"] = machineIdAlt;
                 verifyFields["device_key_hash"] = deviceKeyHash;
                 verifyFields["challenge_id"] = challengeParsed.challenge.challengeId;
-                verifyFields["build_id"] = manifest.buildId;
-                verifyFields["ex5_hash"] = manifest.ex5Sha256;
-                verifyFields["ex4_hash"] = manifest.ex4Sha256;
-                verifyFields["dll32_hash"] = manifest.dll32Sha256;
-                verifyFields["dll64_hash"] = manifest.dll64Sha256;
-                verifyFields["machineid32_hash"] = manifest.machineid32Sha256;
-                verifyFields["machineid64_hash"] = manifest.machineid64Sha256;
-                verifyFields["broker_hash"] = expectedBrokerHash;
+                verifyFields["build_id"] = fBuildId;
+                verifyFields["ea_kind"] = fEaKind;
+                verifyFields["ea_hash"] = fEaHash;
+                verifyFields["dll_hash"] = fDllHash;
+                verifyFields["term_mid_hash"] = fTerminalMachineIdHash;
+                verifyFields["host_bits"] = fHostBits;
+                verifyFields["broker_hash"] = fBrokerHash;
+                verifyFields["host_mid_hash"] = fHostMachineIdHash;
                 if (!platformProfile.empty()) verifyFields["platform_profile"] = platformProfile;
                 verifyFields["signature"] = signatureB64;
                 // Send whatever refresh token we currently have locally

@@ -17,11 +17,14 @@
 //   - the same 10-attempt retry budget
 //
 
+#include "RuntimeMeasure.h"
+
 #include <windows.h>
 #include <atomic>
 #include <mutex>
 #include <string>
 #include <thread>
+#include <vector>
 
 namespace Coordinator {
 
@@ -78,12 +81,14 @@ class CoordinatorCore
 {
 public:
     // Starts the background worker thread. Idempotent - calling twice has
-    // no additional effect. coordinatorFileName is this Coordinator's OWN
-    // binary file name (always "NutriculaLicenseBroker.exe" - the Broker is
-    // the sole Coordinator host since the Windows Service was removed) -
-    // used for its own artifact integrity self-check (architecture point
-    // 92/38), separate from the EX5/DLL names.
-    void Start(const std::wstring& coordinatorFileName);
+    // no additional effect.
+    //
+    // 2026: it no longer takes the Coordinator's own file name. The self-
+    // check used to hash "<own folder>\<that name>"; it now hashes this
+    // process's actual running image, which GetModuleFileNameW(nullptr)
+    // reports and no assumed file name can get wrong (architecture point
+    // 92/38). See RuntimeMeasure::MeasureHost.
+    void Start();
 
     // Called when a client (via IPC) asks for a refresh. This is
     // idempotent BY DESIGN (architecture point 99): if a refresh is not yet
@@ -96,26 +101,59 @@ public:
     // Snapshot read for IPC StatusReplyMsg construction.
     void GetPublished(int& outTier, int& outPending, std::string& outCanonical, std::string& outSignatureB64);
 
-    // Called from ServeOneClient (both the Service's and the Broker's own
-    // copies) whenever the EA/DLL genuinely talks to us over the pipe -
-    // GetStatus or RequestRefresh, either counts (see WorkerLoop's own
-    // comment for why). This is the ONLY signal the Coordinator has that
-    // an EA is actually attached to a running MetaTrader right now, as
-    // opposed to merely being installed on this machine - WorkerLoop uses
-    // it to skip its own periodic network activity entirely (no
-    // free_checkin telemetry, no license verify) when nobody has asked in
-    // a while, so an installed-but-unused copy generates zero server
-    // traffic instead of running forever in the background.
-    void NoteEaActivity();
+    // Called from ServeOneClient whenever the EA/DLL genuinely talks to us
+    // over the pipe - GetStatus or RequestRefresh, either counts (see
+    // WorkerLoop's own comment for why). This is the ONLY signal the
+    // Coordinator has that an EA is actually attached to a running
+    // MetaTrader right now, as opposed to merely being installed on this
+    // machine - WorkerLoop uses it to skip its own periodic network activity
+    // entirely (no free_checkin telemetry, no license verify) when nobody
+    // has asked in a while, so an installed-but-unused copy generates zero
+    // server traffic instead of running forever in the background.
+    //
+    // 2026: it now also takes the connected pipe handle, because that handle
+    // is the only trustworthy way to learn WHICH process is talking to us
+    // (GetNamedPipeClientProcessId). From that process the Coordinator reads
+    // the real, OS-reported paths of the Nutricula modules loaded inside it,
+    // which is what the integrity check measures - see RuntimeMeasure.h for
+    // why nothing here is taken from anything the client reports.
+    void NoteEaActivity(HANDLE clientPipe);
 
 private:
     void WorkerLoop();
+
+    // Every MetaTrader process that has talked to us recently and is still
+    // alive, with the OS-reported paths of the Nutricula modules loaded
+    // inside it. Discovery is throttled (see NoteEaActivity) so an EA
+    // polling every few seconds does not re-enumerate a process's modules
+    // on every single call. Dead or PID-reused entries are dropped when the
+    // list is snapshotted.
+    std::vector<RuntimeMeasure::TerminalSession> SnapshotLiveSessions();
+    std::mutex m_sessionsMutex;
+    std::vector<RuntimeMeasure::TerminalSession> m_sessions;
+    // The Vendor-signed expectations, republished by WorkerLoop every time it
+    // loads and verifies manifest.txt, so the short-lived pipe threads can
+    // read them without doing a signature verification of their own. They are
+    // needed there because a connecting process is recognised as one of ours
+    // by HASH, not by module file name (see RuntimeMeasure.h). Empty until
+    // WorkerLoop's first pass, which only means that first discovery falls
+    // back to matching our shipped names.
+    std::mutex m_expectationsMutex;
+    RuntimeMeasure::ManifestExpectations m_expectations;
+    // EstimatedNow() of the first cycle in an unbroken run where an EA was
+    // active but no terminal session could be measured; 0 while sessions are
+    // being measured normally. A brief spell of this is ordinary (a chart
+    // was just closed), so it is tolerated for NO_SESSION_GRACE_SEC. Beyond
+    // that it means this machine cannot measure its own integrity at all -
+    // for instance if process/module inspection is unavailable on the host -
+    // and that becomes a reported -2 rather than an install that silently
+    // never verifies again.
+    long long m_noMeasurableSessionSince = 0;
 
     PublishedState m_state;
     std::thread m_worker;
     std::atomic<bool> m_started{false};
     HANDLE m_wakeEvent = nullptr; // signaled by RequestRefreshIfDue to interrupt an idle wait early
-    std::wstring m_coordinatorFileName;
     // Free-tier verification schedule (see WorkerLoop / runFreeCheckin): the
     // earliest EstimatedNow() at which the next network free_checkin ROUND may
     // start. 0 = never run yet in this process (due immediately). After a

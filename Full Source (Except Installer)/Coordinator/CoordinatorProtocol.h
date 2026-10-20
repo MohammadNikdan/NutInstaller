@@ -28,32 +28,34 @@ namespace CoordinatorProtocol {
 
 constexpr uint32_t PROTOCOL_VERSION = 1;
 
-// Standard artifact file names, expected to sit next to the Coordinator
-// binary (Service or Broker) - the Installer places all of these in the
-// same directory as part of Phase 6. Defined once here so the Coordinator's
-// integrity check (ManifestVerify), NutriculaSignTool, and the Installer
-// all agree on exact names without needing to duplicate the constants.
+// The shipped artifacts' file names, defined once here so NutriculaSignTool
+// (which hashes the build outputs into the signed manifest) and the
+// Coordinator (which looks for these modules inside a running MetaTrader -
+// see RuntimeMeasure.cpp) can never disagree about a name.
+//
+// 2026: these are no longer "files expected to sit next to the Coordinator".
+// The Coordinator stopped keeping private copies of the EA and the DLLs to
+// hash, because hashing a copy proves nothing about the file that is
+// actually running - see RuntimeMeasure.h. EX4/EX5 therefore appear here
+// only as build-output names for the signing tool; the Coordinator finds the
+// EA by scanning the terminal's own Experts tree, where it may legitimately
+// carry any name at all.
 inline const wchar_t* ARTIFACT_EX5_NAME = L"Nutricula.ex5";
 inline const wchar_t* ARTIFACT_EX4_NAME = L"Nutricula.ex4";
+// Matched against the base names in a MetaTrader process's real module list
+// to find the License Check DLL that is genuinely loaded there, and to tell
+// its architecture apart.
 inline const wchar_t* ARTIFACT_DLL32_NAME = L"NutriculaLicenseCheck32.dll";
 inline const wchar_t* ARTIFACT_DLL64_NAME = L"NutriculaLicenseCheck64.dll";
-// The Machine ID DLL is loaded by BOTH the thin License Check DLL
-// (NutriculaLicenseCheck32/64.dll, inside MT4/MT5) and by the Coordinator
-// itself (MachineIdBridge) - a patched MachineId DLL that silently spoofs
-// or freezes machine_id would defeat the entire anti-clone design without
-// touching any other file, so it must be covered by the same manifest
-// integrity check as everything else. Checked unconditionally (both
-// architectures, every cycle) - like DLL32/64 above, not like the
-// Service/Broker pair below - because a 32-bit MT4 and a 64-bit MT5 could
-// both be talking to this one Coordinator instance at the same time, each
-// needing its own matching MachineId DLL to be genuine.
+// The Machine ID DLL. A patched copy that silently spoofs or freezes
+// machine_id would defeat the entire anti-clone design without touching any
+// other file, so wherever one is genuinely LOADED it is measured: inside the
+// Coordinator (which loads it through MachineIdBridge) always, and inside a
+// MetaTrader process whenever that process turns out to have one loaded.
+// A copy that merely sits on disk unloaded is not measured, because it
+// cannot influence anything.
 inline const wchar_t* ARTIFACT_MACHINEID32_NAME = L"MachineId32.dll";
 inline const wchar_t* ARTIFACT_MACHINEID64_NAME = L"MachineId64.dll";
-// The Coordinator's own file name - the Broker is the sole Coordinator host
-// on every platform (Windows and Wine alike; the Windows Service host was
-// removed in 2026). It passes this name to ManifestVerify so the integrity
-// check measures the exact binary that is actually running.
-inline const wchar_t* COORDINATOR_BROKER_FILE_NAME = L"NutriculaLicenseBroker.exe";
 
 // The Coordinator pipe name - identical on every platform (the host process
 // is always the Broker; only WHERE it is launched from differs between
