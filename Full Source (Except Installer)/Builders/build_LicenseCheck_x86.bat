@@ -55,6 +55,7 @@ REM     regenerated with NutriculaSignTool after rebuilding.
     -I %SRC_DIR% -I ..\Coordinator ^
     %SRC_DIR%\NutriculaLicenseCheckThin.cpp ^
     %SRC_DIR%\ServerSignatureVerify.cpp ^
+    %SRC_DIR%\MachineIdBridge.cpp ^
     -o %OUT_DIR%\NutriculaLicenseCheck32.dll ^
     -lbcrypt -lcrypt32 -ladvapi32
 
