@@ -46,4 +46,24 @@ return [
     // arrives, so a value here is simply ignored and the real connection IP
     // is used - it is safe to keep it filled in at all times.
     'cloudflare_origin_secret' => '',
+
+    // The hostname passkeys are bound to (the WebAuthn "rpId"). Set it to the
+    // exact hostname the panel is browsed at, as a bare hostname: no https://,
+    // no port, no trailing slash.
+    //
+    // Why it is configured rather than taken from the request: the Host header
+    // is whatever the client sends, so leaving it to the request meant the
+    // panel could register a passkey under one hostname and then try to verify
+    // it under another - for instance after being reached through a www.
+    // variant, the bare IP, or a staging name that points at the same server.
+    // The symptom is a passkey that works from one address and not another,
+    // with nothing to indicate why.
+    //
+    // CHANGING THIS INVALIDATES EVERY REGISTERED PASSKEY, because an
+    // authenticator keys its credentials to this value. After changing it,
+    // log in with the password and register the passkeys again.
+    //
+    // Left empty, the panel falls back to the request's Host header (the old
+    // behaviour) and notes it in the PHP error log.
+    'webauthn_rp_id' => 'panel.nutricula.trade',
 ];
