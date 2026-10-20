@@ -130,13 +130,14 @@ REM     visible when run manually for troubleshooting.)
     ..\Coordinator\NutriculaLicenseBroker.cpp ^
     ..\Coordinator\CoordinatorCore.cpp ^
     ..\Coordinator\ManifestVerify.cpp ^
+    ..\Coordinator\RuntimeMeasure.cpp ^
     ..\LicenseCheck\LicenseProtocol.cpp ^
     ..\LicenseCheck\ServerSignatureVerify.cpp ^
     ..\LicenseCheck\Transport.cpp ^
     ..\LicenseCheck\MachineIdBridge.cpp ^
     %RES_OBJ% ^
     -o %OUT_DIR%\NutriculaLicenseBroker64.exe ^
-    -lbcrypt -lcrypt32 -lwinhttp -ladvapi32
+    -lbcrypt -lcrypt32 -lwinhttp -ladvapi32 -lpsapi
 
 if %ERRORLEVEL% NEQ 0 (
     echo BUILD FAILED

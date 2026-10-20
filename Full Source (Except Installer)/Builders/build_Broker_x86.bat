@@ -118,13 +118,14 @@ REM     launches it directly. ---
     ..\Coordinator\NutriculaLicenseBroker.cpp ^
     ..\Coordinator\CoordinatorCore.cpp ^
     ..\Coordinator\ManifestVerify.cpp ^
+    ..\Coordinator\RuntimeMeasure.cpp ^
     ..\LicenseCheck\LicenseProtocol.cpp ^
     ..\LicenseCheck\ServerSignatureVerify.cpp ^
     ..\LicenseCheck\Transport.cpp ^
     ..\LicenseCheck\MachineIdBridge.cpp ^
     %RES_OBJ% ^
     -o %OUT_DIR%\NutriculaLicenseBroker32.exe ^
-    -lbcrypt -lcrypt32 -lwinhttp -ladvapi32
+    -lbcrypt -lcrypt32 -lwinhttp -ladvapi32 -lpsapi
 
 if %ERRORLEVEL% NEQ 0 (
     echo BUILD FAILED
