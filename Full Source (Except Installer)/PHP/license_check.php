@@ -17,8 +17,13 @@ require_once __DIR__ . '/license_common.php';
    signature) appearing in a challenge request is still rejected. */
 const CHECK_ALLOWED_FIELDS = [
     'v', 'stage', 'license_id', 'machine_id', 'machine_id_alt', 'device_key_hash', 'local_ip',
-    'challenge_id', 'signature', 'build_id', 'ex5_hash', 'ex4_hash', 'dll32_hash', 'dll64_hash',
-    'machineid32_hash', 'machineid64_hash', 'broker_hash',
+    'challenge_id', 'signature', 'build_id',
+    // Artifact Evidence, 2026 shape - a measurement of what is genuinely
+    // running rather than seven fixed hashes of installer-made copies. See
+    // the long comment above nutricula_extract_artifact_evidence() in
+    // license_common.php for why that changed and what each field is.
+    'ea_kind', 'ea_hash', 'dll_hash', 'term_mid_hash',
+    'host_bits', 'broker_hash', 'host_mid_hash',
     'refresh_token', 'platform_profile', 'nonce',
 ];
 const CHALLENGE_STAGE_FIELDS = ['v', 'stage', 'license_id', 'machine_id', 'machine_id_alt', 'device_key_hash', 'local_ip'];
@@ -42,7 +47,7 @@ const CHALLENGE_STAGE_FIELDS = ['v', 'stage', 'license_id', 'machine_id', 'machi
    tracked by the challenge/verify path any more: after a Reject that leaves
    it at TIER_FREE, the Coordinator sends this same free_checkin itself.
    2026 hardening (owner's explicit request - "security mechanisms shouldn't
-   depend on license type, free or pro"): build_id and the 7 artifact hashes
+   depend on license type, free or pro"): build_id and the Artifact Evidence
    below are now ALSO REQUIRED here, exactly as mandatory as they are on the
    verify stage (no backward-compat allowance - Nutricula has not shipped
    publicly yet, so there is no older Coordinator build in the field to stay
@@ -59,8 +64,8 @@ const CHALLENGE_STAGE_FIELDS = ['v', 'stage', 'license_id', 'machine_id', 'machi
    Reject/Lease). */
 const FREE_CHECKIN_STAGE_FIELDS = [
     'v', 'stage', 'machine_id', 'device_key_hash',
-    'build_id', 'ex5_hash', 'ex4_hash', 'dll32_hash', 'dll64_hash',
-    'machineid32_hash', 'machineid64_hash', 'broker_hash',
+    'build_id', 'ea_kind', 'ea_hash', 'dll_hash', 'term_mid_hash',
+    'host_bits', 'broker_hash', 'host_mid_hash',
     // 2026 hardening: optional (not required like the hashes above) - purely
     // diagnostic, attached to the -2 log row when this check-in turns out to
     // be an artifact_mismatch. See nutricula_normalize_platform_profile().
@@ -71,23 +76,27 @@ const FREE_CHECKIN_STAGE_FIELDS = [
     // free_checkin handler).
     'nonce',
 ];
-/* build_id/ex5_hash/dll32_hash/dll64_hash/machineid32_hash/machineid64_hash/
-   broker_hash: Artifact Evidence (architecture points 47-49/88) - the
-   Coordinator's own measured hashes of the currently-installed EX5/DLL32/
-   DLL64/MachineId32/MachineId64/Broker, bound into the SAME device
-   signature that proves possession of the license's private key.
-   machineid32_hash/machineid64_hash were added alongside dll32_hash/
-   dll64_hash (not alongside broker_hash) because MachineId32/64.dll are
-   unconditional, always-both-present artifacts just like the License Check
-   DLLs - never trusted as bare client-reported values (point 46/122) - see
-   the comparison against nutricula_build_manifests below, which is the only
-   source of "expected" hashes this endpoint ever consults. (The Windows
-   Service host was removed in 2026 - the Broker is the sole Coordinator -
-   so there is no longer a service_hash field.) */
+/* build_id plus the evidence group (ea_kind, ea_hash, dll_hash,
+   term_mid_hash, host_bits, broker_hash, host_mid_hash): Artifact Evidence
+   (architecture points 47-49/88), bound into the SAME device signature that
+   proves possession of the license's private key.
+
+   2026: the seven fixed hash fields (ex5_hash/ex4_hash/dll32_hash/
+   dll64_hash/machineid32_hash/machineid64_hash/broker_hash) are gone. They
+   carried the Coordinator's measurements of the private copies its own
+   Installer had left beside it, which is exactly what made them worthless -
+   a patched EA or DLL is run from where MetaTrader loads it, and those
+   copies stayed pristine and kept matching. What arrives instead describes
+   what is actually running: one terminal session (ea_kind/ea_hash/dll_hash/
+   term_mid_hash) plus the Coordinator's own process (host_bits/broker_hash/
+   host_mid_hash). See nutricula_extract_artifact_evidence() in
+   license_common.php for the per-field meaning, and the comparison against
+   nutricula_build_manifests below, which stays the ONLY source of "expected"
+   hashes this endpoint ever consults (point 46/122). */
 const VERIFY_STAGE_FIELDS = [
     'v', 'stage', 'license_id', 'machine_id', 'machine_id_alt', 'device_key_hash', 'local_ip', 'challenge_id', 'signature',
-    'build_id', 'ex5_hash', 'ex4_hash', 'dll32_hash', 'dll64_hash',
-    'machineid32_hash', 'machineid64_hash', 'broker_hash',
+    'build_id', 'ea_kind', 'ea_hash', 'dll_hash', 'term_mid_hash',
+    'host_bits', 'broker_hash', 'host_mid_hash',
     'refresh_token', 'platform_profile',
 ];
 
@@ -221,21 +230,19 @@ try {
         $checkinPlatformProfile = nutricula_normalize_platform_profile($fields['platform_profile'] ?? null);
         $checkinIp = nutricula_client_ip($config);
 
-        // build_id/hashes read defensively first (a banned device is rejected
-        // without needing them to be valid); the strict required/well-formed
-        // check happens below for everyone else.
+        // build_id/evidence read defensively first (a banned device is
+        // rejected without needing them to be valid); the strict
+        // required/well-formed check happens below for everyone else.
         $buildId = trim((string)($fields['build_id'] ?? ''));
-        $ex5Hash = strtolower(trim((string)($fields['ex5_hash'] ?? '')));
-        $ex4Hash = strtolower(trim((string)($fields['ex4_hash'] ?? '')));
-        $dll32Hash = strtolower(trim((string)($fields['dll32_hash'] ?? '')));
-        $dll64Hash = strtolower(trim((string)($fields['dll64_hash'] ?? '')));
-        $machineid32Hash = strtolower(trim((string)($fields['machineid32_hash'] ?? '')));
-        $machineid64Hash = strtolower(trim((string)($fields['machineid64_hash'] ?? '')));
-        $brokerHash = strtolower(trim((string)($fields['broker_hash'] ?? '')));
+        $evidence = nutricula_extract_artifact_evidence($fields);
 
+        /* Order here is the contract with CoordinatorCore.cpp's own
+           expectedBind - both sides must list exactly these values in
+           exactly this order or no answer will ever verify. */
         $bind = nutricula_free_checkin_bind([
             (string)$checkinMachineId, (string)$checkinDeviceKeyHash, $buildId,
-            $ex5Hash, $ex4Hash, $dll32Hash, $dll64Hash, $machineid32Hash, $machineid64Hash, $brokerHash,
+            $evidence['ea_kind'], $evidence['ea_hash'], $evidence['dll_hash'], $evidence['term_mid_hash'],
+            $evidence['host_bits'], $evidence['broker_hash'], $evidence['host_mid_hash'],
             $checkinNonce,
         ]);
 
@@ -260,10 +267,8 @@ try {
         //    as well-formed-but-wrong (artifact_mismatch).
         $manifestRow = null;
         if ($reason === null) {
-            $wellFormed = ($buildId !== '' && strlen($buildId) <= 64);
-            foreach ([$ex5Hash, $ex4Hash, $dll32Hash, $dll64Hash, $machineid32Hash, $machineid64Hash, $brokerHash] as $h) {
-                if (!preg_match('/\A[0-9a-f]{64}\z/', $h)) $wellFormed = false;
-            }
+            $malformedField = nutricula_artifact_evidence_malformed($evidence);
+            $wellFormed = ($buildId !== '' && strlen($buildId) <= 64 && $malformedField === null);
 
             if ($wellFormed) {
                 $manifestStmt = $conn->prepare(
@@ -280,20 +285,10 @@ try {
                 }
             }
 
-            // Accepts EITHER the 32-bit or 64-bit expected Broker hash - see
-            // the identical reasoning at the verify stage's $brokerMatches.
-            $brokerMatches = $manifestRow && (
-                hash_equals((string)$manifestRow['broker32_sha256'], $brokerHash) ||
-                hash_equals((string)$manifestRow['broker64_sha256'], $brokerHash)
-            );
-            $artifactsOk = $wellFormed && $manifestRow &&
-                hash_equals((string)$manifestRow['ex5_sha256'], $ex5Hash) &&
-                hash_equals((string)$manifestRow['ex4_sha256'], $ex4Hash) &&
-                hash_equals((string)$manifestRow['dll32_sha256'], $dll32Hash) &&
-                hash_equals((string)$manifestRow['dll64_sha256'], $dll64Hash) &&
-                hash_equals((string)$manifestRow['machineid32_sha256'], $machineid32Hash) &&
-                hash_equals((string)$manifestRow['machineid64_sha256'], $machineid64Hash) &&
-                $brokerMatches;
+            $mismatchedFields = ($wellFormed && $manifestRow)
+                ? nutricula_artifact_evidence_mismatches($manifestRow, $evidence)
+                : [];
+            $artifactsOk = $wellFormed && $manifestRow && $mismatchedFields === [];
 
             if (!$artifactsOk) {
                 $reason = 'artifact_mismatch';
@@ -301,19 +296,15 @@ try {
                 // artifact_mismatch, with as precise a detail string as this
                 // request lets us determine.
                 if (!$wellFormed) {
-                    $mismatchDetail = 'malformed build_id/hash field(s)';
+                    $mismatchDetail = ($malformedField !== null)
+                        ? ('malformed evidence field: ' . $malformedField)
+                        : 'malformed build_id';
                 } elseif (!$manifestRow) {
                     $mismatchDetail = 'no manifest row found for build_id=' . $buildId;
                 } else {
-                    $mismatchedFields = [];
-                    if (!hash_equals((string)$manifestRow['ex5_sha256'], $ex5Hash)) $mismatchedFields[] = 'ex5_hash';
-                    if (!hash_equals((string)$manifestRow['ex4_sha256'], $ex4Hash)) $mismatchedFields[] = 'ex4_hash';
-                    if (!hash_equals((string)$manifestRow['dll32_sha256'], $dll32Hash)) $mismatchedFields[] = 'dll32_hash';
-                    if (!hash_equals((string)$manifestRow['dll64_sha256'], $dll64Hash)) $mismatchedFields[] = 'dll64_hash';
-                    if (!hash_equals((string)$manifestRow['machineid32_sha256'], $machineid32Hash)) $mismatchedFields[] = 'machineid32_hash';
-                    if (!hash_equals((string)$manifestRow['machineid64_sha256'], $machineid64Hash)) $mismatchedFields[] = 'machineid64_hash';
-                    if (!$brokerMatches) $mismatchedFields[] = 'broker_hash';
-                    $mismatchDetail = 'build_id=' . $buildId . '; mismatched field(s): ' . implode(', ', $mismatchedFields);
+                    $mismatchDetail = 'build_id=' . $buildId . '; ea_kind=' . $evidence['ea_kind'] .
+                        '; host_bits=' . $evidence['host_bits'] .
+                        '; mismatched field(s): ' . implode(', ', $mismatchedFields);
                 }
                 nutricula_log_minus2(
                     $conn, 'free', 'artifact_mismatch', $mismatchDetail,
@@ -573,13 +564,10 @@ try {
            failed locally) does not even reach this stage - see
            CoordinatorCore's own gate before ever sending a verify request. */
         $buildId = trim(nutricula_required_field($fields, 'build_id'));
-        $ex5Hash = strtolower(trim(nutricula_required_field($fields, 'ex5_hash')));
-        $ex4Hash = strtolower(trim(nutricula_required_field($fields, 'ex4_hash')));
-        $dll32Hash = strtolower(trim(nutricula_required_field($fields, 'dll32_hash')));
-        $dll64Hash = strtolower(trim(nutricula_required_field($fields, 'dll64_hash')));
-        $machineid32Hash = strtolower(trim(nutricula_required_field($fields, 'machineid32_hash')));
-        $machineid64Hash = strtolower(trim(nutricula_required_field($fields, 'machineid64_hash')));
-        $brokerHash = strtolower(trim(nutricula_required_field($fields, 'broker_hash')));
+        foreach (NUTRICULA_EVIDENCE_FIELDS as $evidenceField) {
+            nutricula_required_field($fields, $evidenceField); // present-and-non-empty, like build_id above
+        }
+        $evidence = nutricula_extract_artifact_evidence($fields);
 
         /* 2026 hardening: every "artifact_mismatch" reject here is a
            confirmed-tampering verdict the client maps to TIER_FAILED/"-2"
@@ -600,17 +588,10 @@ try {
             $logArtifactMismatch('malformed build_id');
             $rejectTracked('artifact_mismatch');
         }
-        $hashFieldsByName = [
-            'ex5_hash' => $ex5Hash, 'ex4_hash' => $ex4Hash,
-            'dll32_hash' => $dll32Hash, 'dll64_hash' => $dll64Hash,
-            'machineid32_hash' => $machineid32Hash, 'machineid64_hash' => $machineid64Hash,
-            'broker_hash' => $brokerHash,
-        ];
-        foreach ($hashFieldsByName as $fieldName => $h) {
-            if (!preg_match('/\A[0-9a-f]{64}\z/', $h)) {
-                $logArtifactMismatch('malformed ' . $fieldName);
-                $rejectTracked('artifact_mismatch');
-            }
+        $malformedField = nutricula_artifact_evidence_malformed($evidence);
+        if ($malformedField !== null) {
+            $logArtifactMismatch('malformed evidence field: ' . $malformedField);
+            $rejectTracked('artifact_mismatch');
         }
 
         $stmt = $conn->prepare(
@@ -639,13 +620,13 @@ try {
             '|license_id=' . $licenseId .
             '|machine_id=' . $matchedRawMachineId .
             '|build_id=' . $buildId .
-            '|ex5_hash=' . $ex5Hash .
-            '|ex4_hash=' . $ex4Hash .
-            '|dll32_hash=' . $dll32Hash .
-            '|dll64_hash=' . $dll64Hash .
-            '|machineid32_hash=' . $machineid32Hash .
-            '|machineid64_hash=' . $machineid64Hash .
-            '|broker_hash=' . $brokerHash;
+            '|ea_kind=' . $evidence['ea_kind'] .
+            '|ea_hash=' . $evidence['ea_hash'] .
+            '|dll_hash=' . $evidence['dll_hash'] .
+            '|term_mid_hash=' . $evidence['term_mid_hash'] .
+            '|host_bits=' . $evidence['host_bits'] .
+            '|broker_hash=' . $evidence['broker_hash'] .
+            '|host_mid_hash=' . $evidence['host_mid_hash'];
 
         $publicKeyPem = nutricula_build_p256_pem((string)$license['device_public_key_b64']);
         if (!nutricula_verify_device_signature($publicKeyPem, $message, $signatureB64)) {
@@ -672,37 +653,28 @@ try {
         $expectedManifest = $manifestStmt->get_result()->fetch_assoc();
         $manifestStmt->close();
 
-        /* Both architectures of the Broker genuinely ship to customers
-           (32-bit Windows hosts are a real, supported case) - the reporting
-           Coordinator only ever measures and reports its OWN binary's hash
-           (it has no way to even know the other architecture's file, which
-           isn't present on its machine), so this server-side check accepts
-           a match against EITHER the 32-bit or the 64-bit expected value.
-           This is still exact equality against a server-known-good value
-           either way - never a looser check - just against one of two valid
-           values instead of one. (The Windows Service host was removed in
-           2026 - the Broker is the sole Coordinator - so there is no
-           service_hash to check anymore.) */
-        $brokerMatches = $expectedManifest && (
-            hash_equals((string)$expectedManifest['broker32_sha256'], $brokerHash) ||
-            hash_equals((string)$expectedManifest['broker64_sha256'], $brokerHash)
-        );
-
         if (!$expectedManifest) {
             $logArtifactMismatch('no manifest row found for build_id=' . $buildId);
             $rejectTracked('artifact_mismatch');
         }
-        $mismatchedFields = [];
-        if (!hash_equals((string)$expectedManifest['ex5_sha256'], $ex5Hash)) $mismatchedFields[] = 'ex5_hash';
-        if (!hash_equals((string)$expectedManifest['ex4_sha256'], $ex4Hash)) $mismatchedFields[] = 'ex4_hash';
-        if (!hash_equals((string)$expectedManifest['dll32_sha256'], $dll32Hash)) $mismatchedFields[] = 'dll32_hash';
-        if (!hash_equals((string)$expectedManifest['dll64_sha256'], $dll64Hash)) $mismatchedFields[] = 'dll64_hash';
-        if (!hash_equals((string)$expectedManifest['machineid32_sha256'], $machineid32Hash)) $mismatchedFields[] = 'machineid32_hash';
-        if (!hash_equals((string)$expectedManifest['machineid64_sha256'], $machineid64Hash)) $mismatchedFields[] = 'machineid64_hash';
-        if (!$brokerMatches) $mismatchedFields[] = 'broker_hash';
+
+        /* Which column each reported value is compared against is decided by
+           the reported ea_kind/host_bits - see
+           nutricula_artifact_evidence_mismatches() in license_common.php.
+           Every comparison is still exact equality against a value only this
+           server's own build registry supplies; letting the client choose
+           WHICH expectation applies is not the same as letting it choose the
+           expectation itself, and a client that names the wrong kind simply
+           fails against the column it named. Both Broker architectures
+           genuinely ship (32-bit Windows hosts are a real, supported case),
+           and host_bits now says which one is running instead of the old
+           either-or match - a strictly tighter check than before. */
+        $mismatchedFields = nutricula_artifact_evidence_mismatches($expectedManifest, $evidence);
         if (!empty($mismatchedFields)) {
             $logArtifactMismatch(
-                'build_id=' . $buildId . '; mismatched field(s): ' . implode(', ', $mismatchedFields)
+                'build_id=' . $buildId . '; ea_kind=' . $evidence['ea_kind'] .
+                '; host_bits=' . $evidence['host_bits'] .
+                '; mismatched field(s): ' . implode(', ', $mismatchedFields)
             );
             $rejectTracked('artifact_mismatch');
         }

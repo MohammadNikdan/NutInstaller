@@ -559,12 +559,125 @@ const CHECKIN_WRITE_MIN_GAP_SEC = 600;
  * Coordinator reported and its per-request nonce. The server puts it inside
  * the signed canonical; CoordinatorCore.cpp recomputes it from what it
  * actually sent and accepts the answer only on an exact match. $parts order
- * (machine_id, device_key_hash, build_id, ex5, ex4, dll32, dll64, machineid32,
- * machineid64, broker, nonce) MUST stay identical on both sides.
+ * (machine_id, device_key_hash, build_id, ea_kind, ea_hash, dll_hash,
+ * term_mid_hash, host_bits, broker_hash, host_mid_hash, nonce) MUST stay
+ * identical on both sides.
  */
 function nutricula_free_checkin_bind(array $parts): string
 {
     return hash('sha256', implode('|', array_merge(['NL3-FREE-BIND'], $parts)));
+}
+
+/* ===========================================================================
+   Artifact Evidence (2026 shape)
+   ---------------------------------------------------------------------------
+   A Coordinator used to report seven fixed hashes - ex5/ex4/dll32/dll64/
+   machineid32/machineid64/broker - which it had measured from the private
+   copies its own Installer had left beside it. Those copies proved nothing:
+   whoever patches an EA or a DLL runs their copy from wherever MetaTrader
+   loads it and leaves the Coordinator's copies pristine, so the hashes
+   matched forever (see RuntimeMeasure.h in the Coordinator sources).
+
+   What arrives now is a measurement of what is genuinely running on that
+   machine, which means the evidence describes ONE terminal session plus the
+   Coordinator's own process:
+
+     ea_kind        'mt4' | 'mt5'  - which terminal generation reported
+     ea_hash        the EA found in that terminal's own Experts tree
+     dll_hash       the License Check DLL really loaded in that process
+     term_mid_hash  the Machine ID DLL really loaded in that process, or
+                    '-' when that process has none loaded at all
+     host_bits      '32' | '64'    - the Coordinator's own architecture
+     broker_hash    the Coordinator's running image
+     host_mid_hash  the Machine ID DLL the Coordinator itself loaded
+
+   nutricula_build_manifests is unchanged: it still holds every shipped
+   artifact's expected hash, and these fields are compared against whichever
+   of its columns the reported kind/bitness selects. The rule that matters is
+   also unchanged (architecture point 46/122): a reported hash is only ever
+   used to LOOK UP a match here, never to become the expectation.
+   =========================================================================== */
+
+/** Every evidence field name, in the order both sides must agree on. */
+const NUTRICULA_EVIDENCE_FIELDS = [
+    'ea_kind', 'ea_hash', 'dll_hash', 'term_mid_hash',
+    'host_bits', 'broker_hash', 'host_mid_hash',
+];
+
+/**
+ * Pulls the evidence fields out of a parsed request, normalized exactly the
+ * way the Coordinator normalizes them before signing (hashes lower-case,
+ * everything trimmed) so the bind digest and the device signature can never
+ * disagree with what is compared here. Missing fields come back as '' and
+ * are rejected by nutricula_artifact_evidence_malformed() below.
+ */
+function nutricula_extract_artifact_evidence(array $fields): array
+{
+    $out = [];
+    foreach (NUTRICULA_EVIDENCE_FIELDS as $name) {
+        // Every evidence value is lower-case by construction on the client
+        // (hex hashes, 'mt4'/'mt5', '32'/'64', '-'), so lower-casing here
+        // only guards against a stray capital rather than changing meaning.
+        $out[$name] = strtolower(trim((string)($fields[$name] ?? '')));
+    }
+    return $out;
+}
+
+/**
+ * Returns the name of the first malformed evidence field, or null when every
+ * field is well formed. Malformed evidence is treated exactly like
+ * well-formed-but-wrong evidence by both callers (artifact_mismatch) - this
+ * only decides WHICH detail string gets logged.
+ */
+function nutricula_artifact_evidence_malformed(array $evidence): ?string
+{
+    if (!in_array($evidence['ea_kind'], ['mt4', 'mt5'], true)) return 'ea_kind';
+    if (!in_array($evidence['host_bits'], ['32', '64'], true)) return 'host_bits';
+    foreach (['ea_hash', 'dll_hash', 'broker_hash', 'host_mid_hash'] as $name) {
+        if (!preg_match('/\A[0-9a-f]{64}\z/', $evidence[$name])) return $name;
+    }
+    /* '-' is the one non-hash value any evidence field may carry: it means
+       that MetaTrader process genuinely has no Machine ID DLL loaded, which
+       is the normal case. A file that is not loaded cannot affect anything,
+       so there is nothing to measure and nothing to compare - and claiming
+       '-' buys an attacker nothing, since it only holds while the DLL really
+       is absent from that process. */
+    if ($evidence['term_mid_hash'] !== '-' &&
+        !preg_match('/\A[0-9a-f]{64}\z/', $evidence['term_mid_hash'])) {
+        return 'term_mid_hash';
+    }
+    return null;
+}
+
+/**
+ * The server-authoritative comparison: which reported fields do NOT match
+ * this build's registered expectations. Returns [] when everything matches.
+ * $manifestRow is a row of nutricula_build_manifests; $evidence must already
+ * have passed nutricula_artifact_evidence_malformed().
+ */
+function nutricula_artifact_evidence_mismatches(array $manifestRow, array $evidence): array
+{
+    $isMt4 = ($evidence['ea_kind'] === 'mt4');
+    /* MQL4 terminals are 32-bit and MQL5 terminals are 64-bit - the same
+       pairing the Installer relies on when it chooses which DLL to place in
+       each terminal, and which the Coordinator enforces locally before it
+       ever reports anything. */
+    $columnFor = [
+        'ea_hash' => $isMt4 ? 'ex4_sha256' : 'ex5_sha256',
+        'dll_hash' => $isMt4 ? 'dll32_sha256' : 'dll64_sha256',
+        'term_mid_hash' => $isMt4 ? 'machineid32_sha256' : 'machineid64_sha256',
+        'broker_hash' => ($evidence['host_bits'] === '32') ? 'broker32_sha256' : 'broker64_sha256',
+        'host_mid_hash' => ($evidence['host_bits'] === '32') ? 'machineid32_sha256' : 'machineid64_sha256',
+    ];
+
+    $mismatched = [];
+    foreach ($columnFor as $field => $column) {
+        if ($field === 'term_mid_hash' && $evidence[$field] === '-') continue; // not loaded - see above
+        if (!hash_equals(strtolower((string)($manifestRow[$column] ?? '')), $evidence[$field])) {
+            $mismatched[] = $field;
+        }
+    }
+    return $mismatched;
 }
 
 /**

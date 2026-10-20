@@ -263,7 +263,7 @@ CREATE TABLE nutricula_transfer_keys_used (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 /* Server-side registry of Expected artifact hashes per build (architecture
-   points 44/87/119) - the ONLY source of "what should this build's EX5/
+   points 44/87/119) - the ONLY source of "what should this build's EX5/EX4/
    DLL32/DLL64/MachineId32/MachineId64/Broker hash to" that
    license_check.php ever consults. A
    client (Coordinator) can report whatever hashes it wants in a verify
@@ -271,7 +271,19 @@ CREATE TABLE nutricula_transfer_keys_used (
    - they can never themselves become the expected value (point 46/122).
    Rows are inserted manually (or via a small admin script) whenever a new
    build is signed with NutriculaSignTool - there is no endpoint that lets
-   a client create or modify a row here. */
+   a client create or modify a row here.
+
+   2026: this table is UNCHANGED, but what a Coordinator reports against it
+   is not. It used to send one hash per column, measured from the private
+   copies its Installer had left beside it - copies a patched install leaves
+   pristine, so they matched forever. It now reports a measurement of what
+   is genuinely running (ea_kind/ea_hash/dll_hash/term_mid_hash/host_bits/
+   broker_hash/host_mid_hash), and the reported kind and bitness select which
+   of these columns each value is compared against - see
+   nutricula_artifact_evidence_mismatches() in license_common.php. Every
+   column below is still needed, because a single build ships artifacts for
+   MT4 and MT5 and for 32- and 64-bit hosts, and any of them may be the one
+   actually running on a given machine. */
 CREATE TABLE nutricula_build_manifests (
     id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
     build_id VARCHAR(64) NOT NULL,
