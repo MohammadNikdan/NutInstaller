@@ -31,6 +31,13 @@ public:
     // failure of the whole license check, not proceed with defaults.
     static bool Load(const std::wstring& dllDirectory);
 
+    // The REAL path Windows loaded the neighboring DLL from, read back from
+    // the live module handle this bridge holds - not the path Load() was
+    // asked to look in. Used by RuntimeMeasure to hash the Machine ID DLL
+    // that is genuinely in this process, rather than a copy of it sitting
+    // somewhere. Returns false when nothing is loaded.
+    static bool GetLoadedModulePath(std::wstring& outPath);
+
     static bool GenerateMachineId(std::string& outMachineIdHex);
     static bool GenerateMachineIdWithGuid(std::string& outMachineIdHex);
     static bool GetDevicePublicKeyB64(std::string& outPublicKeyB64);

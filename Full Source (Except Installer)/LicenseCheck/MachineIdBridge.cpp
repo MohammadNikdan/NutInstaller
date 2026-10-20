@@ -109,6 +109,23 @@ bool MachineIdBridge::Load(const std::wstring& dllDirectory)
     return true;
 }
 
+// Asks Windows where the module this bridge is holding was actually loaded
+// from, instead of rebuilding the path Load() guessed at. The two normally
+// agree; when they could not (a module loaded from somewhere else under the
+// same name), this returns the one that is genuinely in the process - which
+// is the only one worth hashing.
+bool MachineIdBridge::GetLoadedModulePath(std::wstring& outPath)
+{
+    outPath.clear();
+    if (!g_module) return false;
+    const DWORD CAPACITY_CHARS = 1024;
+    std::vector<wchar_t> buffer(CAPACITY_CHARS, 0);
+    DWORD len = GetModuleFileNameW(g_module, buffer.data(), CAPACITY_CHARS);
+    if (len == 0 || len >= CAPACITY_CHARS) return false;
+    outPath.assign(buffer.data(), len);
+    return true;
+}
+
 bool MachineIdBridge::GenerateMachineId(std::string& outMachineIdHex)
 {
     if (!g_generateMachineId) return false;
