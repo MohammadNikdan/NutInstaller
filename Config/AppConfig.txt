@@ -16,7 +16,7 @@ SUPPORT_URL=https://t.me/nutriculachat
 
 
 # "Installation Guide" button (footer, left).
-INSTALLATION_GUIDE_URL=https://www.aparat.com/
+INSTALLATION_GUIDE_URL=https://www.youtube.com/@Nutriculatrade
 
 # "Buy Premium License" button (footer). Replace with your real purchase page.
 PREMIUM_PURCHASE_URL=https://nutricula.trade/purchase
