@@ -481,6 +481,22 @@ namespace NutriculaInstaller
                 try
                 {
                     token.ThrowIfCancellationRequested();
+
+                    // Clear out anything Nutricula already in this terminal
+                    // BEFORE writing the fresh files - every mode, every
+                    // terminal. The Coordinator's integrity check requires
+                    // every recognisable Nutricula program in the terminal's
+                    // Experts/Indicators/Scripts trees to match the signed
+                    // manifest, so one forgotten copy of an OLDER build in a
+                    // backup subfolder is enough to leave a perfectly
+                    // legitimate customer at -2 after an upgrade. Sweeping
+                    // first is what makes a reinstall reliably return a
+                    // machine to a state that check accepts. Best-effort by
+                    // design: NutriculaSweeper never throws, and a leftover
+                    // it could not delete is logged rather than failing the
+                    // install. See NutriculaSweeper.cs.
+                    await Task.Run(() => NutriculaSweeper.Sweep(terminal, log), token).ConfigureAwait(true);
+
                     await EnsureDirectoryAsync(terminal.LibrariesPath).ConfigureAwait(true);
                     await EnsureDirectoryAsync(terminal.ExpertsPath).ConfigureAwait(true);
 
@@ -628,7 +644,7 @@ namespace NutriculaInstaller
             {
                 await InstallCoordinatorAsync(
                     resBroker32, resBroker64,
-                    resManifest, resEx5, resEx4, resLicenseDll32, resLicenseDll64,
+                    resManifest,
                     resMachineId32, resMachineId64,
                     token, log).ConfigureAwait(true);
                 completed++;
@@ -754,8 +770,7 @@ namespace NutriculaInstaller
 
         private async Task InstallCoordinatorAsync(
             ResourceItem resBroker32, ResourceItem resBroker64,
-            ResourceItem resManifest, ResourceItem resEx5, ResourceItem resEx4,
-            ResourceItem resLicenseDll32, ResourceItem resLicenseDll64,
+            ResourceItem resManifest,
             ResourceItem resMachineId32, ResourceItem resMachineId64,
             CancellationToken token, Action<string> log)
         {
@@ -808,24 +823,42 @@ namespace NutriculaInstaller
             await CopyEmbeddedResourceAsync(selectedBroker, installDir, token, overrideFileName: "NutriculaLicenseBroker.exe").ConfigureAwait(true);
             VerifyInstalledFile(Path.Combine(installDir, "NutriculaLicenseBroker.exe"));
 
-            // CRITICAL: the Coordinator checks the integrity of BOTH MachineId32.dll
-            // AND MachineId64.dll in its own folder on every cycle (see
-            // CoordinatorCore.cpp: the manifest verification requires all 7
-            // artifacts unconditionally - a 32-bit MT4 and a 64-bit MT5 can talk to
-            // this one Coordinator at the same time). Installing only the variant
-            // matching the OS bitness used to leave the other one missing, which
-            // made that check fail SILENTLY forever (no network call, no -2). So
-            // both are installed here, under their real names; the Coordinator
-            // itself only LOADS the one matching its own architecture
-            // (MachineIdBridge.cpp, via #ifdef _WIN64).
-
-            ResourceItem[] sharedResources = new ResourceItem[] { resManifest, resEx5, resEx4, resLicenseDll32, resLicenseDll64, resMachineId32, resMachineId64 };
-            foreach (ResourceItem item in sharedResources)
+            // 2026: this folder no longer receives copies of Nutricula.ex4/
+            // Nutricula.ex5 or of either License Check DLL, and it receives
+            // only ONE MachineId DLL instead of both.
+            //
+            // Those extra copies existed for an integrity check that hashed
+            // them and compared the result against manifest.txt. That check
+            // could never catch what it was for: whoever patches an EA or a
+            // DLL runs their copy from wherever MetaTrader loads it and
+            // leaves these private copies untouched, so they matched forever
+            // while patched code ran. The Coordinator now measures the
+            // running image and the modules genuinely loaded inside each
+            // MetaTrader process instead (see RuntimeMeasure.h in the
+            // Coordinator sources), which leaves nothing here for a copy to
+            // do. Keeping them would only mean shipping files that are never
+            // read and never run.
+            //
+            // What stays, and why each one is genuinely needed:
+            //   manifest.txt      - the Vendor-signed EXPECTATIONS every
+            //                       measurement is compared against.
+            //   the Broker        - the Coordinator itself; its own running
+            //                       image is what gets hashed.
+            //   ONE MachineId DLL - the Broker loads it through
+            //                       MachineIdBridge from its own folder, and
+            //                       only ever the one matching its own
+            //                       architecture (#ifdef _WIN64), which on a
+            //                       given machine is the OS's architecture.
+            //                       The other build would sit there unloaded.
+            ResourceItem selectedMachineId = osIs64Bit ? resMachineId64 : resMachineId32;
+            ResourceItem[] coordinatorResources = new ResourceItem[] { resManifest, selectedMachineId };
+            foreach (ResourceItem item in coordinatorResources)
             {
                 await CopyEmbeddedResourceAsync(item, installDir, token).ConfigureAwait(true);
                 VerifyInstalledFile(Path.Combine(installDir, item.FileName));
             }
-            log("Copied License Coordinator files -> " + installDir);
+            log("Copied License Coordinator files (" + resManifest.FileName + ", " +
+                selectedMachineId.FileName + ") -> " + installDir);
 
             bool isWine = MachineIdService.IsWineEnvironment();
             string brokerPath = Path.Combine(installDir, "NutriculaLicenseBroker.exe");

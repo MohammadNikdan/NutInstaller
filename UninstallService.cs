@@ -140,6 +140,17 @@ namespace NutriculaInstaller
 
                 foreach (TerminalInfo terminal in terminals)
                 {
+                    // The fixed-name deletions below only cover the paths the
+                    // Installer itself writes to. An EA copied into a
+                    // subfolder, or renamed, or a leftover from an older
+                    // build, would survive them and keep sitting in the
+                    // customer's terminal after an uninstall. This finds
+                    // every recognisable Nutricula file wherever it is and
+                    // whatever it is called - see NutriculaSweeper.cs - and
+                    // runs first so the named deletions afterwards are just a
+                    // backstop for anything it could not identify.
+                    NutriculaSweeper.Sweep(terminal, log);
+
                     foreach (string fileName in libraryFiles)
                     {
                         DeleteFileBestEffort(Path.Combine(terminal.LibrariesPath, fileName), log);
