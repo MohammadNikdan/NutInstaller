@@ -858,6 +858,24 @@ void CoordinatorCore::NoteEaActivity(HANDLE clientPipe)
                     }
                     m_sessions.push_back(discovered);
                 }
+                // A session was found - any earlier discovery failure is no
+                // longer the relevant story, so it must not leak into a LATER
+                // -2 report that is actually about something else entirely.
+                std::lock_guard<std::mutex> failLock(m_lastDiscoveryFailureMutex);
+                m_lastDiscoveryFailureDetail.clear();
+                m_lastDiscoveryFailureAt = 0;
+            }
+            else if (!detail.empty())
+            {
+                // Record WHY this specific connection could not be turned
+                // into a measurable session, so that if this keeps happening
+                // and WorkerLoop eventually gives up (NO_SESSION_GRACE_SEC),
+                // the resulting -2 report can quote this instead of the old
+                // generic, one-size-fits-all message - see the member's own
+                // comment in CoordinatorCore.h.
+                std::lock_guard<std::mutex> failLock(m_lastDiscoveryFailureMutex);
+                m_lastDiscoveryFailureDetail = detail;
+                m_lastDiscoveryFailureAt = EstimatedNow();
             }
         }
     }
@@ -1191,10 +1209,22 @@ void CoordinatorCore::WorkerLoop()
                     nowForReport - m_lastFailureReportSentAt < FAILURE_REPORT_INTERVAL_SEC) return;
                 std::string failurePlatformProfile;
                 MachineIdBridge::GetPlatformProfile(failurePlatformProfile);
+                // Previously always sent empty here, even though the Broker
+                // genuinely has these (MachineIdBridge was loaded once in
+                // Start()) - which left every row in nutricula_minus2_log
+                // for a FREE install (no license_id to look anything up by)
+                // with literally nothing to match it to a specific machine
+                // or support conversation. Best-effort: a failure to
+                // generate either one here just means this report carries
+                // less context, never a reason to skip sending it.
+                std::string failureMachineId, failureMachineIdAlt, failureDeviceKeyHash;
+                MachineIdBridge::GenerateMachineId(failureMachineId);
+                MachineIdBridge::GenerateMachineIdWithGuid(failureMachineIdAlt);
+                MachineIdBridge::GetDeviceKeyHash(failureDeviceKeyHash);
                 ReportFailureBestEffort(
                     reasonCode, detail,
                     local.fileExists ? "licensed" : "free",
-                    "", "", "",
+                    failureMachineId, failureMachineIdAlt, failureDeviceKeyHash,
                     local.hasLease ? local.lease.licenseId : std::string(),
                     manifest.buildId,
                     failurePlatformProfile);
@@ -1266,9 +1296,30 @@ void CoordinatorCore::WorkerLoop()
                 if (nowNoSession - m_noMeasurableSessionSince >= NO_SESSION_GRACE_SEC)
                 {
                     publishFailedTier();
-                    reportLocalFailure("artifact_check_failed",
-                        "an EA is active but the MetaTrader process using Nutricula could not be "
-                        "identified or its loaded modules could not be read, so integrity cannot be measured");
+                    // Quote the SPECIFIC reason the last connection attempt
+                    // could not become a measurable session (see
+                    // m_lastDiscoveryFailureDetail's own comment in
+                    // CoordinatorCore.h) when one was recorded recently
+                    // enough to plausibly be what's still happening; fall
+                    // back to the old generic wording only if nothing more
+                    // specific was ever captured (e.g. NoteEaActivity was
+                    // never reached with a real pipe handle at all).
+                    std::string detailToReport;
+                    {
+                        std::lock_guard<std::mutex> failLock(m_lastDiscoveryFailureMutex);
+                        if (!m_lastDiscoveryFailureDetail.empty() &&
+                            nowNoSession - m_lastDiscoveryFailureAt <= NO_SESSION_GRACE_SEC * 2)
+                        {
+                            detailToReport = m_lastDiscoveryFailureDetail;
+                        }
+                    }
+                    if (detailToReport.empty())
+                    {
+                        detailToReport =
+                            "an EA is active but the MetaTrader process using Nutricula could not be "
+                            "identified or its loaded modules could not be read, so integrity cannot be measured";
+                    }
+                    reportLocalFailure("artifact_check_failed", detailToReport);
                 }
                 Sleep(5000);
                 continue;

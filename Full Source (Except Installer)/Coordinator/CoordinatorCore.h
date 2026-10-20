@@ -149,6 +149,20 @@ private:
     // and that becomes a reported -2 rather than an install that silently
     // never verifies again.
     long long m_noMeasurableSessionSince = 0;
+    // The SPECIFIC reason the most recent DiscoverSessionFromPipe call
+    // failed (e.g. "could not identify the process...", "the connecting
+    // process contains no Nutricula module", ...), and when. Previously
+    // this detail was computed by NoteEaActivity and thrown away - the
+    // NO_SESSION_GRACE_SEC report in WorkerLoop only ever had a generic,
+    // one-size-fits-all message to send, which made nutricula_minus2_log
+    // useless for telling "pipe/process API failed" apart from "a
+    // diagnostic tool connected" apart from "genuinely no Nutricula module
+    // loaded". Kept here so WorkerLoop's eventual -2 report can quote the
+    // real cause instead. Cleared (set to 0 / empty) the moment a session is
+    // discovered successfully, so a stale failure never outlives it.
+    std::mutex m_lastDiscoveryFailureMutex;
+    std::string m_lastDiscoveryFailureDetail;
+    long long m_lastDiscoveryFailureAt = 0;
 
     PublishedState m_state;
     std::thread m_worker;
