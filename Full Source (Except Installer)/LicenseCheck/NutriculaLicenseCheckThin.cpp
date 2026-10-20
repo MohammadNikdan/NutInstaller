@@ -28,6 +28,12 @@
 #include "../Coordinator/NamedPipeIpc.h"
 #include "../Coordinator/EcdsaHelpers.h"
 #include "ServerSignatureVerify.h"
+// 2026 (audit finding): this DLL now establishes the machine's own identity
+// itself, so it can check that a Lease was issued FOR this computer rather
+// than only that the server signed it. The Machine ID DLL has always been
+// installed next to this one in the terminal's Libraries folder; until now
+// nothing here loaded it.
+#include "MachineIdBridge.h"
 #include <windows.h>
 #include <bcrypt.h>
 #include <process.h>
@@ -5892,6 +5898,13 @@ std::string g_verifiedCanonical;
 std::string g_verifiedSignatureB64;
 int g_verifiedTierClaim = TIER_FREE;
 unsigned long long g_verifiedLicenseExpiresAt = 0; // parsed from canonical, 0 = not a Lease (no expiry field)
+// 2026 (audit finding): the identity the Lease was ISSUED FOR, parsed out of
+// the same signed canonical, plus its server timestamp. Until these were
+// checked here, this DLL would accept ANY validly-signed Tier 2 canonical no
+// matter which computer it belonged to - see IsCanonicalBoundToThisMachine.
+std::string g_verifiedMachineId;
+std::string g_verifiedDeviceKeyHash;
+unsigned long long g_verifiedRequestedAt = 0;
 
 // Pulls "license_expires_at=" out of a pipe-delimited canonical string - a
 // minimal, local parse (not the full LicenseProtocol parser, which lives in
@@ -5914,14 +5927,78 @@ unsigned long long ParseLicenseExpiresAt(const std::string& canonical)
     return value;
 }
 
-// Plain wall-clock read, deliberately NOT the full ClockAnchor treatment
-// (that lives in the Coordinator, which is what actually gates whether a
-// Lease gets issued in the first place). This is only a defense-in-depth
-// sanity check against a directly-injected, OLD-but-genuinely-signed
-// canonical being replayed into this DLL's memory - even a raw,
-// tamperable wall-clock read is strictly better here than no check at all,
-// since the alternative is trusting the replayed value forever.
-unsigned long long ThinDllNowUnixSeconds()
+// Pulls any "|<key>=" field out of a pipe-delimited canonical. Same minimal,
+// local parse as ParseLicenseExpiresAt above, for the string fields.
+std::string ParseCanonicalString(const std::string& canonical, const char* key)
+{
+    const std::string needle = std::string("|") + key + "=";
+    size_t pos = canonical.find(needle);
+    if (pos == std::string::npos) return std::string();
+    pos += needle.size();
+    size_t end = canonical.find('|', pos);
+    if (end == std::string::npos) end = canonical.size();
+    return canonical.substr(pos, end - pos);
+}
+
+unsigned long long ParseCanonicalUnsigned(const std::string& canonical, const char* key)
+{
+    const std::string raw = ParseCanonicalString(canonical, key);
+    unsigned long long value = 0;
+    for (char c : raw)
+    {
+        if (c < '0' || c > '9') return 0;
+        value = value * 10 + static_cast<unsigned long long>(c - '0');
+    }
+    return value;
+}
+
+bool EqualsIgnoreAsciiCase(const std::string& a, const std::string& b)
+{
+    if (a.size() != b.size()) return false;
+    for (size_t i = 0; i < a.size(); i++)
+    {
+        char ca = a[i], cb = b[i];
+        if (ca >= 'a' && ca <= 'z') ca = static_cast<char>(ca - 'a' + 'A');
+        if (cb >= 'a' && cb <= 'z') cb = static_cast<char>(cb - 'a' + 'A');
+        if (ca != cb) return false;
+    }
+    return true;
+}
+
+// ---------------------------------------------------------------------------
+// Monotonic-ish "now" (2026 audit finding).
+//
+// The expiry check below used a raw wall-clock read, with the reasoning that
+// the Coordinator holds the real Clock Anchor and is what gates a Lease being
+// issued at all. That reasoning only holds while the Coordinator is the
+// genuine one: anything that can answer this DLL's pipe can serve an old
+// Lease, and a wall clock wound back to that Lease's own date then makes it
+// look current forever.
+//
+// So "now" never goes below the newest server timestamp this process has
+// seen. Every canonical carries a signed requested_at, so each genuine answer
+// raises the floor, and winding the clock back cannot lower it again. It is
+// in-process only, on purpose: persisting it would add a file an attacker
+// could simply delete to reset the floor, which buys nothing.
+//
+// This is a real improvement, not a complete defence, and the limit is worth
+// knowing: a process that is fed ONE old canonical and never a fresh one has
+// no newer timestamp to raise its floor with. What actually stops that case
+// is the machine binding below, which does not depend on time at all.
+std::atomic<unsigned long long> g_highestSeenServerTime{0};
+
+void NoteServerTimestamp(unsigned long long requestedAt)
+{
+    if (requestedAt == 0) return;
+    unsigned long long current = g_highestSeenServerTime.load();
+    while (requestedAt > current &&
+           !g_highestSeenServerTime.compare_exchange_weak(current, requestedAt))
+    {
+        // compare_exchange_weak refreshed `current`; loop re-tests.
+    }
+}
+
+unsigned long long ThinDllWallClockUnixSeconds()
 {
     FILETIME ft;
     GetSystemTimeAsFileTime(&ft);
@@ -5930,6 +6007,158 @@ unsigned long long ThinDllNowUnixSeconds()
     v.HighPart = ft.dwHighDateTime;
     const unsigned long long EPOCH_DIFF_100NS = 116444736000000000ULL;
     return (v.QuadPart - EPOCH_DIFF_100NS) / 10000000ULL;
+}
+
+unsigned long long ThinDllNowUnixSeconds()
+{
+    const unsigned long long wall = ThinDllWallClockUnixSeconds();
+    const unsigned long long floorTime = g_highestSeenServerTime.load();
+    return (wall > floorTime) ? wall : floorTime;
+}
+
+// How old a signed canonical may be before this DLL stops treating it as a
+// current licence. The Coordinator refreshes roughly hourly and gives up on a
+// licensed install long before this, so no genuine install comes near it -
+// it exists to stop a canonical captured once and replayed much later from
+// working for the rest of the licence period.
+constexpr unsigned long long MAX_CANONICAL_AGE_SEC = 7ULL * 24 * 60 * 60; // 7 days
+
+// ---------------------------------------------------------------------------
+// This machine's own identity, as the Machine ID DLL reports it.
+//
+// Read once per process and cached: it cannot change while the process runs,
+// and AntiTamperCheckedTier consults it on every re-verification.
+//
+// BOTH machine-id variants are kept. A computer legitimately activated
+// through the WithGuid fallback carries THAT variant in its Lease, so
+// accepting only the primary one would make every such customer look like a
+// clone - the identical reason the Coordinator's own Layer 1 check accepts
+// either (see CoordinatorCore.cpp).
+std::atomic<bool> g_machineIdentityTried{false};
+bool g_machineIdentityOk = false;          // guarded by g_initMutex
+std::string g_localMachineId;              // guarded by g_initMutex
+std::string g_localMachineIdAlt;           // guarded by g_initMutex
+std::string g_localDeviceKeyHash;          // guarded by g_initMutex
+
+// Directory this DLL itself was loaded from - the Machine ID DLL sits next to
+// it in the terminal's Libraries folder (which is exactly why the Installer
+// has always placed the two together).
+std::wstring OwnModuleDirectory()
+{
+    wchar_t modulePath[MAX_PATH] = {};
+    HMODULE hSelf = nullptr;
+    GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+        reinterpret_cast<LPCWSTR>(&OwnModuleDirectory), &hSelf);
+    if (GetModuleFileNameW(hSelf, modulePath, MAX_PATH) == 0) return std::wstring();
+    std::wstring dir(modulePath);
+    size_t slash = dir.find_last_of(L'\\');
+    if (slash != std::wstring::npos) dir = dir.substr(0, slash);
+    return dir;
+}
+
+// The Coordinator's own install folder, as a fallback place to find the
+// Machine ID DLL. Identical logic to EnsureCoordinatorRunning's path
+// resolution further down, and identical reasoning: %LocalAppData% is not
+// split per bitness, so a 32-bit MT4 DLL and a 64-bit MT5 DLL both resolve it
+// to the one folder the Installer wrote to, and on Wine it maps inside the
+// prefix so the same code covers macOS/Linux.
+//
+// Why a fallback exists at all: this DLL and the Coordinator load the Machine
+// ID DLL from two DIFFERENT copies - the terminal's Libraries folder and the
+// Coordinator's own folder. Requiring the machine identity here therefore
+// created a new way for a paying customer to break: antivirus quarantining
+// only the Libraries copy would leave the Coordinator happily issuing Tier 2
+// while this DLL failed closed, with no way for the customer to tell why.
+// Falling back to the other copy removes that single point of failure and
+// weakens nothing - it is the same file, it produces the same machine id, and
+// whichever copy ends up loaded is hashed against the signed manifest by the
+// Coordinator (RuntimeMeasure measures the module actually loaded in this
+// process, wherever it came from).
+// Defined further down, next to EnsureCoordinatorRunning which also uses it.
+std::wstring GetEnvVarW(const wchar_t* name);
+
+std::wstring CoordinatorInstallDirectory()
+{
+    const wchar_t* subPath = L"\\Nutricula\\LicenseService";
+    std::wstring localAppData = GetEnvVarW(L"LOCALAPPDATA");
+    if (!localAppData.empty()) return localAppData + subPath;
+    std::wstring appData = GetEnvVarW(L"APPDATA"); // ...\Roaming - its parent holds Local
+    if (!appData.empty())
+    {
+        size_t slash = appData.find_last_of(L"\\/");
+        if (slash != std::wstring::npos) return appData.substr(0, slash) + L"\\Local" + subPath;
+    }
+    return std::wstring();
+}
+
+bool EnsureMachineIdentityLoaded()
+{
+    if (g_machineIdentityTried.load())
+    {
+        std::lock_guard<NutMutex> lock(g_initMutex);
+        return g_machineIdentityOk;
+    }
+    std::lock_guard<NutMutex> lock(g_initMutex);
+    if (g_machineIdentityTried.load()) return g_machineIdentityOk;
+
+    bool loaded = MachineIdBridge::Load(OwnModuleDirectory());
+    if (!loaded)
+    {
+        const std::wstring fallback = CoordinatorInstallDirectory();
+        if (!fallback.empty()) loaded = MachineIdBridge::Load(fallback);
+    }
+
+    bool ok = false;
+    if (loaded)
+    {
+        std::string primary, alt, keyHash;
+        const bool gotPrimary = MachineIdBridge::GenerateMachineId(primary);
+        const bool gotAlt = MachineIdBridge::GenerateMachineIdWithGuid(alt);
+        const bool gotKeyHash = MachineIdBridge::GetDeviceKeyHash(keyHash);
+        if (gotKeyHash && (gotPrimary || gotAlt))
+        {
+            g_localMachineId = gotPrimary ? primary : std::string();
+            g_localMachineIdAlt = gotAlt ? alt : std::string();
+            g_localDeviceKeyHash = keyHash;
+            ok = true;
+        }
+    }
+    g_machineIdentityOk = ok;
+    g_machineIdentityTried.store(true);
+    return ok;
+}
+
+// THE CHECK THIS FILE WAS MISSING (2026 audit finding).
+//
+// The server signs machine_id and device_key_hash into every Lease, and the
+// Coordinator compares them against this computer before publishing Tier 2.
+// Nothing checked them HERE, though - and the Coordinator is on the customer's
+// own machine, with the Coordinator identity private key compiled into a
+// binary every customer has a copy of. So anything able to answer this pipe
+// could serve a Lease issued for a DIFFERENT computer, and this DLL would
+// verify its signature, find it unexpired, and unlock Tier 2. One purchased
+// licence could unlock an unlimited number of machines for the rest of its
+// period, without patching a single binary, and the server would never see it
+// because those machines never talk to the server at all.
+//
+// Comparing the signed identity against the one this machine reports is what
+// closes that. Fail-closed: if the identity cannot be established, a Tier 2
+// claim is not accepted. That costs nothing in practice - the Coordinator
+// cannot obtain a Lease in the first place without the very same Machine ID
+// DLL working - and it only ever affects a Tier 2 claim, so a free install is
+// untouched either way.
+bool IsCanonicalBoundToThisMachine(const std::string& canonicalMachineId,
+    const std::string& canonicalDeviceKeyHash)
+{
+    if (canonicalMachineId.empty() || canonicalDeviceKeyHash.empty()) return false;
+    if (!EnsureMachineIdentityLoaded()) return false;
+
+    std::lock_guard<NutMutex> lock(g_initMutex);
+    if (!EqualsIgnoreAsciiCase(canonicalDeviceKeyHash, g_localDeviceKeyHash)) return false;
+    const bool machineMatches =
+        (!g_localMachineId.empty() && EqualsIgnoreAsciiCase(canonicalMachineId, g_localMachineId)) ||
+        (!g_localMachineIdAlt.empty() && EqualsIgnoreAsciiCase(canonicalMachineId, g_localMachineIdAlt));
+    return machineMatches;
 }
 
 bool EnsurePublicKeyLoaded()
@@ -6148,12 +6377,33 @@ int AntiTamperCheckedTier(int rawTier)
     else
     {
         std::lock_guard<NutMutex> lock(g_verifiedCacheMutex);
+        const unsigned long long nowForCheck = ThinDllNowUnixSeconds();
         if (g_verifiedTierClaim != TIER_LICENSED ||
             !ServerSignatureVerify::Verify(g_verifiedCanonical, g_verifiedSignatureB64))
         {
             result = TIER_FAILED;
         }
-        else if (g_verifiedLicenseExpiresAt != 0 && g_verifiedLicenseExpiresAt <= ThinDllNowUnixSeconds())
+        // Re-checked here, not only when the Lease arrived (2026 audit
+        // finding). The cached claim is what every later call is answered
+        // from, so the binding has to be re-tested on the same schedule as
+        // the signature - otherwise the one-time check at arrival could be
+        // skipped by patching a single branch, and the cache would keep
+        // answering Tier 2 forever afterwards.
+        else if (!IsCanonicalBoundToThisMachine(g_verifiedMachineId, g_verifiedDeviceKeyHash))
+        {
+            result = TIER_FAILED;
+        }
+        else if (g_verifiedRequestedAt == 0 ||
+                 (nowForCheck > g_verifiedRequestedAt &&
+                  (nowForCheck - g_verifiedRequestedAt) > MAX_CANONICAL_AGE_SEC))
+        {
+            // A canonical this old is a replay, not a current licence. The
+            // Coordinator refreshes roughly hourly and abandons a licensed
+            // install long before MAX_CANONICAL_AGE_SEC, so a genuine install
+            // never reaches this.
+            result = TIER_FAILED;
+        }
+        else if (g_verifiedLicenseExpiresAt != 0 && g_verifiedLicenseExpiresAt <= nowForCheck)
         {
             result = TIER_FREE; // the only allowed 2 -> 1 downgrade: license period over
         }
@@ -6172,6 +6422,14 @@ int AntiTamperCheckedTier(int rawTier)
 // must use this exact new name.
 extern "C" __declspec(dllexport) int __cdecl Vela_Boot_84()
 {
+    // Establish this machine's identity now, while the EA is still in
+    // OnInit, rather than leaving the first (slow) attempt to land inside
+    // AntiTamperCheckedTier - which a licensed EA reaches from OnTick, under
+    // a lock. Deliberately best-effort and NOT part of this function's
+    // return value: a free install must keep working whether or not the
+    // Machine ID DLL is reachable, and the identity only ever gates a Tier 2
+    // claim (see IsCanonicalBoundToThisMachine).
+    EnsureMachineIdentityLoaded();
     return EnsurePublicKeyLoaded() ? 1 : 0;
 }
 
@@ -6338,8 +6596,63 @@ extern "C" __declspec(dllexport) void __cdecl Pavo_Sync_85()
         std::string signatureB64(status.signatureB64, status.signatureLen);
         bool sigOk = ServerSignatureVerify::Verify(canonical, signatureB64);
 
+        const unsigned long long canonicalRequestedAt =
+            sigOk ? ParseCanonicalUnsigned(canonical, "requested_at") : 0;
+        // Read the clock floor BEFORE this canonical is allowed to raise it.
+        // Order matters: noting the timestamp first would make every answer
+        // judge its own age against itself and always look brand new, so an
+        // old canonical replayed into a process that has already seen a newer
+        // one would pass. Taken in this order, that replay is caught.
+        const unsigned long long nowBeforeThisAnswer = ThinDllNowUnixSeconds();
+        // Every genuinely signed answer - Lease or Reject alike - carries a
+        // real server timestamp, so all of them raise the floor.
+        if (sigOk) NoteServerTimestamp(canonicalRequestedAt);
+
         if (sigOk && status.tier == TIER_LICENSED)
         {
+            // A valid signature only proves the server issued this Lease. It
+            // says nothing about WHICH computer it was issued for, so check
+            // that before adopting it - see IsCanonicalBoundToThisMachine for
+            // what accepting it unchecked allowed.
+            const std::string canonicalMachineId = ParseCanonicalString(canonical, "machine_id");
+            const std::string canonicalDeviceKeyHash = ParseCanonicalString(canonical, "device_key_hash");
+            const bool boundToThisMachine =
+                IsCanonicalBoundToThisMachine(canonicalMachineId, canonicalDeviceKeyHash);
+            // A canonical dated in the future (or dated now) is simply not
+            // old, so only the "too old" direction is a failure. No skew
+            // allowance is written here on purpose: adding one would be a
+            // condition that can never fail, which is worse than no check.
+            const bool freshEnough = canonicalRequestedAt != 0 &&
+                (nowBeforeThisAnswer <= canonicalRequestedAt ||
+                 (nowBeforeThisAnswer - canonicalRequestedAt) <= MAX_CANONICAL_AGE_SEC);
+
+            if (!boundToThisMachine || !freshEnough)
+            {
+                // A Lease for another machine, or one far too old to be a
+                // current licence. Something is feeding this DLL a Lease it
+                // has no business having, so this is treated as tampering
+                // rather than a quiet downgrade: the cached claim is cleared
+                // so no later re-verification can resurrect it, and
+                // Check_Core_Integrity reports it as "-2" immediately.
+                {
+                    std::lock_guard<NutMutex> lock(g_verifiedCacheMutex);
+                    g_verifiedCanonical.clear();
+                    g_verifiedSignatureB64.clear();
+                    g_verifiedTierClaim = TIER_FREE;
+                    g_verifiedLicenseExpiresAt = 0;
+                    g_verifiedMachineId.clear();
+                    g_verifiedDeviceKeyHash.clear();
+                    g_verifiedRequestedAt = 0;
+                }
+                SetTier(TIER_FAILED);
+                g_lastReverifyTickMs.store(0);
+                g_lastPollOutcomeOk.store(false);
+                g_pollEverCompleted.store(true);
+                g_pending.store(status.pending);
+                g_pollInFlight.store(false);
+                return;
+            }
+
             // Order matters (2026): fill the verified cache FIRST and only
             // then publish the raw tier. A reader that sees raw tier
             // TIER_LICENSED must never find a stale cache, because a failed
@@ -6351,6 +6664,9 @@ extern "C" __declspec(dllexport) void __cdecl Pavo_Sync_85()
                 g_verifiedSignatureB64 = signatureB64;
                 g_verifiedTierClaim = TIER_LICENSED;
                 g_verifiedLicenseExpiresAt = ParseLicenseExpiresAt(canonical);
+                g_verifiedMachineId = canonicalMachineId;
+                g_verifiedDeviceKeyHash = canonicalDeviceKeyHash;
+                g_verifiedRequestedAt = canonicalRequestedAt;
             }
             SetTier(TIER_LICENSED);
             // Force GetLicenseTier's own rate-limited cache to re-check
