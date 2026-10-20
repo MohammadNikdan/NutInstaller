@@ -1,11 +1,18 @@
 #pragma once
 //
-// ManifestVerify.h - Coordinator-side artifact integrity verification
-// (architecture points 30-38, 92-96). Verifies a Vendor-signed manifest
-// file, then hashes the ACTUAL artifacts on disk and compares against the
-// manifest's expected values - never trusts a client-reported hash
-// (architecture point 46/122: "Client نباید بتواند Expected Hash را
-// تعریف کند").
+// ManifestVerify.h - the Vendor-signed EXPECTATIONS (architecture points
+// 30-38, 92-96): loads manifest.txt, verifies its signature against the
+// compiled-in Vendor public key, and parses the per-artifact SHA-256 values
+// it declares. Also offers the file-hashing primitive those comparisons use.
+//
+// It does not decide anything by itself any more. What gets measured, and
+// compared against these expectations, now lives in RuntimeMeasure.h, which
+// hashes the running image and the genuinely loaded modules rather than
+// copies of them. The rule that produced this split is unchanged
+// (architecture point 46/122: "Client نباید بتواند Expected Hash را تعریف
+// کند") - a hash a client reports is never allowed to become an
+// expectation; expectations only ever come from this signed file and from
+// the server's own build registry.
 //
 // Trust domain: this uses VendorIdentity's public key, a COMPLETELY
 // SEPARATE key from the server license-signing key (architecture point 81) -
@@ -53,28 +60,16 @@ ManifestData LoadAndVerifyManifest(const std::wstring& directory);
 
 // Computes the SHA-256 of an entire file on disk (architecture point 30:
 // full file hash, never random chunk sampling). Returns empty string on
-// any read failure.
+// any read failure - callers must treat that as a failure, never as a skip.
 std::string HashFileSha256(const std::wstring& path);
 
-// The actual integrity decision: given a verified manifest and the
-// Coordinator's own directory (where it expects to find the EX4/EX5/DLL/
-// Broker artifacts alongside itself), measure each actual file and compare
-// against the expected hash. Returns true only if EVERY artifact whose file
-// name is non-empty is present AND its hash matches exactly. Deliberately
-// does NOT special-case "file missing" as a pass - a missing artifact that
-// the manifest expected to exist is itself a failure. Pass an empty wstring
-// for any file name parameter to skip checking that particular artifact.
-//
-// expectedBrokerSha256 is passed explicitly (not read from
-// manifest.broker32Sha256/64 internally) because the CALLER must pick which
-// one is correct for ITS OWN architecture, via #ifdef _WIN64 at compile
-// time - see CoordinatorCore.cpp. A given running Coordinator binary only
-// ever needs to verify the single Broker file actually sitting next to it,
-// never the other architecture's file (which may not even be present).
-bool VerifyArtifactsMatchManifest(const ManifestData& manifest, const std::wstring& artifactDirectory,
-    const std::wstring& ex5FileName, const std::wstring& ex4FileName,
-    const std::wstring& dll32FileName, const std::wstring& dll64FileName,
-    const std::wstring& machineid32FileName, const std::wstring& machineid64FileName,
-    const std::wstring& brokerFileName, const std::string& expectedBrokerSha256);
+// REMOVED (2026): VerifyArtifactsMatchManifest, which hashed the EX4/EX5/DLL
+// copies the Installer had left in the Coordinator's own folder and compared
+// those against this manifest. It could never catch the attack it existed
+// for - a patched EA or DLL runs from wherever MetaTrader loads it, while
+// those private copies stay pristine and keep matching forever. The
+// integrity decision now measures the running image and the real loaded
+// modules instead; see RuntimeMeasure.h. This header's job is narrower now:
+// load and verify the signed manifest (the EXPECTATIONS), and hash a file.
 
 } // namespace ManifestVerify

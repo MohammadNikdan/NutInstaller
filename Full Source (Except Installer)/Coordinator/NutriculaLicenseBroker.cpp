@@ -57,7 +57,13 @@ unsigned __stdcall ServeOneClient(void* param)
     // message type counts as "the EA is actually attached to a running
     // MetaTrader right now" (see CoordinatorCore::NoteEaActivity's own
     // comment for why WorkerLoop needs this signal).
-    g_core.NoteEaActivity();
+    //
+    // The pipe handle is passed in because it is the one trustworthy way to
+    // learn which process this is: GetNamedPipeClientProcessId cannot be
+    // influenced by the client, and from that process the Coordinator reads
+    // the real paths of the Nutricula modules loaded inside it. That is what
+    // the integrity check measures - see RuntimeMeasure.h.
+    g_core.NoteEaActivity(pipe);
 
     if (requestBuf.type == CoordinatorProtocol::MessageType::GetStatus)
     {
@@ -107,7 +113,7 @@ int main()
         return 1;
     }
 
-    g_core.Start(CoordinatorProtocol::COORDINATOR_BROKER_FILE_NAME);
+    g_core.Start();
     printf("Nutricula License Broker started. Waiting for client connections...\n");
 
     for (;;)

@@ -155,38 +155,4 @@ ManifestData LoadAndVerifyManifest(const std::wstring& directory)
     return result;
 }
 
-bool VerifyArtifactsMatchManifest(const ManifestData& manifest, const std::wstring& artifactDirectory,
-    const std::wstring& ex5FileName, const std::wstring& ex4FileName,
-    const std::wstring& dll32FileName, const std::wstring& dll64FileName,
-    const std::wstring& machineid32FileName, const std::wstring& machineid64FileName,
-    const std::wstring& brokerFileName, const std::string& expectedBrokerSha256)
-{
-    if (!manifest.valid) return false;
-
-    std::wstring dir = artifactDirectory;
-    if (!dir.empty() && dir.back() != L'\\') dir += L'\\';
-
-    struct Check { const std::wstring& fileName; const std::string& expected; };
-    Check checks[] = {
-        { ex5FileName, manifest.ex5Sha256 },
-        { ex4FileName, manifest.ex4Sha256 },
-        { dll32FileName, manifest.dll32Sha256 },
-        { dll64FileName, manifest.dll64Sha256 },
-        { machineid32FileName, manifest.machineid32Sha256 },
-        { machineid64FileName, manifest.machineid64Sha256 },
-        { brokerFileName, expectedBrokerSha256 },
-    };
-
-    for (const Check& c : checks)
-    {
-        if (c.fileName.empty()) continue; // caller may skip a slot it doesn't care about verifying right now
-        std::string actual = HashFileSha256(dir + c.fileName);
-        // A missing/unreadable file (actual=="") never silently passes -
-        // deliberately compared as a plain (guaranteed-mismatching) string,
-        // not treated as "skip this check".
-        if (actual.empty() || actual != c.expected) return false;
-    }
-    return true;
-}
-
 } // namespace ManifestVerify
