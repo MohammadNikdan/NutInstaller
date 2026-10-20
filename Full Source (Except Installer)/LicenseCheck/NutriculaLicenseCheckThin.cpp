@@ -6017,11 +6017,29 @@ unsigned long long ThinDllNowUnixSeconds()
 }
 
 // How old a signed canonical may be before this DLL stops treating it as a
-// current licence. The Coordinator refreshes roughly hourly and gives up on a
-// licensed install long before this, so no genuine install comes near it -
-// it exists to stop a canonical captured once and replayed much later from
-// working for the rest of the licence period.
-constexpr unsigned long long MAX_CANONICAL_AGE_SEC = 7ULL * 24 * 60 * 60; // 7 days
+// current licence. This is purely an anti-replay backstop against a FAKE
+// Coordinator that captures one genuine lease and replays it to the DLL
+// forever without ever contacting the server (so the server's own revocation
+// and clone detection never get to act). It does NOT set the offline grace
+// for a legitimate user - that is governed entirely by the real Coordinator,
+// which stops publishing TIER_LICENSED after only MAX_SERVER_SILENCE_SEC
+// (21 min) of network silence (see CoordinatorCore.cpp). So a genuine install
+// never feeds this DLL a canonical older than ~21 min; a real Coordinator
+// would have dropped to TIER_FAILED first.
+//
+// The floor on this value is therefore that ~21 min silence window plus the
+// up-to-15 min refresh jitter (MIN/MAX_RANDOM_OFFSET_SEC) plus a margin for a
+// legitimate client whose wall clock runs AHEAD of real time - because the
+// age is measured as now - requested_at, and a clock set ahead by X inflates
+// the apparent age by X. One hour leaves ~39 min of headroom above the 21 min
+// silence cap for that clock skew, which keeps a paying user's EA from ever
+// being falsely cut off, while shrinking a fake-Coordinator attacker's post-
+// revocation window from the old 7 days to 1 hour. (30 min was considered and
+// rejected: it leaves only ~9 min above the silence cap, too little for a
+// moderately wrong client clock on a trading machine, where a false -2 means
+// the EA stops trading.) Tightening past the server-side revocation path
+// (~1 h via the real Coordinator's own Reject handling) buys nothing more.
+constexpr unsigned long long MAX_CANONICAL_AGE_SEC = 60ULL * 60; // 1 hour
 
 // ---------------------------------------------------------------------------
 // This machine's own identity, as the Machine ID DLL reports it.
