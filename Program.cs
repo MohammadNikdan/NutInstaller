@@ -79,6 +79,15 @@ namespace NutriculaInstaller
                 return;
             }
 
+            // MetaTrader must be closed before the installer window opens at
+            // all - see EnsureMetaTraderClosed for why this belongs here
+            // rather than at the moment files are copied. Choosing Cancel
+            // simply exits; nothing has been changed by this point.
+            if (!EnsureMetaTraderClosed("be installed"))
+            {
+                return;
+            }
+
             Application.SetUnhandledExceptionMode(UnhandledExceptionMode.CatchException);
             Application.ThreadException += delegate(object sender, System.Threading.ThreadExceptionEventArgs e)
             {
@@ -126,16 +135,10 @@ namespace NutriculaInstaller
             // so they cannot be deleted and the uninstall would leave files
             // behind. Rather than do a partial removal, stop and tell the
             // person exactly what to do, then let them run Uninstall again.
-            string runningTerminals;
-            if (AnyMetaTraderRunning(out runningTerminals))
+            // Same gate as the install path, with a Retry button so the
+            // person does not have to find and start Uninstall again.
+            if (!EnsureMetaTraderClosed("be removed"))
             {
-                MessageBox.Show(
-                    "Please close MetaTrader (" + runningTerminals + ") first, then run Uninstall " +
-                    "again.\n\nMetaTrader keeps Nutricula's files open while it is running, so they " +
-                    "cannot be removed until it is fully closed. Nothing was changed.",
-                    "Close MetaTrader to Continue",
-                    MessageBoxButtons.OK,
-                    MessageBoxIcon.Warning);
                 return;
             }
 
@@ -162,23 +165,84 @@ namespace NutriculaInstaller
         }
 
         /// <summary>
-        /// True if any MetaTrader terminal is currently running. MT4's
-        /// process is "terminal.exe" and MT5's is "terminal64.exe" (checked
-        /// without the ".exe" suffix, as Process.GetProcessesByName expects).
-        /// Sets a human-readable list of which were found ("MetaTrader 4",
-        /// "MetaTrader 5", or both) for the message shown to the person.
+        /// Every MetaTrader process that would hold Nutricula's files open,
+        /// by its process name (without ".exe", as
+        /// Process.GetProcessesByName expects) and the name to show a person.
+        ///
+        /// MetaEditor and the Strategy Tester agents are included, not just
+        /// the terminals: MetaEditor locks a compiled program it has open,
+        /// and a tester agent runs its own copy of the EA out of
+        /// &lt;data&gt;\Tester\Agent-*\MQL5\Experts. Either one left running
+        /// can keep a stale file alive through an install, which is exactly
+        /// what the integrity check would later refuse.
+        /// </summary>
+        private static readonly string[,] MetaTraderProcesses =
+        {
+            { "terminal", "MetaTrader 4" },
+            { "terminal64", "MetaTrader 5" },
+            { "metaeditor", "MetaEditor" },
+            { "metaeditor64", "MetaEditor" },
+            { "metatester", "a Strategy Tester agent" },
+            { "metatester64", "a Strategy Tester agent" },
+        };
+
+        /// <summary>
+        /// True if any of the processes above is running. Sets a
+        /// human-readable list of which were found, with no duplicates, for
+        /// the message shown to the person.
         /// </summary>
         private static bool AnyMetaTraderRunning(out string runningTerminals)
         {
-            bool mt4 = false, mt5 = false;
-            try { mt4 = Process.GetProcessesByName("terminal").Length > 0; } catch { /* best-effort */ }
-            try { mt5 = Process.GetProcessesByName("terminal64").Length > 0; } catch { /* best-effort */ }
+            var found = new System.Collections.Generic.List<string>();
+            for (int i = 0; i < MetaTraderProcesses.GetLength(0); i++)
+            {
+                string processName = MetaTraderProcesses[i, 0];
+                string displayName = MetaTraderProcesses[i, 1];
+                bool running = false;
+                try { running = Process.GetProcessesByName(processName).Length > 0; }
+                catch { /* best-effort: a process we cannot query is not a reason to block */ }
+                if (running && !found.Contains(displayName)) found.Add(displayName);
+            }
 
-            if (mt4 && mt5) runningTerminals = "MetaTrader 4 and MetaTrader 5";
-            else if (mt4) runningTerminals = "MetaTrader 4";
-            else if (mt5) runningTerminals = "MetaTrader 5";
-            else runningTerminals = "";
-            return mt4 || mt5;
+            runningTerminals = string.Join(", ", found.ToArray());
+            return found.Count > 0;
+        }
+
+        /// <summary>
+        /// Blocks until no MetaTrader process is running, or until the person
+        /// gives up. Returns false if they chose to quit.
+        ///
+        /// Running this BEFORE the installer window opens is deliberate. The
+        /// install now clears any existing Nutricula files out of a terminal
+        /// before writing the fresh ones (see NutriculaSweeper.cs), and a
+        /// running terminal holds those files open, so an install done around
+        /// an open MetaTrader can leave a stale copy behind - which the
+        /// Coordinator's integrity check would then refuse, leaving the
+        /// customer unable to trade for a reason that looks like nothing they
+        /// did. Stopping at the door, with a Retry button so they never have
+        /// to find and start the installer again, is far kinder than letting
+        /// them through and failing afterwards.
+        /// </summary>
+        private static bool EnsureMetaTraderClosed(string actionDescription)
+        {
+            for (;;)
+            {
+                string running;
+                if (!AnyMetaTraderRunning(out running)) return true;
+
+                DialogResult choice = MessageBox.Show(
+                    "Nutricula cannot " + actionDescription + " while MetaTrader is open.\n\n" +
+                        "Currently running: " + running + "\n\n" +
+                        "MetaTrader keeps Nutricula's files in use while it is running, so they cannot be " +
+                        "replaced or removed. Please close every MetaTrader window, including MetaEditor " +
+                        "and any Strategy Tester agents, then click Retry.\n\n" +
+                        "Nothing on your computer has been changed.",
+                    "Close MetaTrader to Continue",
+                    MessageBoxButtons.RetryCancel,
+                    MessageBoxIcon.Warning);
+
+                if (choice != DialogResult.Retry) return false;
+            }
         }
     }
 }

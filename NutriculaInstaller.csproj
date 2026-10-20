@@ -53,6 +53,7 @@
     <Compile Include="InstallerService.cs" />
     <Compile Include="AtomicFile.cs" />
     <Compile Include="UninstallService.cs" />
+    <Compile Include="NutriculaSweeper.cs" />
     <Compile Include="MachineIdService.cs" />
     <Compile Include="CryptoService.cs" />
     <Compile Include="TerminalDiscoveryService.cs" />
