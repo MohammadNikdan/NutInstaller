@@ -234,11 +234,68 @@ function nutricula_webauthn_check_client_data(string $clientDataJSON, string $ex
     return $clientData;
 }
 
+/* The admin panel's own hostname. Passkeys are scoped to this exact
+   subdomain, never the parent domain (no cross-subdomain SSO intended).
+
+   2026: taken from webauthn_rp_id in admin_panel_config.php rather than from
+   the request. HTTP_HOST is whatever the client sent in the Host header, so
+   it made this value depend on how the panel happened to be reached. That
+   was never a way to get PAST a login - the browser signs the origin it is
+   really on, so a mismatched expectation only ever causes a failure, never a
+   bypass - but it did mean the panel could silently register passkeys under
+   one rpId and then verify them under another. Reaching the panel through a
+   second hostname that resolves to the same server (the bare IP, a www.
+   variant, a staging name) was enough, and the symptom - passkeys that work
+   from one address and not another - gives no hint of the cause.
+
+   Falls back to HTTP_HOST, with a note in the error log, when the setting is
+   absent: an upgrade that drops this file in before the config is updated
+   keeps working exactly as before rather than locking the owner out of their
+   own panel.
+
+   CHANGING THIS VALUE INVALIDATES EVERY REGISTERED PASSKEY. An authenticator
+   keys its credentials to the rpId, so set it to the exact hostname the
+   panel is browsed at; anything else and every existing passkey has to be
+   registered again. */
 function nutricula_webauthn_rp_id(): string
 {
-    // The admin panel's own hostname - passkeys are scoped to this exact
-    // subdomain, never the parent domain (no cross-subdomain SSO intended).
-    return (string)($_SERVER['HTTP_HOST'] ?? '');
+    static $rpId = null;
+    if ($rpId !== null) return $rpId;
+
+    $configured = '';
+    try {
+        if (is_file(ADMIN_CONFIG_PATH)) {
+            $cfg = require ADMIN_CONFIG_PATH;
+            $value = is_array($cfg) ? ($cfg['webauthn_rp_id'] ?? '') : '';
+            if (is_string($value)) $configured = strtolower(trim($value));
+        }
+    } catch (Throwable $e) {
+        $configured = '';
+    }
+
+    /* A hostname only - no scheme, no port, no path. Anything else is a
+       misconfiguration and is refused rather than quietly half-applied,
+       because a malformed rpId makes every passkey operation fail in a way
+       that looks like a browser problem. */
+    if ($configured !== '' && preg_match('/\A[a-z0-9]([a-z0-9\-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9\-]*[a-z0-9])?)+\z/', $configured)) {
+        $rpId = $configured;
+        return $rpId;
+    }
+    if ($configured !== '') {
+        error_log('[Nutricula admin] webauthn_rp_id in admin_panel_config.php is not a bare hostname ('
+            . $configured . ') - falling back to the request Host header.');
+    } else {
+        error_log('[Nutricula admin] webauthn_rp_id is not set in admin_panel_config.php - '
+            . 'falling back to the request Host header. Set it to the panel hostname.');
+    }
+
+    // Fallback: the Host header, with any port stripped so the rpId stays a
+    // bare hostname even when the panel is reached on a non-default port.
+    $host = strtolower(trim((string)($_SERVER['HTTP_HOST'] ?? '')));
+    $colon = strpos($host, ':');
+    if ($colon !== false) $host = substr($host, 0, $colon);
+    $rpId = $host;
+    return $rpId;
 }
 
 function nutricula_webauthn_origin(): string
