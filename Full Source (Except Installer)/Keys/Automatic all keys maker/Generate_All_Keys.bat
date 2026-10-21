@@ -61,8 +61,8 @@ if errorlevel 1 goto :fail
 echo   -^> CoordinatorIdentityKey_Private.pem, CoordinatorIdentityKey_Public.pem
 echo.
 
-echo [3/4] Server License Signing Key (RSA 2048, PKCS1 private / SPKI public)
-%OPENSSL% genrsa -out ServerLicenseSigningKey_Private.pem 2048 2>nul
+echo [3/4] Server License Signing Key (RSA 4096, PKCS1 private / SPKI public)
+%OPENSSL% genrsa -out ServerLicenseSigningKey_Private.pem 4096 2>nul
 if errorlevel 1 goto :fail
 %OPENSSL% rsa -in ServerLicenseSigningKey_Private.pem -pubout -out ServerLicenseSigningKey_Public.pem 2>nul
 if errorlevel 1 goto :fail
