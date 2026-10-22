@@ -1986,6 +1986,38 @@ void CoordinatorCore::WorkerLoop()
                 break;
             }
 
+            // Stale-lease cleanup for a SERVER-decided (not just locally
+            // decided) "this license is done" verdict (2026 hardening,
+            // user-requested follow-up to the local-expiry cleanup above).
+            //
+            // gotServerDecision && finalStable == TIER_FREE at this exact
+            // point can only mean one thing: one of the two Reject branches
+            // above just fired (challenge-stage or verify-stage) with a
+            // reason TierForRejectReason() maps to TIER_FREE - i.e. exactly
+            // license_expired, license_inactive, license_not_found,
+            // machine_mismatch, or device_key_mismatch, all five being a
+            // genuine, signature-verified server answer, never a mere
+            // transport failure or local guess. Every one of these is
+            // permanent for THIS install (reactivation always goes back
+            // through the Installer - see the local-expiry comment above),
+            // so there is nothing left for the stale lease file to do here.
+            // Most concretely, this is the transfer case: once a license has
+            // been moved to another computer, THIS (old) computer's next
+            // refresh gets device_key_mismatch/machine_mismatch right away
+            // and drops straight to Free - leaving the old, now-meaningless
+            // Lease blob sitting on disk serves no purpose and only costs an
+            // extra challenge+verify round-trip on every future cycle
+            // (EvaluateLocalFile would otherwise keep finding a lease that
+            // is not locally expired and keep retrying the paid path before
+            // reaching this same Reject again). Deleting it here makes this
+            // computer settle into the ordinary free-tier cadence
+            // immediately, exactly like a fresh free install.
+            if (gotServerDecision && finalStable == TIER_FREE)
+            {
+                std::wstring stalePath = GetLicenseFilePathW();
+                if (!stalePath.empty()) DeleteFileW(stalePath.c_str());
+            }
+
             // A signed Reject that ended this licensed install at TIER_FREE
             // (license expired/inactive/not found, machine or device key
             // mismatch) leaves it a free-tier install from here on. It has NOT
