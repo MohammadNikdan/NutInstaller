@@ -1702,7 +1702,7 @@ namespace NutriculaInstaller
                     case ServerFailureKind.SelfIntegrityFailed:
                         return "This installer file appears to be corrupted or damaged and cannot be used. Please " +
                                "download a fresh copy of the Nutricula installer from the official Nutricula " +
-                               "website: Nutricula.Trade";
+                               "website: www.Nutricula.Trade";
                     case ServerFailureKind.Timeout:
                         return "The Nutricula server did not respond in time. Please check your internet connection and try again.";
                     case ServerFailureKind.HttpError:

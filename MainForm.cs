@@ -16,11 +16,21 @@ namespace NutriculaInstaller
         private readonly CancellationTokenSource cts = new CancellationTokenSource();
 
         // Pages
+        private Panel header;
         private Panel contentHost;
         private Panel pageSelect;
         private Panel pageCredentials;
         private Panel pageProgress;
         private Panel footer;
+
+        // Startup splash overlay (2026 UX fix) - covers the whole client
+        // area the instant this window appears, before the self-integrity
+        // and MetaTrader checks have run, so there is never a gap where the
+        // window is open but shows nothing. See BuildSplashOverlay,
+        // RunStartupChecks and FinishStartupChecks.
+        private Panel splashOverlay;
+        private CircularSpinner splashSpinner;
+        private Label splashCaption;
 
         // Select page
         private OptionTile freeTile;
@@ -71,6 +81,14 @@ namespace NutriculaInstaller
         private bool lastResultSuccess;
         private InstallMode selectedMode = InstallMode.Free;
 
+        // 2026 UX fix: set while the progress page is showing an uninstall
+        // rather than an install, so ShowResult/LayoutResultButtons can hide
+        // the install-only "MT4: x | MT5: y case(s) found" summary line
+        // (meaningless for an uninstall) and so a "Try Again" after a failed
+        // uninstall retries the uninstall instead of the install flow - see
+        // OnUninstallTapped, ShowResult, and OnTryAgainTapped.
+        private bool isUninstallRun;
+
         private static readonly Color Brand = UiHelpers.BrandColor;
 
         public MainForm()
@@ -78,7 +96,161 @@ namespace NutriculaInstaller
             InitializeForm();
             BuildUi();
             ShowPage(pageSelect);
+            BuildSplashOverlay();
             RefreshUninstallButtonVisibilityAsync();
+
+            // Fires once, the first time this window actually becomes
+            // visible on screen - exactly the moment the splash has
+            // something to cover up, so the startup checks never run before
+            // there is something painted for them to run behind.
+            Shown += delegate { RunStartupChecks(); };
+        }
+
+        // =====================================================================
+        // Startup splash overlay + the checks it covers (2026 UX fix - see
+        // the field comment above). Everything happens inside this ONE
+        // window/ONE form instance: no second window is ever created, and
+        // the client size never changes - the overlay is just the top
+        // z-order panel over the exact same client area the real wizard
+        // pages already occupy, swapped out once the checks finish.
+        // =====================================================================
+
+        private void BuildSplashOverlay()
+        {
+            splashOverlay = new Panel
+            {
+                BackColor = UiHelpers.Background,
+                Bounds = new Rectangle(Point.Empty, ClientSize)
+            };
+            Controls.Add(splashOverlay);
+            splashOverlay.BringToFront();
+
+            splashSpinner = new CircularSpinner { Size = new Size(48, 48) };
+            splashOverlay.Controls.Add(splashSpinner);
+
+            splashCaption = new Label
+            {
+                AutoSize = true,
+                Text = "Loading Nutricula Installer...",
+                Font = UiHelpers.UiFont(9.5f),
+                ForeColor = Color.FromArgb(190, 190, 190), // deliberately faint - just a quiet "please wait"
+                BackColor = Color.Transparent
+            };
+            splashOverlay.Controls.Add(splashCaption);
+
+            splashSpinner.Location = new Point(
+                (splashOverlay.Width - splashSpinner.Width) / 2,
+                (splashOverlay.Height - splashSpinner.Height) / 2 - 14);
+            splashCaption.Location = new Point(
+                (splashOverlay.Width - splashCaption.Width) / 2,
+                splashSpinner.Bottom + 14);
+
+            splashSpinner.StartSpinning();
+
+            // The overlay covering the full client area and sitting on top
+            // already blocks every click from reaching anything beneath it;
+            // disabling the three real top-level panels as well additionally
+            // keeps keyboard focus/Tab from ever landing on a control the
+            // person cannot see while the splash is up.
+            header.Enabled = false;
+            contentHost.Enabled = false;
+            footer.Enabled = false;
+        }
+
+        private void HideSplashOverlay()
+        {
+            if (splashOverlay == null) return;
+
+            splashSpinner.StopSpinning();
+            header.Enabled = true;
+            contentHost.Enabled = true;
+            footer.Enabled = true;
+
+            Controls.Remove(splashOverlay);
+            splashOverlay.Dispose();
+            splashOverlay = null;
+        }
+
+        /// <summary>
+        /// Runs the self-integrity signature check and (if that passes) the
+        /// MetaTrader-running scan on a background thread, so the splash's
+        /// spinner keeps animating smoothly the whole time (this window's UI
+        /// thread is never blocked by either check). EnsureMetaTraderClosed
+        /// may show its own Retry/Cancel MessageBox from this thread if
+        /// MetaTrader turns out to be running - a plain MessageBox doesn't
+        /// need to run on the specific thread that owns a given Form, only
+        /// on an STA thread, which is why the worker is explicitly marked
+        /// STA below.
+        /// </summary>
+        private void RunStartupChecks()
+        {
+            Thread worker = new Thread(delegate ()
+            {
+                string failureReason;
+                bool integrityOk = SelfIntegrityCheck.Verify(out failureReason);
+                bool metaTraderOk = true;
+                if (integrityOk)
+                {
+                    metaTraderOk = Program.EnsureMetaTraderClosed("be installed");
+                }
+
+                try
+                {
+                    BeginInvoke(new Action(delegate { FinishStartupChecks(integrityOk, failureReason, metaTraderOk); }));
+                }
+                catch (ObjectDisposedException) { /* window closed while the checks were still running */ }
+                catch (InvalidOperationException) { /* same - handle not created/already torn down */ }
+            });
+            worker.IsBackground = true;
+            worker.SetApartmentState(ApartmentState.STA);
+            worker.Start();
+        }
+
+        /// <summary>
+        /// Back on the UI thread with both checks' results. Mirrors exactly
+        /// what Program.Main used to do before either check ever had a
+        /// window to run behind: a failed integrity check or a MetaTrader
+        /// that the person chose not to close both still end with nothing
+        /// proceeding - the only difference is this window was already open
+        /// (showing the splash) for that brief moment, instead of no window
+        /// ever existing at all.
+        /// </summary>
+        private void FinishStartupChecks(bool integrityOk, string failureReason, bool metaTraderOk)
+        {
+            Program.SelfIntegrityVerified = integrityOk;
+            Program.SelfIntegrityFailureReason = failureReason;
+
+            if (!integrityOk)
+            {
+                // Deliberately generic wording, regardless of the specific
+                // internal failureReason (missing trailer, bad magic bytes,
+                // or a real signature mismatch - see SelfIntegrityCheck.cs)
+                // - the person is never told anything about a "signature" at
+                // all. From their side this must look and read exactly like
+                // an ordinary corrupted/incomplete download, with one clear
+                // fix: get a fresh copy from the official site.
+                MessageBox.Show(
+                    this,
+                    "This installer file appears to be corrupted or damaged and cannot be used.\n\n" +
+                        "Please download a fresh copy of the Nutricula installer from the official " +
+                        "Nutricula website: www.Nutricula.Trade",
+                    "Nutricula",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Error);
+                Close();
+                return;
+            }
+
+            if (!metaTraderOk)
+            {
+                // The person chose Cancel on EnsureMetaTraderClosed's own
+                // Retry/Cancel dialog. Nothing has been changed - just close,
+                // same end result as before this window ever opened at all.
+                Close();
+                return;
+            }
+
+            HideSplashOverlay();
         }
 
         /// <summary>
@@ -101,6 +273,8 @@ namespace NutriculaInstaller
 
         private void OnUninstallTapped()
         {
+            if (running) return;
+
             DialogResult confirm = MessageBox.Show(
                 this,
                 "This will completely remove Nutricula EA, including your license, from this computer. Continue?",
@@ -109,37 +283,80 @@ namespace NutriculaInstaller
                 MessageBoxIcon.Warning);
             if (confirm != DialogResult.Yes) return;
 
-            // Reuses the exact same "/uninstall" flow Windows "Apps &
-            // Features" launches (Program.cs's RunUninstallFlow) rather than
-            // duplicating its handling here - that flow already does
-            // everything this needs (stop the Broker, delete everything,
-            // report the result). No elevation is needed any more: the whole
-            // product is a per-user, non-elevated install (see
-            // InstallerService.GetCoordinatorInstallDir), so this launches
-            // as an ordinary process (no "runas"/UAC). "/skipconfirm" skips
-            // only ITS confirmation dialog, since the one just above already
-            // covers it.
+            // 2026 UX fix: this used to launch a second, invisible process
+            // ("/uninstall /skipconfirm", handled entirely by plain
+            // MessageBoxes in Program.RunUninstallFlow) and close this
+            // window immediately - so the person saw the confirm dialog,
+            // then this whole window vanished looking "done", and only
+            // several seconds later did a MessageBox pop up out of nowhere
+            // announcing the uninstall had actually finished. Now this runs
+            // in-process, on the SAME progress page the install flow already
+            // uses, so the window stays open and visibly working the entire
+            // time, exactly like a normal install.
+            //
+            // Same MetaTrader-closed gate the install path and the external
+            // "/uninstall" command-line path both use - MetaTrader keeps
+            // Nutricula's DLLs locked while it's running, so uninstall would
+            // leave files behind. Program.EnsureMetaTraderClosed already
+            // shows its own Retry/Cancel dialog if needed.
+            if (!Program.EnsureMetaTraderClosed("be removed")) return;
+
+            StartUninstall();
+        }
+
+        private void StartUninstall()
+        {
+            isUninstallRun = true;
+            ShowPage(pageProgress);
+            runningPanel.Visible = true;
+            resultPanel.Visible = false;
+            progressStatusLabel.Text = "Uninstalling Nutricula...";
+            subStatusLabel.Text = string.Empty;
+            subStatusLabel.Visible = false;
+            progressBar.StartAnimating();
+            _ = RunUninstallAsync();
+        }
+
+        private async Task RunUninstallAsync()
+        {
+            running = true;
+
             try
             {
-                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+                UninstallService.UninstallOutcome outcome =
+                    await Task.Run(() => UninstallService.PerformUninstall());
+
+                // Must happen before this window is closed/the process exits
+                // (same ordering the old external flow used) - finishes
+                // deleting Uninstall.exe and its folder once this process has
+                // released the lock on its own running .exe. A no-op when
+                // PendingSelfDeleteDirectory is null (the common case - not
+                // launched from inside the install directory).
+                UninstallService.ScheduleSelfDelete(outcome.PendingSelfDeleteDirectory);
+
+                string summary = "Nutricula EA has been uninstalled.";
+                if (outcome.Warnings.Count > 0)
                 {
-                    FileName = System.Reflection.Assembly.GetExecutingAssembly().Location,
-                    Arguments = "/uninstall /skipconfirm",
-                    UseShellExecute = true
-                });
+                    summary += "\n\nSome items could not be fully removed:\n- " + string.Join("\n- ", outcome.Warnings);
+                }
+
+                // Treated as success regardless of minor warnings, matching
+                // the old flow exactly: that always showed a single OK
+                // button with the warnings listed in the body text, never a
+                // "Try Again" failure state, for the same reason - a locked
+                // leftover file or two is not something retrying fixes on
+                // its own, and the removal that matters (the license, the
+                // Broker, the registry entry) already happened.
+                ShowResult(true, summary, 0, 0);
             }
             catch (Exception ex)
             {
-                MessageBox.Show(
-                    this,
-                    "The uninstaller could not be started (" + ex.Message + "). Nothing was changed.",
-                    "Uninstall Nutricula EA",
-                    MessageBoxButtons.OK,
-                    MessageBoxIcon.Warning);
-                return;
+                ShowResult(false, "The uninstall could not be completed: " + ex.Message, 0, 0);
             }
-
-            Close();
+            finally
+            {
+                running = false;
+            }
         }
 
         public static void NotifyUnhandledException(Exception ex)
@@ -245,7 +462,7 @@ namespace NutriculaInstaller
 
         private void BuildHeader()
         {
-            Panel header = new Panel { Dock = DockStyle.Top, Height = 84, BackColor = Brand };
+            header = new Panel { Dock = DockStyle.Top, Height = 84, BackColor = Brand };
             Controls.Add(header);
 
             Icon appIcon = TryLoadIcon();
@@ -764,6 +981,7 @@ namespace NutriculaInstaller
 
         private void StartInstall()
         {
+            isUninstallRun = false;
             ShowPage(pageProgress);
             runningPanel.Visible = true;
             resultPanel.Visible = false;
@@ -876,7 +1094,7 @@ namespace NutriculaInstaller
             resultBadge.SetSuccess(success);
             SetResultMessage(success, message);
 
-            if (success)
+            if (success && !isUninstallRun)
             {
                 resultSummaryLabel.Text = "MT4: " + mt4Count + "  |  MT5: " + mt5Count + "  case(s) found.";
             }
@@ -954,7 +1172,7 @@ namespace NutriculaInstaller
             if (success)
             {
                 tryAgainButton.Visible = false;
-                if (resultSummaryLabel != null) resultSummaryLabel.Visible = true;
+                if (resultSummaryLabel != null) resultSummaryLabel.Visible = !isUninstallRun;
 
                 finishButton.Text2 = "Finish";
                 finishButton.Size = new Size(180, 46);
@@ -981,6 +1199,17 @@ namespace NutriculaInstaller
         private void OnTryAgainTapped()
         {
             if (running) return;
+
+            if (isUninstallRun)
+            {
+                // Re-check MetaTrader too - the most likely reason an
+                // uninstall attempt failed is a locked file, and the person
+                // may have just closed MetaTrader in response to the
+                // original gate's message.
+                if (!Program.EnsureMetaTraderClosed("be removed")) return;
+                StartUninstall();
+                return;
+            }
 
             if (selectedMode == InstallMode.Free)
             {

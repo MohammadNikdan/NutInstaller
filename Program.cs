@@ -1,5 +1,6 @@
 using System;
 using System.Diagnostics;
+using System.Threading;
 using System.Windows.Forms;
 
 namespace NutriculaInstaller
@@ -7,14 +8,44 @@ namespace NutriculaInstaller
     internal static class Program
     {
         /// <summary>
-        /// Result of the self-integrity check, computed once at startup -
-        /// see SelfIntegrityCheck.cs for what this does and does not
-        /// protect against. MainForm reads this to decide whether to warn
-        /// the user before allowing Premium/Transfer (which consume a
-        /// purchase key or transfer key) to proceed.
+        /// Result of the self-integrity check. Computed on MainForm's own
+        /// startup background worker now (see MainForm.RunStartupChecks),
+        /// behind its splash overlay, rather than before any window existed
+        /// at all - so the setters are internal, not private: MainForm is
+        /// what actually runs SelfIntegrityCheck.Verify() and reports the
+        /// result back here. InstallerService reads the getters to decide
+        /// whether to warn the user before allowing Premium/Transfer (which
+        /// consume a purchase key or transfer key) to proceed.
         /// </summary>
-        public static bool SelfIntegrityVerified { get; private set; }
-        public static string SelfIntegrityFailureReason { get; private set; }
+        public static bool SelfIntegrityVerified { get; internal set; }
+        public static string SelfIntegrityFailureReason { get; internal set; }
+
+        // Single-instance guard for the main install wizard (2026 UX fix -
+        // nothing stopped someone from double-clicking Installer.exe many
+        // times and ending up with a dozen overlapping wizard windows, each
+        // with its own InstallerService/CancellationTokenSource, all free to
+        // race each other over the same install directory and license file).
+        //
+        // Deliberately a plain (session-local, no "Global\" prefix) named
+        // Mutex rather than a machine-wide one: this product is a per-user,
+        // non-elevated install (HKCU uninstall entry, %LocalAppData%
+        // Broker - see InstallerService.GetCoordinatorInstallDir), so "one
+        // instance" is scoped to one Windows login session, consistent with
+        // everything else in this design. Two different users logged into
+        // the same machine each still get their own single instance, which
+        // is correct - they are installing into two different profiles.
+        //
+        // Deliberately NOT applied to the "/uninstall" launch path below:
+        // that path is today a short-lived child process spawned by this
+        // same MainForm's "Uninstall Nutricula" button (Process.Start,
+        // immediately followed by this parent's own Close()). Guarding it
+        // with the same mutex would race the parent's exit (mutex release)
+        // against the child's acquire attempt, and could spuriously tell a
+        // legitimate uninstall "already running". The one-instance guard
+        // below exists to stop many WIZARD windows, which is what was asked
+        // for; the uninstall child process has no window of its own at all
+        // today, so it isn't the thing being guarded against here.
+        private static Mutex singleInstanceMutex;
 
         [STAThread]
         private static void Main(string[] args)
@@ -40,54 +71,46 @@ namespace NutriculaInstaller
                 return;
             }
 
-            string failureReason;
-            SelfIntegrityVerified = SelfIntegrityCheck.Verify(out failureReason);
-            SelfIntegrityFailureReason = failureReason;
+            // Only one copy of the install wizard may be open at a time -
+            // see the field comment above for exactly why this is scoped
+            // the way it is. createdNew=false means another instance (in
+            // this same login session) already holds it; tell the person
+            // and exit without touching anything. The mutex is deliberately
+            // kept alive for the rest of the process (never Dispose()'d
+            // here) - the OS releases it automatically when this process
+            // exits, by any path, which is exactly the lifetime wanted.
+            bool createdNew;
+            singleInstanceMutex = new Mutex(true, @"Local\NutriculaInstaller_SingleInstance_8F2B7C1E-6A3D-4E2F-9C0B-1D5A7E9F3C21", out createdNew);
+            if (!createdNew)
+            {
+                Application.EnableVisualStyles();
+                Application.SetCompatibleTextRenderingDefault(false);
+                MessageBox.Show(
+                    "The Nutricula installer is already open. Please use that window - only one copy can run at a time.",
+                    "Nutricula",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Information);
+                return;
+            }
 
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
 
-            // 2026 hardening: an unsigned or tampered installer.exe now
-            // refuses to open at all, rather than opening normally and only
-            // being blocked later at the Premium/Transfer activation step.
-            // This does not weaken anything - SelfIntegrityCheck.Verify()'s
-            // own header comment already explains that this check cannot be
-            // made unbypassable purely from inside the binary it protects
-            // (an attacker able to patch out this exact block could always
-            // patch out any other gate too), so refusing to run at all is
-            // strictly more restrictive than the previous "opens, but the
-            // license step fails" behavior, never less secure. The
-            // RequestLicenseAsync-side check in InstallerService.cs is left
-            // in place as a harmless extra safety net; with this block, it
-            // should never actually be reached in normal operation.
-            if (!SelfIntegrityVerified)
-            {
-                // Deliberately generic wording, regardless of the specific
-                // internal failureReason (missing trailer, bad magic bytes,
-                // or a real signature mismatch - see SelfIntegrityCheck.cs)
-                // - the person is never told anything about a "signature" at
-                // all. From their side this must look and read exactly like
-                // an ordinary corrupted/incomplete download, with one clear
-                // fix: get a fresh copy from the official site.
-                MessageBox.Show(
-                    "This installer file appears to be corrupted or damaged and cannot be used.\n\n" +
-                        "Please download a fresh copy of the Nutricula installer from the official " +
-                        "Nutricula website: Nutricula.Trade",
-                    "Nutricula",
-                    MessageBoxButtons.OK,
-                    MessageBoxIcon.Error);
-                return;
-            }
-
-            // MetaTrader must be closed before the installer window opens at
-            // all - see EnsureMetaTraderClosed for why this belongs here
-            // rather than at the moment files are copied. Choosing Cancel
-            // simply exits; nothing has been changed by this point.
-            if (!EnsureMetaTraderClosed("be installed"))
-            {
-                return;
-            }
-
+            // 2026 UX fix: the self-integrity signature check and the
+            // MetaTrader-running scan used to both run here, silently,
+            // before Application.Run ever created a window - so the person
+            // saw nothing at all (not even an hourglass) for however long
+            // that took. They now run on MainForm's own startup background
+            // worker (MainForm.RunStartupChecks), behind a splash overlay
+            // INSIDE that same window - one single window from the person's
+            // side, shown immediately, with the real wizard underneath only
+            // revealed once both checks pass. See MainForm's constructor and
+            // RunStartupChecks/FinishStartupChecks for exactly how this
+            // plays out, including the "corrupted installer" and
+            // "MetaTrader is still open" cases, which now close that one
+            // window instead of a window never existing at all - same end
+            // result (nothing proceeds), just after a brief glimpse of the
+            // splash rather than nothing.
             Application.SetUnhandledExceptionMode(UnhandledExceptionMode.CatchException);
             Application.ThreadException += delegate(object sender, System.Threading.ThreadExceptionEventArgs e)
             {
@@ -223,7 +246,11 @@ namespace NutriculaInstaller
         /// to find and start the installer again, is far kinder than letting
         /// them through and failing afterwards.
         /// </summary>
-        private static bool EnsureMetaTraderClosed(string actionDescription)
+        // internal (not private): MainForm's in-process uninstall path (the
+        // "Uninstall Nutricula" button - see MainForm.OnUninstallTapped)
+        // calls this directly now, the same gate the install path and the
+        // external "/uninstall" command-line path both already use.
+        internal static bool EnsureMetaTraderClosed(string actionDescription)
         {
             for (;;)
             {

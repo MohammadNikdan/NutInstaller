@@ -699,6 +699,75 @@ namespace NutriculaInstaller
     }
 
     // ======================================================================
+    // Faint, round "infinite" spinner (a short rotating arc) - used only by
+    // MainForm's startup splash overlay (see MainForm.BuildSplashOverlay).
+    // Deliberately a separate shape from IndeterminateBar above (the
+    // horizontal sliding segment used for real install/uninstall progress):
+    // the startup splash isn't reporting progress on anything specific, just
+    // "please wait a moment", and a round spinner reads that way without
+    // being confused for the linear progress bar shown a moment later.
+    // ======================================================================
+    internal sealed class CircularSpinner : Panel
+    {
+        private readonly Timer timer;
+        private float angle;
+
+        public CircularSpinner()
+        {
+            SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, true);
+            BackColor = Color.Transparent;
+
+            timer = new Timer { Interval = 16 };
+            timer.Tick += delegate
+            {
+                angle += 6f;
+                if (angle >= 360f) angle -= 360f;
+                Invalidate();
+            };
+        }
+
+        public void StartSpinning()
+        {
+            Visible = true;
+            timer.Start();
+        }
+
+        public void StopSpinning()
+        {
+            timer.Stop();
+            Visible = false;
+        }
+
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            Graphics g = e.Graphics;
+            g.SmoothingMode = SmoothingMode.AntiAlias;
+
+            const int thickness = 4;
+            Rectangle track = new Rectangle(thickness / 2, thickness / 2, Width - thickness, Height - thickness);
+
+            // Faint full-circle track, deliberately much lighter than the brand
+            // color - this is meant to feel quiet, not to draw attention to itself.
+            using (Pen trackPen = new Pen(Color.FromArgb(235, 236, 240), thickness))
+                g.DrawEllipse(trackPen, track);
+
+            // One short rotating arc in the brand color, kept faint via alpha
+            // rather than a fully saturated color, per the request for
+            // something "کمرنگ" (muted) rather than a bold spinner.
+            using (Pen arcPen = new Pen(Color.FromArgb(140, UiHelpers.BrandColor), thickness) { StartCap = LineCap.Round, EndCap = LineCap.Round })
+            {
+                g.DrawArc(arcPen, track, angle, 90f);
+            }
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing) timer.Dispose();
+            base.Dispose(disposing);
+        }
+    }
+
+    // ======================================================================
     // Circular result badge (green check / red cross) shown after an
     // install finishes. Purely presentational.
     // ======================================================================
