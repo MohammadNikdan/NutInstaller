@@ -5889,6 +5889,108 @@ bool IsDebuggerAttached()
     return false;
 }
 
+// ============================================================================
+// In-memory code-integrity self-check (2026 hardening, follow-up to the
+// anti-debug section immediately above).
+//
+// GAP THIS CLOSES: IsDebuggerAttached() above only ever asks "is a debugger
+// attached RIGHT NOW?" - it says nothing about whether this process's own
+// already-loaded code bytes still match what was actually compiled and
+// shipped. An attacker who attaches briefly, pokes a handful of
+// instructions in THIS DLL's own code section directly in RAM (e.g. a one-
+// shot Cheat-Engine-style "find and patch" with no debugger left resident
+// afterwards), then detaches, leaves nothing for IsDebuggerAttached() to
+// ever see again - yet the patched instructions keep running for the rest
+// of the process's life. Server-side artifact hashing
+// (nutricula_build_manifests) does not close this either: that measures
+// what was loaded at the moment the Coordinator last asked, not necessarily
+// every byte still resident in THIS process's memory an instant later.
+//
+// APPROACH: hash this DLL's own loaded .text (code) section directly out of
+// this process's memory the first time this check ever runs, and keep that
+// as the trusted baseline for the rest of the process's life. Every later
+// call re-hashes the same range and compares - a live patch to any
+// instruction in .text after the baseline was captured changes the hash and
+// is caught at the next call, on the same TIER_REVERIFY_INTERVAL_MS cadence
+// AntiTamperCheckedTier already runs on (no separate timer needed).
+//
+// HONEST LIMIT (same spirit as IsDebuggerAttached's own comment above): the
+// baseline is self-measured, with no external anchor - if the code were
+// already patched BEFORE this function's very first call in this process,
+// those bytes would simply become the accepted baseline, and this check
+// could not tell. What it DOES reliably catch is a patch applied WHILE this
+// process is already running normally with this check already active -
+// i.e. after a licensed session has already started, which is exactly the
+// "attach, poke, detach" pattern described above.
+// ============================================================================
+
+bool ComputeOwnTextSectionHash(unsigned char outDigest[32])
+{
+    HMODULE hSelf = nullptr;
+    if (!GetModuleHandleExW(
+            GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+            reinterpret_cast<LPCWSTR>(&ComputeOwnTextSectionHash), &hSelf) || !hSelf)
+    {
+        return false;
+    }
+
+    auto base = reinterpret_cast<const unsigned char*>(hSelf);
+    auto dosHeader = reinterpret_cast<const IMAGE_DOS_HEADER*>(base);
+    if (dosHeader->e_magic != IMAGE_DOS_SIGNATURE) return false;
+    auto ntHeaders = reinterpret_cast<const IMAGE_NT_HEADERS*>(base + dosHeader->e_lfanew);
+    if (ntHeaders->Signature != IMAGE_NT_SIGNATURE) return false;
+
+    const IMAGE_SECTION_HEADER* textSection = nullptr;
+    const IMAGE_SECTION_HEADER* sections = IMAGE_FIRST_SECTION(ntHeaders);
+    for (WORD i = 0; i < ntHeaders->FileHeader.NumberOfSections; i++)
+    {
+        if (memcmp(sections[i].Name, ".text", 6) == 0) { textSection = &sections[i]; break; }
+    }
+    if (!textSection || textSection->Misc.VirtualSize == 0) return false;
+
+    const unsigned char* textStart = base + textSection->VirtualAddress;
+    const ULONG textSize = textSection->Misc.VirtualSize;
+
+    BCRYPT_ALG_HANDLE hashAlg = nullptr;
+    if (BCryptOpenAlgorithmProvider(&hashAlg, BCRYPT_SHA256_ALGORITHM, nullptr, 0) < 0) return false;
+    BCRYPT_HASH_HANDLE hash = nullptr;
+    bool hashOk = false;
+    if (BCryptCreateHash(hashAlg, &hash, nullptr, 0, nullptr, 0, 0) >= 0)
+    {
+        BCryptHashData(hash, const_cast<PUCHAR>(textStart), textSize, 0);
+        hashOk = BCryptFinishHash(hash, outDigest, 32, 0) >= 0;
+        BCryptDestroyHash(hash);
+    }
+    BCryptCloseAlgorithmProvider(hashAlg, 0);
+    return hashOk;
+}
+
+bool IsCodeSectionTampered()
+{
+    unsigned char current[32] = {};
+    if (!ComputeOwnTextSectionHash(current))
+    {
+        // Could not even measure (unexpected PE layout, hashing failed,
+        // etc.) - fail closed, same philosophy as every other "could not
+        // verify" path in this section: an inability to check is never
+        // treated as "all clear".
+        return true;
+    }
+
+    static NutMutex baselineMutex;
+    static unsigned char baseline[32] = {};
+    static bool baselineCaptured = false;
+
+    std::lock_guard<NutMutex> lock(baselineMutex);
+    if (!baselineCaptured)
+    {
+        memcpy(baseline, current, sizeof(baseline));
+        baselineCaptured = true;
+        return false; // the first measurement always defines the baseline, never "tampered"
+    }
+    return memcmp(baseline, current, sizeof(baseline)) != 0;
+}
+
 // Cache of the last genuinely, independently signature-verified canonical +
 // its signature (NOT just the resulting tier int) - see GetLicenseTier's own
 // comment below for why this, rather than trusting g_tier alone, is the
@@ -6388,7 +6490,7 @@ int AntiTamperCheckedTier(int rawTier)
     // is an anti-tamper / integrity failure and goes straight to TIER_FAILED
     // (Check_Core_Integrity reports -2).
     int result = TIER_LICENSED;
-    if (IsDebuggerAttached())
+    if (IsDebuggerAttached() || IsCodeSectionTampered())
     {
         result = TIER_FAILED;
     }
