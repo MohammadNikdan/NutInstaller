@@ -24,6 +24,7 @@
 #include <bcrypt.h>
 #include <cstdint>
 #include <cstring>
+#include "VMProtectMarkers.h"
 
 #pragma comment(lib, "bcrypt.lib")
 
@@ -50,6 +51,12 @@ inline bool VerifyP256(const unsigned char publicKeyXY[64],
     const unsigned char* data, size_t dataLen,
     const unsigned char signatureRS[64])
 {
+    // Called from NamedPipeIpc::ConnectAndVerify (periodic Poll, not
+    // OnTick) and from the Coordinator's own ManifestVerify at startup -
+    // never a hot path. NUT_VMP_* is a no-op everywhere except the thin
+    // DLL's own build (see VMProtectMarkers.h), so this has zero effect
+    // on the Coordinator/Broker or ManifestVerify builds.
+    NUT_VMP_BEGIN_ULTRA("EcdsaHelpers_VerifyP256");
     unsigned char digest[32];
     if (!Sha256(data, dataLen, digest)) return false;
 
@@ -75,7 +82,9 @@ inline bool VerifyP256(const unsigned char publicKeyXY[64],
 
     BCryptDestroyKey(key);
     BCryptCloseAlgorithmProvider(alg, 0);
-    return verifyStatus >= 0;
+    bool verified = verifyStatus >= 0;
+    NUT_VMP_END();
+    return verified;
 }
 
 // Signs SHA-256(data) with a raw P-256 private key (32-byte scalar `d`,

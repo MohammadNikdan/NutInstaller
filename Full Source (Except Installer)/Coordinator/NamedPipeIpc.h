@@ -21,6 +21,7 @@
 #include <cstdio>
 #include "CoordinatorProtocol.h"
 #include "EcdsaHelpers.h"
+#include "VMProtectMarkers.h"
 
 // DIAGNOSTIC BUILD FLAG (2026, temporary): when defined, the server-side
 // identity check below prints exactly where/why a connecting client was
@@ -294,6 +295,11 @@ inline HANDLE AcceptAndHandshake(
 // architecture point 100: no fallback, either way).
 inline HANDLE ConnectAndVerify(const unsigned char coordinatorPublicKeyXY[64], DWORD timeoutMs)
 {
+    // Called only from QueryCoordinatorStatus/SendRefreshRequest, both
+    // driven by the periodic Poll (Pavo_Sync_85/OnTimer) - never OnTick.
+    // No-op everywhere except the thin DLL's own build (see
+    // VMProtectMarkers.h).
+    NUT_VMP_BEGIN_ULTRA("NamedPipeIpc_ConnectAndVerify");
     HANDLE pipe = INVALID_HANDLE_VALUE;
     DWORD waited = 0;
     while (waited < timeoutMs)
@@ -350,6 +356,7 @@ inline HANDLE ConnectAndVerify(const unsigned char coordinatorPublicKeyXY[64], D
         return INVALID_HANDLE_VALUE;
     }
 
+    NUT_VMP_END();
     return pipe;
 }
 
