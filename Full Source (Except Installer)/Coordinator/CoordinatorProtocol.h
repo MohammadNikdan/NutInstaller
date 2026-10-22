@@ -23,6 +23,7 @@
 //
 
 #include <cstdint>
+#include <string>
 
 namespace CoordinatorProtocol {
 
@@ -61,7 +62,40 @@ inline const wchar_t* ARTIFACT_MACHINEID64_NAME = L"MachineId64.dll";
 // is always the Broker; only WHERE it is launched from differs between
 // Windows and Wine, never the protocol). See point 60 of the architecture
 // notes: "Wine نباید معماری Windows را خراب کند."
-inline const wchar_t* PIPE_NAME = L"\\\\.\\pipe\\NutriculaLicenseCoordinator";
+//
+// Obfuscated at rest (2026 hardening): unlike the ARTIFACT_*_NAME constants
+// above (which name files an attacker can already see with a plain `dir` -
+// obfuscating those would buy nothing), this pipe name is NOT otherwise
+// visible anywhere - it only ever exists as a literal in the compiled
+// binary, where a single `strings.exe` pass used to hand it over for free
+// to anyone looking for which named pipe to connect to or spy on. It is now
+// stored XOR-encoded against a fixed per-build byte and decoded once, into
+// a function-local static std::wstring, the first time PIPE_NAME is
+// touched - every existing call site keeps using `PIPE_NAME` exactly as
+// before (still a plain `const wchar_t*`), so nothing else in this header
+// or its callers needs to change.
+namespace detail {
+    constexpr wchar_t PIPE_NAME_KEY = 0x37;
+    constexpr wchar_t PIPE_NAME_ENCODED[] = {
+        0x006B, 0x006B, 0x0019, 0x006B, 0x0047, 0x005E, 0x0047, 0x0052,
+        0x006B, 0x0079, 0x0042, 0x0043, 0x0045, 0x005E, 0x0054, 0x0042,
+        0x005B, 0x0056, 0x007B, 0x005E, 0x0054, 0x0052, 0x0059, 0x0044,
+        0x0052, 0x0074, 0x0058, 0x0058, 0x0045, 0x0053, 0x005E, 0x0059,
+        0x0056, 0x0043, 0x0058, 0x0045
+    }; // decodes to L"\\.\pipe\NutriculaLicenseCoordinator" (36 chars, no change in meaning)
+
+    inline const wchar_t* DecodedPipeName()
+    {
+        static const std::wstring decoded = [] {
+            std::wstring s;
+            s.reserve(sizeof(PIPE_NAME_ENCODED) / sizeof(wchar_t));
+            for (wchar_t c : PIPE_NAME_ENCODED) s.push_back(static_cast<wchar_t>(c ^ PIPE_NAME_KEY));
+            return s;
+        }();
+        return decoded.c_str();
+    }
+}
+inline const wchar_t* PIPE_NAME = detail::DecodedPipeName();
 
 enum class MessageType : uint32_t {
     HandshakeChallenge = 1,   // server -> client
