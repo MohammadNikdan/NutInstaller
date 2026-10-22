@@ -1,5 +1,6 @@
 #include "ServerSignatureVerify.h"
 #include "ServerPublicKeyEmbedded.h"
+#include "../Coordinator/VMProtectMarkers.h"
 #include <windows.h>
 #include <wincrypt.h>
 #include <bcrypt.h>
@@ -136,6 +137,9 @@ namespace {
 
 bool ServerSignatureVerify::LoadServerPublicKey(const std::wstring& dllDirectory)
 {
+    // Only reached once per process, from Vela_Boot_84/EnsurePublicKeyLoaded
+    // at EA init (then cached) - never on a hot path.
+    NUT_VMP_BEGIN_ULTRA("ServerSignatureVerify_LoadServerPublicKey");
     // Prefer the compiled-in key (architecture point 78) - only falls
     // through to the loose file if the compiled-in constant is still the
     // unfilled development placeholder (contains the literal marker text
@@ -157,11 +161,16 @@ bool ServerSignatureVerify::LoadServerPublicKey(const std::wstring& dllDirectory
     if (!file) return false;
     std::string pem((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
     if (pem.empty()) return false;
-    return ImportPemPublicKey(pem);
+    bool imported = ImportPemPublicKey(pem);
+    NUT_VMP_END();
+    return imported;
 }
 
 bool ServerSignatureVerify::Verify(const std::string& canonicalMessage, const std::string& signatureB64)
 {
+    // Only called from AntiTamperCheckedTier's rate-limited slow path and
+    // from the Poll-response handler - both periodic, never per-tick.
+    NUT_VMP_BEGIN_ULTRA("ServerSignatureVerify_Verify");
     if (!g_rsaPublicKey) return false; // key was never loaded - never treat as valid by default
 
     std::vector<unsigned char> signature;
@@ -188,6 +197,8 @@ bool ServerSignatureVerify::Verify(const std::string& canonicalMessage, const st
         g_rsaPublicKey, &padInfo, digest, sizeof(digest),
         signature.data(), static_cast<ULONG>(signature.size()), BCRYPT_PAD_PKCS1);
 
-    return status >= 0; // STATUS_SUCCESS only on a genuinely valid signature
+    bool ok = status >= 0; // STATUS_SUCCESS only on a genuinely valid signature
+    NUT_VMP_END();
+    return ok;
 }
 
