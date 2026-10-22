@@ -41,6 +41,21 @@ set SRC_DIR=..\LicenseCheck
 set OUT_DIR=Builds
 if not exist %OUT_DIR% mkdir %OUT_DIR%
 
+REM ============================================================================
+REM VMProtect SDK hook - ENABLED. VMProtectSDK.h and libVMProtectSDK64.a (the
+REM genuine MinGW import library shipped by VMProtect itself, under its own
+REM SDK\Lib\Windows\MinGW\ folder - no dlltool conversion needed) now live in
+REM %SRC_DIR%, so NUT_VMP_BEGIN/_END in VMProtectMarkers.h compile to real
+REM calls for this 64-bit build, and the 6 hardened functions can be found
+REM and virtualized by name in VMProtect's Functions panel.
+REM
+REM To go back to the old no-marker behavior (e.g. a build that must never
+REM depend on VMProtectSDK64.dll being present), just delete/comment out
+REM both lines below.
+set VMP_DEFINE=-DNUTRICULA_VMPROTECT_BUILD
+set VMP_LINK=-L%SRC_DIR% -lVMProtectSDK64
+REM ============================================================================
+
 REM --- -s (strip) removes the symbol table from the output binary. WITHOUT
 REM     it, the names of INTERNAL (non-exported) functions stay embedded and
 REM     readable in the shipped file - verified directly: `nm`/`strings` on an
@@ -51,13 +66,19 @@ REM     .rsrc icon and the .pdata/.xdata exception-unwind tables fully intact
 REM     (all three verified), so runtime behavior is completely unchanged.
 REM     NOTE: this changes the binary's SHA-256, so the manifest MUST be
 REM     regenerated with NutriculaSignTool after rebuilding.
-%GPP64% -D_WIN32_WINNT=0x0601 -std=c++17 -O2 -s -shared -static -static-libgcc -static-libstdc++ ^
+REM -fno-ipa-icf: disables GCC's default identical-code-folding. With many
+REM near-identical small VMProtect-marked functions (the ~1000 calculation
+REM functions), GCC can otherwise merge two of them that compile to the
+REM same machine code into one shared address - which VMProtect then
+REM rejects as "address already used by function X". Keeping every marked
+REM function at its own distinct address avoids that.
+%GPP64% -D_WIN32_WINNT=0x0601 %VMP_DEFINE% -std=c++17 -O2 -fno-ipa-icf -s -shared -static -static-libgcc -static-libstdc++ ^
     -I %SRC_DIR% -I ..\Coordinator ^
     %SRC_DIR%\NutriculaLicenseCheckThin.cpp ^
     %SRC_DIR%\ServerSignatureVerify.cpp ^
     %SRC_DIR%\MachineIdBridge.cpp ^
     -o %OUT_DIR%\NutriculaLicenseCheck64.dll ^
-    -lbcrypt -lcrypt32 -ladvapi32
+    %VMP_LINK% -lbcrypt -lcrypt32 -ladvapi32
 
 if %ERRORLEVEL% NEQ 0 (
     echo BUILD FAILED
