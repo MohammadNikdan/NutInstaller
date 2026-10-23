@@ -17,6 +17,7 @@
 #include "CoordinatorIdentityPrivate.h"
 #include "NamedPipeIpc.h"
 #include "EcdsaHelpers.h"
+#include "VMProtectMarkers.h"
 
 #include <windows.h>
 #include <process.h>
@@ -136,17 +137,30 @@ std::atomic<bool> g_brokerSelfDebugAttachDone{false};
 
 unsigned __stdcall BrokerSelfDebugLoopThreadProc(void*)
 {
+    // Marked (2026 hardening, project owner's explicit request): this is
+    // the attach decision itself, mirroring the DLL's own
+    // NUT_SelfDebugLoopThreadProc_Attach marker exactly - the highest-
+    // value STATIC patch target (nopping out DebugActiveProcess or the
+    // store(true) below in the shipped exe, offline, with no live
+    // debugger ever attached). Deliberately scoped to just this decision,
+    // not the WaitForDebugEvent loop below, for the same reason given at
+    // the DLL's own marker: that loop is required boilerplate with no
+    // decision worth protecting, and is unbounded/blocking.
+    //
     // Must happen before DebugActiveProcess - see this block's own
     // comment above for exactly why.
+    NUT_VMP_BEGIN_ULTRA("BrokerSelfDebugLoopThreadProc_Attach");
     DebugSetProcessKillOnExit(FALSE);
 
     if (!DebugActiveProcess(GetCurrentProcessId()))
     {
         g_brokerSelfDebugAttachDone.store(true); // decided: failed
+        NUT_VMP_END();
         return 0;
     }
     g_brokerSelfDebugActive.store(true);
     g_brokerSelfDebugAttachDone.store(true); // decided: succeeded
+    NUT_VMP_END();
 
     for (;;)
     {
@@ -191,12 +205,19 @@ unsigned __stdcall BrokerDebugWatchdogThreadProc(void*)
     for (;;)
     {
         Sleep(1000);
+        // Marked (2026 hardening): the whole per-iteration check-and-react
+        // body, mirroring NUT_WatchdogThreadProc_Check in the DLL. Runs
+        // once a second - never hot-path - so ULTRA costs nothing
+        // meaningful here.
+        NUT_VMP_BEGIN_ULTRA("BrokerDebugWatchdogThreadProc_Check");
         const bool isActive = g_brokerSelfDebugActive.load();
         if (wasActive && !isActive)
         {
             printf("Self-debug session ended unexpectedly - exiting rather than running unprotected.\n");
+            NUT_VMP_END();
             TerminateProcess(GetCurrentProcess(), 0xDEADBEEF);
         }
+        NUT_VMP_END();
         wasActive = isActive;
     }
 }
@@ -221,6 +242,11 @@ int main()
     // accepts. DebugActiveProcess itself resolves almost immediately; this
     // bounded ~1 second spin only covers ordinary thread-scheduling delay.
     {
+        // Marked (2026 hardening): the fail-closed check itself, mirroring
+        // Vela_Boot_84_SelfDebugGate in the DLL - forcing
+        // g_brokerSelfDebugActive to read true here, or deleting this
+        // block, silently reverts to fail-open.
+        NUT_VMP_BEGIN_ULTRA("BrokerMain_SelfDebugGate");
         HANDLE selfDebugThread = (HANDLE)_beginthreadex(nullptr, 0, BrokerSelfDebugLoopThreadProc, nullptr, 0, nullptr);
         if (selfDebugThread) CloseHandle(selfDebugThread);
 
@@ -232,8 +258,10 @@ int main()
         if (!g_brokerSelfDebugActive.load())
         {
             printf("Could not establish exclusive debug access to this process (a debugger may already be attached) - refusing to start.\n");
+            NUT_VMP_END();
             return 1;
         }
+        NUT_VMP_END();
     }
     {
         HANDLE watchdogThread = (HANDLE)_beginthreadex(nullptr, 0, BrokerDebugWatchdogThreadProc, nullptr, 0, nullptr);
