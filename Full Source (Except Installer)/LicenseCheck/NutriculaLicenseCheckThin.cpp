@@ -429,8 +429,25 @@ int CoreIntegrityStatus();
 // logic this function always ran - nothing else about its behavior changes.
 inline int EffectiveTier()
 {
-    if (CoreIntegrityStatus() == -2) return -2;
+    const int core = CoreIntegrityStatus();
+    if (core == -2) return -2;
     if (!HandshakeValid()) return 0;
+    // 2026 hardening (project owner's explicit rule): before this process's
+    // very first real tier has ever been set, g_tierInitialized is still
+    // false and GetTierRaw() would silently hand back its own hardcoded
+    // TIER_FREE default - there is no genuine "previous tier" yet to fall
+    // back on, only a placeholder. Rather than let that placeholder look
+    // like a settled Free-tier verdict to every calculation function,
+    // report the SAME not-yet-settled value Check_Core_Integrity is
+    // already reporting right now (via `core`, computed once above - at
+    // this point it can only be -1, since -2 was handled just above and
+    // g_hsEverAttempted is always true whenever HandshakeValid() is, so 0
+    // cannot occur here). Once a real tier has been set at least once
+    // (g_tierInitialized true), this no longer applies: a later -1 (e.g. a
+    // brief reconnect hiccup) correctly falls through to AntiTamperCheckedTier
+    // below and keeps reporting the last genuinely verified tier, exactly
+    // as the project owner asked.
+    if (!g_tierInitialized.load()) return core;
     return AntiTamperCheckedTier(GetTierRaw());
 }
 
@@ -2713,7 +2730,17 @@ __attribute__((noinline)) double __stdcall Zenith_Star_137(double p1, double pt2
 // comment and every branch below is UNCHANGED from before the extraction;
 // only the function name is new, and Check_Core_Integrity just below is
 // now a one-line wrapper around it.
-int CoreIntegrityStatus() {
+//
+// Explicitly noinline (matching Check_Core_Integrity's own existing
+// attribute, and every one of the ~1020 calculation functions) rather
+// than left to the compiler: EffectiveTier() is itself `inline` and is
+// now called from every one of those ~1020 functions, so leaving this
+// uninlineable keeps this entire state machine living in exactly one
+// place in the binary instead of being silently smeared/duplicated
+// across up to 1020 inlined copies by whatever the optimizer happens to
+// decide - unpredictable either way, and worth pinning down explicitly
+// for a function this security-relevant.
+__attribute__((noinline)) int CoreIntegrityStatus() {
     if (g_fileLockedLatched.load()) return -5;   // FINAL: license file locked/blocked (antivirus, lock, access denied) - latched, EA must alert and remove itself
     if (!g_hsEverAttempted.load()) return 0;
     if (!g_hsLastAttemptOk.load()) return -2;   // most recent attempt was wrong - immediate, regardless of any earlier grant still technically valid
