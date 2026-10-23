@@ -31,6 +31,24 @@ if %ERRORLEVEL% NEQ 0 (
 set OUT_DIR=Builds
 if not exist %OUT_DIR% mkdir %OUT_DIR%
 
+REM ============================================================================
+REM VMProtect SDK hook (2026 hardening, project owner's explicit request) -
+REM ENABLED, mirroring build_LicenseCheck_x86.bat's own block. This DLL
+REM bakes a live copy of TRANSPORT_KEY (see NutriculaMachineId.cpp's own
+REM comment on that array) and contains the exact hardware-fingerprint
+REM collection/canonicalization/hashing logic that determines machine_id -
+REM both previously shipped with ZERO VMProtect protection, unlike the
+REM License Check DLL. VMProtectSDK.h and libVMProtectSDK32.a are expected
+REM in ..\LicenseCheck\ (the same copy already used by the LicenseCheck DLL
+REM build - nothing extra to place there), found via the added
+REM -I ..\LicenseCheck below.
+REM
+REM To go back to the old no-marker behavior, just delete/comment out both
+REM lines below.
+set VMP_DEFINE=-DNUTRICULA_VMPROTECT_BUILD
+set VMP_LINK=-L..\LicenseCheck -lVMProtectSDK32
+REM ============================================================================
+
 REM --- -s (strip) removes the symbol table from the output binary. WITHOUT
 REM     it, the names of INTERNAL (non-exported) functions stay embedded and
 REM     readable in the shipped file - verified directly: `nm`/`strings` on an
@@ -41,11 +59,11 @@ REM     .rsrc icon and the .pdata/.xdata exception-unwind tables fully intact
 REM     (all three verified), so runtime behavior is completely unchanged.
 REM     NOTE: this changes the binary's SHA-256, so the manifest MUST be
 REM     regenerated with NutriculaSignTool after rebuilding.
-%GPP32% -D_WIN32_WINNT=0x0601 -std=c++17 -O2 -s -shared -static -static-libgcc -static-libstdc++ ^
-    -I ..\MachineID ^
+%GPP32% -D_WIN32_WINNT=0x0601 %VMP_DEFINE% -std=c++17 -O2 -s -shared -static -static-libgcc -static-libstdc++ ^
+    -I ..\MachineID -I ..\LicenseCheck ^
     ..\MachineID\NutriculaMachineId.cpp ^
     -o %OUT_DIR%\MachineId32.dll ^
-    -lwbemuuid -lole32 -loleaut32 -ladvapi32 -lbcrypt -lcrypt32 -lwinhttp
+    %VMP_LINK% -lwbemuuid -lole32 -loleaut32 -ladvapi32 -lbcrypt -lcrypt32 -lwinhttp
 
 if %ERRORLEVEL% NEQ 0 (
     echo BUILD FAILED

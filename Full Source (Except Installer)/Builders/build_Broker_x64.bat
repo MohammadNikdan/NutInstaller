@@ -68,6 +68,28 @@ if %ERRORLEVEL% NEQ 0 (
 set OUT_DIR=Builds
 if not exist %OUT_DIR% mkdir %OUT_DIR%
 
+REM ============================================================================
+REM VMProtect SDK hook (2026 hardening, project owner's explicit request) -
+REM ENABLED, mirroring build_LicenseCheck_x64.bat's own block exactly.
+REM VMProtectSDK.h and libVMProtectSDK64.a are expected in ..\LicenseCheck\
+REM (same copy already used by the LicenseCheck DLL build - nothing extra to
+REM place there), found here via this script's existing -I ..\LicenseCheck.
+REM With this defined, NUT_VMP_BEGIN/_END in VMProtectMarkers.h compile to
+REM real calls for THIS build only - the Broker's own self-debug attach/
+REM gate/watchdog markers, plus the pre-existing EcdsaHelpers_VerifyP256,
+REM NamedPipeIpc_ConnectAndVerify, ServerSignatureVerify_LoadServerPublicKey
+REM and ServerSignatureVerify_Verify markers already present in shared code
+REM this exe compiles (previously no-ops here, since NUTRICULA_VMPROTECT_BUILD
+REM was never defined for the Broker before now) - all can be found and
+REM virtualized by name in VMProtect's Functions panel once this is run
+REM through VMProtect.
+REM
+REM To go back to the old no-marker behavior, just delete/comment out both
+REM lines below.
+set VMP_DEFINE=-DNUTRICULA_VMPROTECT_BUILD
+set VMP_LINK=-L..\LicenseCheck -lVMProtectSDK64
+REM ============================================================================
+
 REM --- Compile the Nutricula application icon (see
 REM     ..\Coordinator\NutriculaCoordinatorIcon.rc) into a linkable object,
 REM     so NutriculaLicenseBroker64.exe shows the Nutricula icon in Windows
@@ -125,7 +147,7 @@ REM     with no console attached - nothing else in this binary needs a
 REM     console. (The separate build_Broker_x64_DIAG.bat build intentionally
 REM     does NOT add this flag, so its [PipeAuth] diagnostic output stays
 REM     visible when run manually for troubleshooting.)
-%GPP64% -D_WIN32_WINNT=0x0601 -std=c++17 -O2 -s -mwindows -static -static-libgcc -static-libstdc++ ^
+%GPP64% -D_WIN32_WINNT=0x0601 %VMP_DEFINE% -std=c++17 -O2 -s -mwindows -static -static-libgcc -static-libstdc++ ^
     -I ..\Coordinator -I ..\LicenseCheck ^
     ..\Coordinator\NutriculaLicenseBroker.cpp ^
     ..\Coordinator\CoordinatorCore.cpp ^
@@ -137,7 +159,7 @@ REM     visible when run manually for troubleshooting.)
     ..\LicenseCheck\MachineIdBridge.cpp ^
     %RES_OBJ% ^
     -o %OUT_DIR%\NutriculaLicenseBroker64.exe ^
-    -lbcrypt -lcrypt32 -lwinhttp -ladvapi32 -lpsapi
+    %VMP_LINK% -lbcrypt -lcrypt32 -lwinhttp -ladvapi32 -lpsapi
 
 if %ERRORLEVEL% NEQ 0 (
     echo BUILD FAILED
