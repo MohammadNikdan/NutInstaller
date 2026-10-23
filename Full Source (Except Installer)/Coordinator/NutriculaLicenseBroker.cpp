@@ -20,6 +20,7 @@
 
 #include <windows.h>
 #include <process.h>
+#include <atomic>
 #include <cstdio>
 #include <cstring>
 
@@ -99,6 +100,107 @@ unsigned __stdcall ServeOneClient(void* param)
     return 0;
 }
 
+// =========================================================================
+// 2026 hardening (project owner's explicit request, after confirming via
+// code audit that a debugger attached directly to THIS process - not the
+// MetaTrader terminal - could still read/live-patch the Broker's own
+// in-memory state, e.g. its ClockAnchor/withinCooldown logic, even though
+// such tampering alone cannot forge a Tier 2 claim from nothing or break
+// the DLL's independent ~1-hour replay ceiling, both already verified by
+// tracing the exact canonical/signature format: a Reject canonical has no
+// machine_id field at all, so IsCanonicalBoundToThisMachine rejects it
+// outright, and the DLL computes its own forward-only "now" rather than
+// trusting anything the Broker reports).
+//
+// Same technique as the DLL's own self-debug gate (NutriculaLicenseCheckThin.cpp,
+// Vela_Boot_84/NUT_SelfDebugLoopThreadProc) - see that function's long
+// comment for the full mechanics and the real, accepted risk (a bug in
+// this event loop can hang or crash this process; DebugSetProcessKillOnExit
+// (FALSE) is what stops a problem here from doing anything worse than
+// that to THIS process alone).
+//
+// THE TRADEOFF, stated as plainly here as it was to the project owner
+// before this was written: unlike the DLL (where a fail-closed self-debug
+// check only blocks the ONE EA that calls it), this Broker is a single
+// shared background service - EVERY EA/chart in this Windows user session
+// gets its licensing answers through it. If self-debugging fails here and
+// this function refuses to start the Broker, NO EA using it gets any
+// fresh license answer at all until the Broker is relaunched (each EA's
+// own DLL-side pipe-fail tolerance/90-second cap and cached lease still
+// apply as they always did - this does not change what happens on the EA
+// side, only that the Broker will not come up to serve them while in this
+// state). This is the project owner's deliberate, informed choice,
+// prioritizing "never run unprotected" over "always be available."
+std::atomic<bool> g_brokerSelfDebugActive{false};
+std::atomic<bool> g_brokerSelfDebugAttachDone{false};
+
+unsigned __stdcall BrokerSelfDebugLoopThreadProc(void*)
+{
+    // Must happen before DebugActiveProcess - see this block's own
+    // comment above for exactly why.
+    DebugSetProcessKillOnExit(FALSE);
+
+    if (!DebugActiveProcess(GetCurrentProcessId()))
+    {
+        g_brokerSelfDebugAttachDone.store(true); // decided: failed
+        return 0;
+    }
+    g_brokerSelfDebugActive.store(true);
+    g_brokerSelfDebugAttachDone.store(true); // decided: succeeded
+
+    for (;;)
+    {
+        DEBUG_EVENT ev{};
+        if (!WaitForDebugEvent(&ev, INFINITE))
+        {
+            break; // should not happen while actively self-debugging; stop cleanly rather than spin
+        }
+
+        DWORD continueStatus = DBG_CONTINUE;
+        if (ev.dwDebugEventCode == EXCEPTION_DEBUG_EVENT)
+        {
+            // Never claim to have handled an exception - pass it through
+            // exactly as it would behave with no debugger present, so
+            // none of this process's own exception handling is ever
+            // silently altered by this self-debug session existing.
+            continueStatus = DBG_EXCEPTION_NOT_HANDLED;
+        }
+
+        ContinueDebugEvent(ev.dwProcessId, ev.dwThreadId, continueStatus);
+
+        if (ev.dwDebugEventCode == EXIT_PROCESS_DEBUG_EVENT)
+        {
+            break; // this process (itself) is exiting normally
+        }
+    }
+
+    g_brokerSelfDebugActive.store(false);
+    return 0;
+}
+
+// Runtime watchdog (defense-in-depth for AFTER the boot-time gate below
+// has already confirmed self-debugging is active): if that self-debug
+// session ever ends on its own later for any reason, external attachment
+// becomes possible again - this notices that specific condition
+// (g_brokerSelfDebugActive having gone back to false after genuinely
+// having been true) and ends the process rather than silently continuing
+// to run unprotected.
+unsigned __stdcall BrokerDebugWatchdogThreadProc(void*)
+{
+    bool wasActive = false;
+    for (;;)
+    {
+        Sleep(1000);
+        const bool isActive = g_brokerSelfDebugActive.load();
+        if (wasActive && !isActive)
+        {
+            printf("Self-debug session ended unexpectedly - exiting rather than running unprotected.\n");
+            TerminateProcess(GetCurrentProcess(), 0xDEADBEEF);
+        }
+        wasActive = isActive;
+    }
+}
+
 } // namespace
 
 int main()
@@ -111,6 +213,31 @@ int main()
     {
         printf("Another Broker instance is already running - exiting.\n");
         return 1;
+    }
+
+    // 2026 hardening: fail closed if this process cannot become its own
+    // debugger - see the long comment above BrokerSelfDebugLoopThreadProc
+    // for the full mechanics and the explicit availability tradeoff this
+    // accepts. DebugActiveProcess itself resolves almost immediately; this
+    // bounded ~1 second spin only covers ordinary thread-scheduling delay.
+    {
+        HANDLE selfDebugThread = (HANDLE)_beginthreadex(nullptr, 0, BrokerSelfDebugLoopThreadProc, nullptr, 0, nullptr);
+        if (selfDebugThread) CloseHandle(selfDebugThread);
+
+        for (int i = 0; i < 100 && !g_brokerSelfDebugAttachDone.load(); ++i)
+        {
+            Sleep(10);
+        }
+
+        if (!g_brokerSelfDebugActive.load())
+        {
+            printf("Could not establish exclusive debug access to this process (a debugger may already be attached) - refusing to start.\n");
+            return 1;
+        }
+    }
+    {
+        HANDLE watchdogThread = (HANDLE)_beginthreadex(nullptr, 0, BrokerDebugWatchdogThreadProc, nullptr, 0, nullptr);
+        if (watchdogThread) CloseHandle(watchdogThread);
     }
 
     g_core.Start();
