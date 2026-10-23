@@ -67,6 +67,18 @@ constexpr int TIER_FILE_LOCKED = -5;
 constexpr int PENDING_IDLE = -1;
 constexpr int PENDING_COMM_FAIL_RETRYING = -2;
 constexpr int PENDING_REFRESH_IN_PROGRESS = -3;
+// 2026 hardening (Layer 2 - minimum continuous Broker uptime): reported
+// instead of ANY trusted answer (Lease or canonical, cached or freshly
+// verified) while this process has been alive for less than
+// BROKER_WARMUP_SEC - see that constant's own comment in CoordinatorCore.cpp.
+// The thin DLL maps this to the existing PENDING_IDLE/-1 state (free,
+// unlimited patience) ONLY on the very first poll cycle of a given EA/DLL
+// process's lifetime, and to the existing PENDING_COMM_FAIL_RETRYING/-2
+// bucket for any later cycle - see Pavo_Sync_85 in
+// NutriculaLicenseCheckThin.cpp. This value crosses the wire (it is just
+// another int32_t in StatusReplyMsg.pending), so it must stay numerically
+// identical on both sides.
+constexpr int PENDING_WARMING_UP = -4;
 
 struct PublishedState
 {

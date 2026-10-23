@@ -226,6 +226,34 @@ constexpr long long EA_ACTIVITY_WINDOW_SEC = FREE_CHECKIN_INTERVAL_SEC + 300; //
 // right now.
 constexpr long long IDLE_SELF_EXIT_SEC = 3600; // 60:00
 
+// Minimum continuous Broker uptime before ANY trusted answer (2026
+// hardening, Layer 2). Anchored to m_processStartedAt - this process's own
+// internal start timestamp (EstimatedNow() at the top of Start()), which is
+// not reachable or forgeable from outside the process - rather than to
+// anything persisted on disk or signalled by a client, so restarting the
+// process is the ONLY way to reset this clock, and restarting it is
+// exactly the behaviour being made expensive here.
+//
+// Without this, "end-task the Broker, relaunch it, ask again" was
+// essentially free: withinCooldown (just below) can answer straight from
+// the locally cached lease file with no network round-trip at all, and
+// even a real refresh only takes as long as one request. Requiring
+// BROKER_WARMUP_SEC of continuous uptime first means a kill/relaunch cycle
+// now costs that same wait every single time - and, combined with the
+// artifact integrity check having been moved (2026 hardening, see its own
+// comment above the withinCooldown split) to run unconditionally on every
+// iteration this process lives through, that wait is also no longer free
+// of scrutiny: the window this constant forces open is exactly the window
+// in which that check (and AntiTamperCheckedTier's own
+// g_pipeFailStreak-driven TIER_FAILED, DLL-side) gets to run.
+//
+// Kept short and UX-friendly on purpose (not 10-15s): a real EA/user must
+// also sit through this on every ordinary, legitimate cold start (the
+// Broker is deliberately NOT kept running in the background between
+// sessions - see IDLE_SELF_EXIT_SEC above), so it trades off against the
+// project owner's own explicit choice of a fully on-demand lifecycle.
+constexpr long long BROKER_WARMUP_SEC = 6;
+
 // -2 diagnostic reporting (2026, project owner's explicit request): how
 // often THIS SAME locally-decided failure (see ReportFailureBestEffort's own
 // comment for exactly which two reasons this covers) is allowed to fire a
@@ -965,6 +993,25 @@ void CoordinatorCore::WorkerLoop()
 
         long long now = EstimatedNow();
 
+        // Layer 2 (2026 hardening) - minimum continuous Broker uptime, see
+        // BROKER_WARMUP_SEC's own comment above. Checked first, before any
+        // of Layer 1's clone detection or withinCooldown's own cache check,
+        // so NOTHING below this point - not the locally cached lease via
+        // withinCooldown, not a freshly completed network refresh - can
+        // ever be reached, let alone trusted, until this process has been
+        // continuously alive for at least BROKER_WARMUP_SEC. m_processStartedAt
+        // is set once, in Start(), from this same process's own
+        // EstimatedNow() - nothing reachable from a pipe client can move it
+        // backward or forward, so the only way to pass this gate sooner is
+        // to actually keep the process running that long.
+        if (now - m_processStartedAt < BROKER_WARMUP_SEC)
+        {
+            m_state.pending.store(PENDING_WARMING_UP);
+            ResetEvent(m_wakeEvent);
+            WaitForSingleObject(m_wakeEvent, 500);
+            continue;
+        }
+
         // Layer 1 (cheap, local-only clone/copy detection - see the
         // accompanying design discussion): before trusting a locally
         // cached lease AT ALL, confirm it was actually issued for THIS
@@ -1025,146 +1072,47 @@ void CoordinatorCore::WorkerLoop()
             !local.licenseCurrentlyExpired && local.requestedAt != 0 &&
             (now - local.requestedAt) < randomOffset;
 
-        if (withinCooldown)
+        // EA-activity gate (2026 hardening): computed here, before the
+        // withinCooldown split, because it now ALSO gates the artifact
+        // integrity check immediately below - not just the idle-skip
+        // logic further down in the refresh branch (which reuses this
+        // same value; see its own comment there).
+        long long lastEaActivity = m_lastEaActivityAt.load();
+        bool eaActiveRecently = (lastEaActivity != 0) &&
+            ((EstimatedNow() - lastEaActivity) <= EA_ACTIVITY_WINDOW_SEC);
+
+        // Artifact integrity check (architecture points 45/51/96/112) -
+        // 2026 hardening: MOVED here, to the very top of every loop
+        // iteration, so it runs UNCONDITIONALLY whenever an EA has been
+        // active recently - regardless of withinCooldown. It used to run
+        // only inside the "needs a real refresh" branch below, as close to
+        // the actual network request as possible; that meant a tampered
+        // EA/DLL/Broker/Machine-ID-DLL (any hash mismatch against the
+        // signed manifest) stayed completely invisible for as long as
+        // withinCooldown kept answering TIER_LICENSED straight from the
+        // locally cached lease file without ever reaching this code - up
+        // to MAX_RANDOM_OFFSET_SEC (randomOffset) each time, repeatable
+        // indefinitely by anyone willing to keep this process from ever
+        // living long enough to need a real refresh. The check itself is
+        // purely local (file hashing, process/module inspection - no
+        // network call), so running it every single iteration costs
+        // nothing extra, and a mismatch now fails the very iteration that
+        // discovers it instead of waiting for a refresh to become due.
+        //
+        // `manifest` and the f* Evidence strings are declared at this
+        // outer scope (not inside the `if` just below) because the
+        // refresh-request-building code further down the loop - both the
+        // free-tier and the licensed-tier paths - still needs
+        // manifest.buildId and all eight f* values, whichever way
+        // withinCooldown comes out.
+        ManifestVerify::ManifestData manifest;
+        std::string fBuildId, fEaKind, fEaHash, fDllHash, fTerminalMachineIdHash, fHostBits, fBrokerHash, fHostMachineIdHash;
+        if (eaActiveRecently)
         {
-            m_state.tier.store(TIER_LICENSED);
-            m_state.pending.store(PENDING_IDLE);
-            std::lock_guard<std::mutex> lock(m_state.resultMutex);
-            m_state.lastCanonical = local.canonical;
-            m_state.lastSignatureB64 = local.signatureB64;
-        }
-        else
-        {
-            // This process is the ONLY Coordinator (architecture point 6/63)
-            // - no claim/heartbeat/stale-owner logic needed at all, unlike
-            // the old multi-process DLL design. Just do the refresh.
-            m_state.pending.store(PENDING_REFRESH_IN_PROGRESS);
-
-            // Anchored wait applies ONLY to a real, matching lease that has
-            // its own deterministic schedule: wait until requested_at + the
-            // token-derived random offset, anchored to the lease's FIXED,
-            // persisted requested_at.
-            //
-            // BUG FIX (2026): this used to also run for the lease-free and
-            // Layer-1-mismatch cases, anchored to a MOVING `now`
-            // (target = now + MIN_RANDOM_OFFSET_SEC). Because `now` is
-            // recomputed at the top of every iteration, waitSeconds stayed
-            // perpetually ~MIN_RANDOM_OFFSET_SEC, so those cases waited,
-            // continued, and re-waited forever - NEVER falling through to the
-            // EA-activity gate, the free-tier telemetry (free_checkin), or the
-            // explicit TIER_FREE publish below. Two real consequences: (a)
-            // free_checkin was dead code - a free install never reported usage
-            // at all; (b) when a Premium lease expired and was deleted above,
-            // this became the lease-free case, so m_state.tier was never
-            // updated and the Coordinator kept publishing the STALE
-            // TIER_LICENSED + its now-expired signed canonical indefinitely.
-            // The lease-free / mismatch cases must fall straight through; their
-            // pacing comes from the EA-activity gate's own wait, the free-tier
-            // block's wait, and the terminal pause at the bottom of the loop.
-            if (local.hasLease && machineMatches)
-            {
-                long long target = local.requestedAt + randomOffset;
-                // Back-off after a soft too_early Reject (see
-                // SOFT_REJECT_* above) - never earlier than the lease's own
-                // persisted schedule, only later.
-                if (m_softRetryNotBefore > target) target = m_softRetryNotBefore;
-                long long waitSeconds = target - EstimatedNow();
-                if (waitSeconds > 0)
-                {
-                    // Wait, but wake up early (and re-evaluate from the top) if
-                    // RequestRefreshIfDue() signals us - architecture point 99:
-                    // this does NOT itself start an extra request, it only
-                    // shortens how long we wait before the SAME single-owner
-                    // loop re-checks whether a refresh is genuinely due yet.
-                    ResetEvent(m_wakeEvent);
-                    WaitForSingleObject(m_wakeEvent, static_cast<DWORD>(waitSeconds * 1000));
-                    continue;
-                }
-            }
-
-            // Back-off after an ordinary Reject / a failed round (see the pacing
-            // block at the end of the licensed branch). Checked before anything
-            // expensive (artifact hashing, machine IDs, network). Waits in short
-            // slices so the idle-exit logic below still gets to run.
-            if (m_rejectRetryNotBefore != 0 && local.requestedAt == m_rejectForLeaseRequestedAt)
-            {
-                long long gateWait = m_rejectRetryNotBefore - EstimatedNow();
-                if (gateWait > 0)
-                {
-                    if (gateWait > 30) gateWait = 30;
-                    ResetEvent(m_wakeEvent);
-                    WaitForSingleObject(m_wakeEvent, static_cast<DWORD>(gateWait) * 1000);
-                    continue;
-                }
-            }
-
-            // EA-activity gate (2026): everything from here down is either
-            // a real license verify (Premium/Transfer) or free-tier
-            // telemetry - both only mean something, and were only ever
-            // meant to represent, actual USE of the product right now.
-            // Previously this loop kept talking to the server on its own
-            // clock forever, even for an install where the EA/DLL hasn't
-            // been loaded into a running MetaTrader in days or weeks -
-            // counted as "active" free-tier usage, and kept spending a
-            // verify round-trip on a Premium/Transfer license nobody is
-            // even using at the moment. Skip the whole refresh attempt
-            // (no artifact check, no network call at all - not even
-            // free-tier telemetry) unless the EA has actually talked to us
-            // over the pipe (see NoteEaActivity, called from
-            // ServeOneClient in both the Service and the Broker) within
-            // the last EA_ACTIVITY_WINDOW_SEC. That window is comfortably
-            // longer than either tier's own natural check-in cadence, so a
-            // genuinely-running EA (which polls far more often than that)
-            // always has time to have pinged us before this gate is
-            // reached - this never produces a false "idle" read for real,
-            // active usage, only for installs nobody is currently running.
-            long long lastEaActivity = m_lastEaActivityAt.load();
-            bool eaActiveRecently = (lastEaActivity != 0) &&
-                ((EstimatedNow() - lastEaActivity) <= EA_ACTIVITY_WINDOW_SEC);
-            if (!eaActiveRecently)
-            {
-                // Idle self-exit (2026) - see IDLE_SELF_EXIT_SEC's own
-                // comment. Idleness is measured from the last real EA
-                // activity when there has been any, or from when THIS
-                // process started when there has been none yet at all -
-                // never from the Unix epoch (lastEaActivity==0 must not look
-                // like "idle since 1970"), so a freshly (re)launched
-                // Coordinator always gets one full IDLE_SELF_EXIT_SEC window
-                // to actually be used before it can ever exit.
-                long long idleSinceBasis = (lastEaActivity != 0) ? lastEaActivity : m_processStartedAt;
-                long long idleSeconds = EstimatedNow() - idleSinceBasis;
-                if (idleSeconds >= IDLE_SELF_EXIT_SEC)
-                {
-                    printf("No EA activity for over an hour - exiting idle. "
-                           "The DLL will relaunch this automatically when needed.\n");
-                    ExitProcess(0);
-                }
-
-                m_state.pending.store(PENDING_IDLE);
-                ResetEvent(m_wakeEvent);
-                // A short, fixed wait (rather than reusing the target/
-                // waitSeconds math above, which is anchored to a
-                // requestedAt that isn't moving while we're skipping
-                // network activity) - just re-checks "has the EA shown up
-                // yet" periodically. NoteEaActivity also signals
-                // m_wakeEvent directly, so a newly-opened EA is picked up
-                // immediately rather than waiting out this timeout anyway.
-                WaitForSingleObject(m_wakeEvent, 30000);
-                continue;
-            }
-
-            // Artifact integrity check (architecture points 45/51/96/112) -
-            // performed as close to the actual network request as possible,
-            // BEFORE any request is sent. A failure here means "no lease
-            // should be issued this cycle" - it is explicitly NOT the same
-            // condition as TIER_FAILED (-10, which means specifically "10
-            // attempts, no trustworthy server response" - point 113). An
-            // integrity failure simply skips this refresh attempt entirely
-            // (no network call made at all) and leaves whatever tier was
-            // already published untouched, defaulting to TIER_FREE only if
-            // nothing was ever published.
+            // See the comment above this if-block for why this check now
+            // runs unconditionally here instead of just before a refresh.
             std::wstring ownDir = GetOwnModuleDirectory();
-            ManifestVerify::ManifestData manifest = ManifestVerify::LoadAndVerifyManifest(ownDir);
+            manifest = ManifestVerify::LoadAndVerifyManifest(ownDir);
             // Both 32-bit and 64-bit builds of the Coordinator (the Broker)
             // genuinely ship to customers (32-bit Windows tablets are a real,
             // supported case), so the manifest carries a separate expected
@@ -1365,21 +1313,152 @@ void CoordinatorCore::WorkerLoop()
             // Evidence message all carry byte-identical strings (point 88:
             // the Evidence must be bound to this very measurement, never to
             // a separately computed - and therefore replayable - one).
-            const std::string fBuildId = manifest.buildId;
-            const std::string fEaKind = (reportedEvidence.mqlMajor == 4) ? "mt4" : "mt5";
-            const std::string fEaHash = ToLowerAscii(reportedEvidence.eaHash);
-            const std::string fDllHash = ToLowerAscii(reportedEvidence.dllHash);
+            fBuildId = manifest.buildId;
+            fEaKind = (reportedEvidence.mqlMajor == 4) ? "mt4" : "mt5";
+            fEaHash = ToLowerAscii(reportedEvidence.eaHash);
+            fDllHash = ToLowerAscii(reportedEvidence.dllHash);
             // "-" when that process genuinely has no Machine ID DLL loaded,
             // which is the normal case (nothing in the thin DLL loads it).
             // An unloaded file cannot affect anything, so there is nothing to
             // measure and nothing for the server to compare.
-            const std::string fTerminalMachineIdHash =
+            fTerminalMachineIdHash =
                 (reportedEvidence.terminalMachineIdHash == "-")
                     ? std::string("-")
                     : ToLowerAscii(reportedEvidence.terminalMachineIdHash);
-            const std::string fHostBits = hostBits;
-            const std::string fBrokerHash = ToLowerAscii(hostEvidence.brokerHash);
-            const std::string fHostMachineIdHash = ToLowerAscii(hostEvidence.machineIdHash);
+            fHostBits = hostBits;
+            fBrokerHash = ToLowerAscii(hostEvidence.brokerHash);
+            fHostMachineIdHash = ToLowerAscii(hostEvidence.machineIdHash);
+        }
+
+        if (withinCooldown)
+        {
+            m_state.tier.store(TIER_LICENSED);
+            m_state.pending.store(PENDING_IDLE);
+            std::lock_guard<std::mutex> lock(m_state.resultMutex);
+            m_state.lastCanonical = local.canonical;
+            m_state.lastSignatureB64 = local.signatureB64;
+        }
+        else
+        {
+            // This process is the ONLY Coordinator (architecture point 6/63)
+            // - no claim/heartbeat/stale-owner logic needed at all, unlike
+            // the old multi-process DLL design. Just do the refresh.
+            m_state.pending.store(PENDING_REFRESH_IN_PROGRESS);
+
+            // Anchored wait applies ONLY to a real, matching lease that has
+            // its own deterministic schedule: wait until requested_at + the
+            // token-derived random offset, anchored to the lease's FIXED,
+            // persisted requested_at.
+            //
+            // BUG FIX (2026): this used to also run for the lease-free and
+            // Layer-1-mismatch cases, anchored to a MOVING `now`
+            // (target = now + MIN_RANDOM_OFFSET_SEC). Because `now` is
+            // recomputed at the top of every iteration, waitSeconds stayed
+            // perpetually ~MIN_RANDOM_OFFSET_SEC, so those cases waited,
+            // continued, and re-waited forever - NEVER falling through to the
+            // EA-activity gate, the free-tier telemetry (free_checkin), or the
+            // explicit TIER_FREE publish below. Two real consequences: (a)
+            // free_checkin was dead code - a free install never reported usage
+            // at all; (b) when a Premium lease expired and was deleted above,
+            // this became the lease-free case, so m_state.tier was never
+            // updated and the Coordinator kept publishing the STALE
+            // TIER_LICENSED + its now-expired signed canonical indefinitely.
+            // The lease-free / mismatch cases must fall straight through; their
+            // pacing comes from the EA-activity gate's own wait, the free-tier
+            // block's wait, and the terminal pause at the bottom of the loop.
+            if (local.hasLease && machineMatches)
+            {
+                long long target = local.requestedAt + randomOffset;
+                // Back-off after a soft too_early Reject (see
+                // SOFT_REJECT_* above) - never earlier than the lease's own
+                // persisted schedule, only later.
+                if (m_softRetryNotBefore > target) target = m_softRetryNotBefore;
+                long long waitSeconds = target - EstimatedNow();
+                if (waitSeconds > 0)
+                {
+                    // Wait, but wake up early (and re-evaluate from the top) if
+                    // RequestRefreshIfDue() signals us - architecture point 99:
+                    // this does NOT itself start an extra request, it only
+                    // shortens how long we wait before the SAME single-owner
+                    // loop re-checks whether a refresh is genuinely due yet.
+                    ResetEvent(m_wakeEvent);
+                    WaitForSingleObject(m_wakeEvent, static_cast<DWORD>(waitSeconds * 1000));
+                    continue;
+                }
+            }
+
+            // Back-off after an ordinary Reject / a failed round (see the pacing
+            // block at the end of the licensed branch). Checked before anything
+            // expensive (artifact hashing, machine IDs, network). Waits in short
+            // slices so the idle-exit logic below still gets to run.
+            if (m_rejectRetryNotBefore != 0 && local.requestedAt == m_rejectForLeaseRequestedAt)
+            {
+                long long gateWait = m_rejectRetryNotBefore - EstimatedNow();
+                if (gateWait > 0)
+                {
+                    if (gateWait > 30) gateWait = 30;
+                    ResetEvent(m_wakeEvent);
+                    WaitForSingleObject(m_wakeEvent, static_cast<DWORD>(gateWait) * 1000);
+                    continue;
+                }
+            }
+
+            // EA-activity gate (2026): everything from here down is either
+            // a real license verify (Premium/Transfer) or free-tier
+            // telemetry - both only mean something, and were only ever
+            // meant to represent, actual USE of the product right now.
+            // Previously this loop kept talking to the server on its own
+            // clock forever, even for an install where the EA/DLL hasn't
+            // been loaded into a running MetaTrader in days or weeks -
+            // counted as "active" free-tier usage, and kept spending a
+            // verify round-trip on a Premium/Transfer license nobody is
+            // even using at the moment. Skip the whole refresh attempt
+            // (no artifact check, no network call at all - not even
+            // free-tier telemetry) unless the EA has actually talked to us
+            // over the pipe (see NoteEaActivity, called from
+            // ServeOneClient in both the Service and the Broker) within
+            // the last EA_ACTIVITY_WINDOW_SEC. That window is comfortably
+            // longer than either tier's own natural check-in cadence, so a
+            // genuinely-running EA (which polls far more often than that)
+            // always has time to have pinged us before this gate is
+            // reached - this never produces a false "idle" read for real,
+            // active usage, only for installs nobody is currently running.
+            // lastEaActivity / eaActiveRecently are now computed once,
+            // above the withinCooldown split (2026 hardening), because
+            // the artifact integrity check up there needs the same
+            // value. Reused here unchanged.
+            if (!eaActiveRecently)
+            {
+                // Idle self-exit (2026) - see IDLE_SELF_EXIT_SEC's own
+                // comment. Idleness is measured from the last real EA
+                // activity when there has been any, or from when THIS
+                // process started when there has been none yet at all -
+                // never from the Unix epoch (lastEaActivity==0 must not look
+                // like "idle since 1970"), so a freshly (re)launched
+                // Coordinator always gets one full IDLE_SELF_EXIT_SEC window
+                // to actually be used before it can ever exit.
+                long long idleSinceBasis = (lastEaActivity != 0) ? lastEaActivity : m_processStartedAt;
+                long long idleSeconds = EstimatedNow() - idleSinceBasis;
+                if (idleSeconds >= IDLE_SELF_EXIT_SEC)
+                {
+                    printf("No EA activity for over an hour - exiting idle. "
+                           "The DLL will relaunch this automatically when needed.\n");
+                    ExitProcess(0);
+                }
+
+                m_state.pending.store(PENDING_IDLE);
+                ResetEvent(m_wakeEvent);
+                // A short, fixed wait (rather than reusing the target/
+                // waitSeconds math above, which is anchored to a
+                // requestedAt that isn't moving while we're skipping
+                // network activity) - just re-checks "has the EA shown up
+                // yet" periodically. NoteEaActivity also signals
+                // m_wakeEvent directly, so a newly-opened EA is picked up
+                // immediately rather than waiting out this timeout anyway.
+                WaitForSingleObject(m_wakeEvent, 30000);
+                continue;
+            }
+
             // License file present but blocked (lock / access denied / antivirus):
             // TIER_FILE_LOCKED (-5). Not an integrity verdict, so no -2 and no
             // server report; no network request is made. Re-evaluated every
