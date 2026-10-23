@@ -8139,14 +8139,28 @@ using NtQueryInformationProcessFn = LONG(WINAPI*)(HANDLE, ULONG, PVOID, ULONG, P
 
 bool IsDebuggerAttached()
 {
+    // Marked (2026 hardening, found during a re-check of marker coverage
+    // triggered by IsKernelDebuggerActive's own addition above - the exact
+    // same reasoning applies here, and this function pre-dates that work:
+    // it is called from two already-marked decision points
+    // (AntiTamperCheckedTier's reverify block and
+    // NUT_WatchdogThreadProc_Check), but a single static patch to THIS
+    // shared function alone, making it always return false, would defeat
+    // user-mode debugger detection at both of them at once regardless of
+    // how well the call sites themselves are virtualized. Five linear
+    // exits (four early "return true", one final "return false", no
+    // nesting beyond Method 3's single inner if and the fixed 1000-
+    // iteration timing loop in Method 4), each covered by its own END.
+    // Rate-limited by both callers (never OnTick), so ULTRA is free here.
+    NUT_VMP_BEGIN_ULTRA("IsDebuggerAttached");
     // Method 1: the standard, well-known API - trivially patched around by
     // itself, but still catches naive attach attempts and unmodified tools.
-    if (IsDebuggerPresent()) return true;
+    if (IsDebuggerPresent()) { NUT_VMP_END(); return true; }
 
     // Method 2: remote debugger check - catches some debuggers Method 1 misses
     // (e.g. certain kernel-assisted or "stealth" debuggers).
     BOOL remoteDebugger = FALSE;
-    if (CheckRemoteDebuggerPresent(GetCurrentProcess(), &remoteDebugger) && remoteDebugger) return true;
+    if (CheckRemoteDebuggerPresent(GetCurrentProcess(), &remoteDebugger) && remoteDebugger) { NUT_VMP_END(); return true; }
 
     // Method 3: NtQueryInformationProcess(ProcessDebugPort) - reads a lower-
     // level kernel structure than the two API calls above, so a debugger
@@ -8168,6 +8182,7 @@ bool IsDebuggerAttached()
             if (ntQueryInformationProcess(GetCurrentProcess(), ProcessDebugPort,
                 &debugPort, sizeof(debugPort), &returned) == 0 && debugPort != 0)
             {
+                NUT_VMP_END();
                 return true;
             }
         }
@@ -8187,9 +8202,99 @@ bool IsDebuggerAttached()
     for (int i = 0; i < 1000; i++) dummy += i;
     QueryPerformanceCounter(&end);
     double elapsedMs = static_cast<double>(end.QuadPart - start.QuadPart) * 1000.0 / static_cast<double>(freq.QuadPart);
-    if (elapsedMs > 50.0) return true;
+    if (elapsedMs > 50.0) { NUT_VMP_END(); return true; }
 
+    NUT_VMP_END();
     return false;
+}
+
+// ============================================================================
+// Kernel-mode debugger detection (2026 hardening, follow-up to the project
+// owner's explicit request after confirming VMProtect's own built-in
+// debugger-detection option cannot be split into "kernel-mode only" - it is
+// either off, user-mode, or user-mode+kernel-mode together, and the
+// user-mode half of that would conflict with this process's own self-debug
+// session (see NUT_SelfDebugLoopThreadProc's comment: from the moment this
+// process makes itself its own debugger, every standard user-mode
+// debugger-presence signal correctly reads "yes" forever, which a generic
+// user-mode checker - ours or VMProtect's - cannot distinguish from an
+// attacker). VMProtect's detection was therefore left off entirely for
+// this build, and kernel-mode coverage is implemented here instead,
+// independently of both self-debug and IsDebuggerAttached() above.
+//
+// WHY THIS IS A SEPARATE, NECESSARY CHECK: everything built so far -
+// DebugActiveProcess's exclusivity lock, IsDebuggerAttached()'s four
+// methods - only concerns USER-MODE debuggers (x64dbg, OllyDbg, WinDbg in
+// user-mode attach, Cheat Engine). A KERNEL debugger (WinDbg attached via
+// kernel debugging, e.g. after `bcdedit /debug on` + reboot) operates
+// entirely below the user-mode Windows debugging API this process's self-
+// debug relies on - it can read and write this process's memory directly
+// from kernel context, without ever calling DebugActiveProcess or being
+// subject to its one-debugger-per-process exclusivity rule at all. Self-
+// debugging being active says nothing whatsoever about whether a kernel
+// debugger is also present.
+//
+// SystemKernelDebuggerInformation (class 35) is the standard, long-stable
+// NtQuerySystemInformation class used for exactly this check - present and
+// behaving identically from Windows XP through 11 - resolved via
+// GetProcAddress rather than linking ntdll.lib directly, matching this
+// project's existing pattern (see IsDebuggerAttached's own Method 3,
+// immediately above, for NtQueryInformationProcess).
+// ============================================================================
+
+using NtQuerySystemInformationFn = LONG(WINAPI*)(ULONG, PVOID, ULONG, PULONG);
+
+struct NUT_SystemKernelDebuggerInformation
+{
+    BOOLEAN KernelDebuggerEnabled;
+    BOOLEAN KernelDebuggerNotPresent;
+};
+
+bool IsKernelDebuggerActive()
+{
+    // Marked (2026 hardening, found during a re-check of marker coverage
+    // for everything added this session, not just the call sites). This
+    // function is called from FOUR separate decision points (two in this
+    // DLL, two in the Broker) - every one of those call sites is already
+    // individually marked (Vela_Boot_84_KernelDebugGate,
+    // NUT_WatchdogThreadProc_Check, and their Broker equivalents), but a
+    // single static patch to THIS shared function alone - making it always
+    // return false - would silently defeat kernel-mode detection at all
+    // four of them at once. That is a bigger prize for a static patch than
+    // any one call site, so the primitive itself is worth marking too, not
+    // just its callers. Four linear exits (no nesting/loops), each covered
+    // by its own END below - same complexity class as IsCanonicalBoundToThisMachine
+    // just above, now correctly paired.
+    NUT_VMP_BEGIN_ULTRA("IsKernelDebuggerActive");
+    HMODULE ntdll = GetModuleHandleA("ntdll.dll");
+    if (!ntdll) { NUT_VMP_END(); return false; }
+
+    auto ntQuerySystemInformation = reinterpret_cast<NtQuerySystemInformationFn>(
+        GetProcAddress(ntdll, "NtQuerySystemInformation"));
+    if (!ntQuerySystemInformation) { NUT_VMP_END(); return false; }
+
+    const ULONG SystemKernelDebuggerInformation = 35;
+    NUT_SystemKernelDebuggerInformation info{};
+    ULONG returned = 0;
+    if (ntQuerySystemInformation(SystemKernelDebuggerInformation, &info, sizeof(info), &returned) != 0)
+    {
+        // Query itself failed (should not normally happen - this class has
+        // existed since XP) - fail open on the QUERY only, consistent with
+        // IsDebuggerAttached()'s own per-method tolerance above; a failed
+        // query is not evidence of a kernel debugger, and a false positive
+        // here would deny a paying customer their license.
+        NUT_VMP_END();
+        return false;
+    }
+
+    // KernelDebuggerEnabled alone only means kernel debugging support is
+    // switched on (e.g. a machine where bcdedit /debug on was set at some
+    // point) - that alone is not evidence of an active attacker.
+    // KernelDebuggerNotPresent == FALSE is what confirms a kernel debugger
+    // is actually attached right now. Both together are required.
+    auto __nut_vmp_r = info.KernelDebuggerEnabled && !info.KernelDebuggerNotPresent;
+    NUT_VMP_END();
+    return __nut_vmp_r;
 }
 
 // ============================================================================
@@ -8233,20 +8338,28 @@ bool ComputeOwnTextSectionHash(unsigned char outDigest[32])
     // AntiTamperCheckedTier (via IsCodeSectionTampered), never from
     // OnTick's hot path directly - safe for heavy protection. Plain
     // Virtualization (not Ultra/Mutation) keeps output size reasonable.
+    // AUDIT FIX (2026, found during a re-check of ALL marker pairing in
+    // this file, not specific to this function): this BEGIN had FIVE early
+    // returns below it with no matching END - a genuine pre-existing
+    // pairing bug, not merely "unmarked code". Every exit now gets its own
+    // END, matching the pairing discipline used everywhere else in this
+    // file (see e.g. GcmProtect/GcmUnprotect in NutriculaMachineId.cpp for
+    // the same multi-exit pattern done correctly).
     NUT_VMP_BEGIN_ULTRA("ComputeOwnTextSectionHash");
     HMODULE hSelf = nullptr;
     if (!GetModuleHandleExW(
             GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
             reinterpret_cast<LPCWSTR>(&ComputeOwnTextSectionHash), &hSelf) || !hSelf)
     {
+        NUT_VMP_END();
         return false;
     }
 
     auto base = reinterpret_cast<const unsigned char*>(hSelf);
     auto dosHeader = reinterpret_cast<const IMAGE_DOS_HEADER*>(base);
-    if (dosHeader->e_magic != IMAGE_DOS_SIGNATURE) return false;
+    if (dosHeader->e_magic != IMAGE_DOS_SIGNATURE) { NUT_VMP_END(); return false; }
     auto ntHeaders = reinterpret_cast<const IMAGE_NT_HEADERS*>(base + dosHeader->e_lfanew);
-    if (ntHeaders->Signature != IMAGE_NT_SIGNATURE) return false;
+    if (ntHeaders->Signature != IMAGE_NT_SIGNATURE) { NUT_VMP_END(); return false; }
 
     const IMAGE_SECTION_HEADER* textSection = nullptr;
     const IMAGE_SECTION_HEADER* sections = IMAGE_FIRST_SECTION(ntHeaders);
@@ -8254,13 +8367,13 @@ bool ComputeOwnTextSectionHash(unsigned char outDigest[32])
     {
         if (memcmp(sections[i].Name, ".text", 6) == 0) { textSection = &sections[i]; break; }
     }
-    if (!textSection || textSection->Misc.VirtualSize == 0) return false;
+    if (!textSection || textSection->Misc.VirtualSize == 0) { NUT_VMP_END(); return false; }
 
     const unsigned char* textStart = base + textSection->VirtualAddress;
     const ULONG textSize = textSection->Misc.VirtualSize;
 
     BCRYPT_ALG_HANDLE hashAlg = nullptr;
-    if (BCryptOpenAlgorithmProvider(&hashAlg, BCRYPT_SHA256_ALGORITHM, nullptr, 0) < 0) return false;
+    if (BCryptOpenAlgorithmProvider(&hashAlg, BCRYPT_SHA256_ALGORITHM, nullptr, 0) < 0) { NUT_VMP_END(); return false; }
     BCRYPT_HASH_HANDLE hash = nullptr;
     bool hashOk = false;
     if (BCryptCreateHash(hashAlg, &hash, nullptr, 0, nullptr, 0, 0) >= 0)
@@ -8621,12 +8734,20 @@ bool IsCanonicalBoundToThisMachine(const std::string& canonicalMachineId,
 {
     // Called only from AntiTamperCheckedTier's rate-limited slow path and
     // from the Poll-response handler - both periodic, never OnTick.
+    //
+    // AUDIT FIX (2026, found during a re-check of ALL marker pairing in
+    // this file, not specific to this function): this BEGIN had THREE
+    // early returns below it with no matching END - a genuine pre-
+    // existing pairing bug. Worth noting given how security-critical this
+    // particular function is (it is THE check that stops a Lease issued
+    // for one machine from being accepted on another): every exit now
+    // gets its own END.
     NUT_VMP_BEGIN_ULTRA("IsCanonicalBoundToThisMachine");
-    if (canonicalMachineId.empty() || canonicalDeviceKeyHash.empty()) return false;
-    if (!EnsureMachineIdentityLoaded()) return false;
+    if (canonicalMachineId.empty() || canonicalDeviceKeyHash.empty()) { NUT_VMP_END(); return false; }
+    if (!EnsureMachineIdentityLoaded()) { NUT_VMP_END(); return false; }
 
     std::lock_guard<NutMutex> lock(g_initMutex);
-    if (!EqualsIgnoreAsciiCase(canonicalDeviceKeyHash, g_localDeviceKeyHash)) return false;
+    if (!EqualsIgnoreAsciiCase(canonicalDeviceKeyHash, g_localDeviceKeyHash)) { NUT_VMP_END(); return false; }
     const bool machineMatches =
         (!g_localMachineId.empty() && EqualsIgnoreAsciiCase(canonicalMachineId, g_localMachineId)) ||
         (!g_localMachineIdAlt.empty() && EqualsIgnoreAsciiCase(canonicalMachineId, g_localMachineIdAlt));
@@ -8949,6 +9070,11 @@ constexpr unsigned long long NUT_WATCHDOG_INTERVAL_MS = 1000;   // how often thi
 constexpr unsigned long long NUT_WATCHDOG_KILL_DELAY_MS = 5000; // grace window between detection and process termination
 std::atomic<bool> g_watchdogStarted{false};
 std::atomic<bool> g_watchdogDebuggerLatched{false};
+// Separate latch for the kernel-mode check added below - independent of
+// g_watchdogDebuggerLatched since the two triggers are independent events
+// (see IsKernelDebuggerActive's own comment for why a kernel debugger is
+// not something self-debug or IsDebuggerAttached() can ever see).
+std::atomic<bool> g_watchdogKernelDebuggerLatched{false};
 
 // Set true once this process has successfully made itself its own
 // debugger (see NUT_SelfDebugLoopThreadProc below). From that point on,
@@ -8979,8 +9105,18 @@ DWORD WINAPI NUT_WatchdogThreadProc(LPVOID)
         // AntiTamperCheckedTier's own reverify block.
         NUT_VMP_BEGIN_ULTRA("NUT_WatchdogThreadProc_Check");
         bool expected = false;
-        if (!g_selfDebugActive.load() &&
-            IsDebuggerAttached() && g_watchdogDebuggerLatched.compare_exchange_strong(expected, true))
+        bool expectedKernel = false;
+        const bool userModeHit = !g_selfDebugActive.load() &&
+            IsDebuggerAttached() && g_watchdogDebuggerLatched.compare_exchange_strong(expected, true);
+        // Runs unconditionally, regardless of g_selfDebugActive - self-
+        // debug only wins exclusivity over OTHER USER-MODE debuggers; it
+        // has no effect whatsoever on a kernel debugger (see
+        // IsKernelDebuggerActive's own comment). Short-circuited behind
+        // !userModeHit purely to avoid redundant work in the same tick
+        // once a reaction is already underway, not for correctness.
+        const bool kernelModeHit = !userModeHit && IsKernelDebuggerActive() &&
+            g_watchdogKernelDebuggerLatched.compare_exchange_strong(expectedKernel, true);
+        if (userModeHit || kernelModeHit)
         {
             // Immediate, harmless half of the reaction - wipe the cached
             // Lease so no later legitimate re-verification can
@@ -9219,6 +9355,21 @@ extern "C" __declspec(dllexport) int __cdecl Vela_Boot_84()
         // deliberately the same generic failure code already used for
         // "public key missing" just below, so this does not hand an
         // attacker a specific "a debugger was detected" signal.
+        NUT_VMP_END();
+        return 0;
+    }
+    NUT_VMP_END();
+
+    // Kernel-mode fail-closed check (2026 hardening, project owner's
+    // explicit request): self-debugging above only ever covers user-mode
+    // debuggers - see IsKernelDebuggerActive's own comment for exactly why
+    // a kernel debugger needs this completely separate check. Same policy,
+    // same generic non-revealing failure code as the self-debug gate just
+    // above: fail closed, do not proceed to machine-identity/public-key
+    // loading, and do not tell an attacker specifically what was detected.
+    NUT_VMP_BEGIN_ULTRA("Vela_Boot_84_KernelDebugGate");
+    if (IsKernelDebuggerActive())
+    {
         NUT_VMP_END();
         return 0;
     }
