@@ -431,6 +431,23 @@ inline int EffectiveTier()
 {
     const int core = CoreIntegrityStatus();
     if (core == -2) return -2;
+    // 2026 hardening (closes a real drift found by audit): file-lock is a
+    // permanent, one-way latch exactly like the -2 case just above - once
+    // g_fileLockedLatched is true it never clears for the life of this DLL
+    // instance, and Check_Core_Integrity() will keep reporting -5 forever
+    // after. But SetTier() is a general-purpose setter also used by every
+    // OTHER poll outcome (LICENSED/FREE/UPDATE_REQUIRED/BLOCKED/FAILED), so
+    // a LATER poll cycle that reports a real tier again after the file was
+    // already latched would silently overwrite the raw tier storage back to
+    // a real value - without ever clearing the latch. Without this check,
+    // the line below (AntiTamperCheckedTier(GetTierRaw())) would then hand
+    // every calculation function a genuine, possibly fully-licensed tier
+    // while Check_Core_Integrity is still telling the EA to alert and remove
+    // itself. Mirroring `core` here unconditionally - before the handshake/
+    // tier-initialized checks below, exactly like -2 - makes that
+    // impossible: once latched, EffectiveTier() reports -5 forever too, no
+    // matter what any later poll writes into the raw tier.
+    if (core == TIER_FILE_LOCKED) return core; // = -5, same latch as Check_Core_Integrity
     if (!HandshakeValid()) return 0;
     // 2026 hardening (project owner's explicit rule): before this process's
     // very first real tier has ever been set, g_tierInitialized is still
@@ -440,9 +457,12 @@ inline int EffectiveTier()
     // like a settled Free-tier verdict to every calculation function,
     // report the SAME not-yet-settled value Check_Core_Integrity is
     // already reporting right now (via `core`, computed once above - at
-    // this point it can only be -1, since -2 was handled just above and
-    // g_hsEverAttempted is always true whenever HandshakeValid() is, so 0
-    // cannot occur here). Once a real tier has been set at least once
+    // this point it can only be -1: -2 was handled above, -5 is handled
+    // above too (and SetTier(TIER_FILE_LOCKED) always sets
+    // g_tierInitialized true in the same call, so -5 could never reach
+    // this branch even without the dedicated check), and g_hsEverAttempted
+    // is always true whenever HandshakeValid() is, so 0 cannot occur
+    // here either). Once a real tier has been set at least once
     // (g_tierInitialized true), this no longer applies: a later -1 (e.g. a
     // brief reconnect hiccup) correctly falls through to AntiTamperCheckedTier
     // below and keeps reporting the last genuinely verified tier, exactly
