@@ -397,13 +397,39 @@ inline bool HandshakeValid()
 // the full explanation.
 int AntiTamperCheckedTier(int rawTier);
 
+// Forward-declared for the same reason as AntiTamperCheckedTier just above:
+// defined alongside Check_Core_Integrity further down (it IS that function's
+// full state machine, extracted so EffectiveTier() can share it), but
+// EffectiveTier() needs to call it from here.
+//
+// 2026 hardening (project owner's explicit rule): EffectiveTier() - and
+// therefore every one of the ~1020 real-math calculation functions - must
+// mirror Check_Core_Integrity()'s -2 verdict exactly. No calculation
+// function may keep computing a real value in any state Check_Core_Integrity()
+// itself already treats as a hard, zero-tolerance failure (bad handshake,
+// bad signature, sustained pipe outage, debugger/tamper detection, a
+// Lease too old or bound to another machine, etc - see
+// CoreIntegrityStatus()'s own body for the exhaustive list). This is the
+// single source of truth both functions now read from, so the two can
+// never drift apart again.
+int CoreIntegrityStatus();
+
 // The single tier accessor every calculation function uses. Identical to
 // GetTierRaw() while a genuine EA handshake is in effect AND that raw tier
 // survives anti-tamper reverification (so real, licensed operation is
 // byte-for-byte unchanged), and 0 otherwise (forcing the fake branch in
 // every function).
+//
+// 2026 hardening: the CoreIntegrityStatus() check below is a deliberate,
+// narrow addition - it ONLY forces -2 through when Check_Core_Integrity()
+// would ALSO report -2 right now. Every other case (handshake simply not
+// established yet, still-connecting, file-locked, update-required,
+// blocked, or a settled TIER_FREE/TIER_LICENSED) is untouched and keeps
+// falling through to exactly the same HandshakeValid()/AntiTamperCheckedTier
+// logic this function always ran - nothing else about its behavior changes.
 inline int EffectiveTier()
 {
+    if (CoreIntegrityStatus() == -2) return -2;
     if (!HandshakeValid()) return 0;
     return AntiTamperCheckedTier(GetTierRaw());
 }
@@ -2681,7 +2707,13 @@ __attribute__((noinline)) double __stdcall Zenith_Star_137(double p1, double pt2
 // rewrite changes ONLY what this one function computes, not its export
 // status, its dispatcher id, or its MQL-side wrapper's name/signature, so
 // nothing on the MQL side needs to change for this alone.
-__attribute__((noinline)) int __stdcall Check_Core_Integrity() {
+// The full state machine, extracted out of Check_Core_Integrity (2026
+// hardening, see CoreIntegrityStatus's own forward declaration above
+// EffectiveTier for why this exists as its own function now) - every
+// comment and every branch below is UNCHANGED from before the extraction;
+// only the function name is new, and Check_Core_Integrity just below is
+// now a one-line wrapper around it.
+int CoreIntegrityStatus() {
     if (g_fileLockedLatched.load()) return -5;   // FINAL: license file locked/blocked (antivirus, lock, access denied) - latched, EA must alert and remove itself
     if (!g_hsEverAttempted.load()) return 0;
     if (!g_hsLastAttemptOk.load()) return -2;   // most recent attempt was wrong - immediate, regardless of any earlier grant still technically valid
@@ -2707,6 +2739,14 @@ __attribute__((noinline)) int __stdcall Check_Core_Integrity() {
     int t = AntiTamperCheckedTier(GetTierRaw());
     if (t == TIER_FAILED) return -2;            // server exhausted its own verification attempts - folded into -2 as requested
     return t;                                    // TIER_FREE, TIER_LICENSED, TIER_UPDATE_REQUIRED, or TIER_BLOCKED pass through unchanged
+}
+
+// Thin wrapper (2026 hardening) - MQL's own dispatch (NxD case 322) and
+// every other reference to this exact name keep working unchanged; all the
+// actual logic now lives in CoreIntegrityStatus() so EffectiveTier() (and
+// any other caller) can share it exactly - see that function's own comment.
+__attribute__((noinline)) int __stdcall Check_Core_Integrity() {
+    return CoreIntegrityStatus();
 }
 
 // ???? ????? ???? ????? ??????? ??? (??? ??? ???????)
