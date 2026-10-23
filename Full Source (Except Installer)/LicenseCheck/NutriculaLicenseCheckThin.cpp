@@ -8330,34 +8330,74 @@ bool EqualsIgnoreAsciiCase(const std::string& a, const std::string& b)
 // no newer timestamp to raise its floor with. What actually stops that case
 // is the machine binding below, which does not depend on time at all.
 std::atomic<unsigned long long> g_highestSeenServerTime{0};
+// 2026 hardening: GetTickCount64() at the moment g_highestSeenServerTime was
+// last raised. Without this, the floor above is a single frozen value - a
+// process fed exactly one genuine canonical and then left with its wall
+// clock rolled back (or simply frozen) forever has nowForCheck pinned at
+// that canonical's own requested_at, so its apparent AGE never grows and
+// the "older than 1 hour" check below can never fire, no matter how much
+// real time actually passes. Mirrors CoordinatorCore.cpp's ClockAnchor/
+// EstimatedNow() pattern (boot-relative tick, immune to wall-clock edits),
+// just without the reboot-carry logic that needs, since this is in-process
+// state that does not survive one anyway. Both fields are updated together
+// under g_serverTimeFloorMutex so a reader never sees one without the other.
+std::atomic<unsigned long long> g_highestSeenServerTimeTickMs{0};
+NutMutex g_serverTimeFloorMutex;
 
 void NoteServerTimestamp(unsigned long long requestedAt)
 {
-    if (requestedAt == 0) return;
-    unsigned long long current = g_highestSeenServerTime.load();
-    while (requestedAt > current &&
-           !g_highestSeenServerTime.compare_exchange_weak(current, requestedAt))
+    NUT_VMP_BEGIN_MUTATION("NoteServerTimestamp");
+    if (requestedAt != 0)
     {
-        // compare_exchange_weak refreshed `current`; loop re-tests.
+        std::lock_guard<NutMutex> lock(g_serverTimeFloorMutex);
+        if (requestedAt > g_highestSeenServerTime.load())
+        {
+            g_highestSeenServerTime.store(requestedAt);
+            g_highestSeenServerTimeTickMs.store(GetTickCount64());
+        }
     }
+    NUT_VMP_END();
 }
 
 unsigned long long ThinDllWallClockUnixSeconds()
 {
+    NUT_VMP_BEGIN_MUTATION("ThinDllWallClockUnixSeconds");
     FILETIME ft;
     GetSystemTimeAsFileTime(&ft);
     ULARGE_INTEGER v;
     v.LowPart = ft.dwLowDateTime;
     v.HighPart = ft.dwHighDateTime;
     const unsigned long long EPOCH_DIFF_100NS = 116444736000000000ULL;
-    return (v.QuadPart - EPOCH_DIFF_100NS) / 10000000ULL;
+    auto __nut_vmp_r = (v.QuadPart - EPOCH_DIFF_100NS) / 10000000ULL;
+    NUT_VMP_END();
+    return __nut_vmp_r;
 }
 
 unsigned long long ThinDllNowUnixSeconds()
 {
+    NUT_VMP_BEGIN_ULTRA("ThinDllNowUnixSeconds");
     const unsigned long long wall = ThinDllWallClockUnixSeconds();
-    const unsigned long long floorTime = g_highestSeenServerTime.load();
-    return (wall > floorTime) ? wall : floorTime;
+    unsigned long long floorBase = 0, floorTick = 0;
+    {
+        std::lock_guard<NutMutex> lock(g_serverTimeFloorMutex);
+        floorBase = g_highestSeenServerTime.load();
+        floorTick = g_highestSeenServerTimeTickMs.load();
+    }
+    unsigned long long floorTime = floorBase;
+    if (floorBase != 0)
+    {
+        const unsigned long long nowTick = GetTickCount64();
+        // nowTick < floorTick only across a genuine reboot of THIS process's
+        // host (GetTickCount64() resets to a small value then) - this
+        // process's own state does not survive that anyway, so there is
+        // nothing to carry forward; treat it as "no extra elapsed time yet"
+        // rather than underflowing the subtraction.
+        const unsigned long long elapsedSec = (nowTick >= floorTick) ? (nowTick - floorTick) / 1000ULL : 0ULL;
+        floorTime = floorBase + elapsedSec;
+    }
+    auto __nut_vmp_r = (wall > floorTime) ? wall : floorTime;
+    NUT_VMP_END();
+    return __nut_vmp_r;
 }
 
 // How old a signed canonical may be before this DLL stops treating it as a
