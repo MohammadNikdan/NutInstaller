@@ -2,6 +2,7 @@
 #define NUTRICULA_MACHINE_ID_EXPORTS
 
 #include "NutriculaMachineId.h"
+#include "../Coordinator/VMProtectMarkers.h"
 
 #include <windows.h>
 #include <wbemidl.h>
@@ -947,6 +948,17 @@ static void AppendSignal(std::wstringstream& ss, const Signal& s) {
 }
 
 static std::wstring Canonicalize(const IdentityRecord& r, bool includeMachineGuidForPhysical) {
+    // Marked (2026 hardening, project owner's explicit request): this is
+    // the exact field-selection-and-ordering format that turns raw
+    // hardware signals into the string that gets hashed into machine_id -
+    // the single most valuable thing to a would-be forger, since knowing
+    // this format exactly lets someone construct a target machine's
+    // canonical string by hand (from serials obtained any other way),
+    // bypassing the WMI-collection step entirely. Single clean entry and
+    // exit (the one return at the bottom), so the whole function body is
+    // safely wrapped in one ULTRA region - not hot-path, called at most
+    // once or twice per EA OnInit.
+    NUT_VMP_BEGIN_ULTRA("MachineId_Canonicalize");
     std::wstringstream ss;
 
     switch (r.platform) {
@@ -1023,6 +1035,7 @@ static std::wstring Canonicalize(const IdentityRecord& r, bool includeMachineGui
         }
     }
 
+    NUT_VMP_END();
     return ss.str();
 }
 
@@ -1188,6 +1201,16 @@ static bool Base64Decode(const std::string& text, std::vector<unsigned char>& ou
 
 static bool GcmCrypt(const unsigned char* key, const unsigned char* nonce, const unsigned char* input, ULONG inputLen,
                      unsigned char* output, unsigned char* tag, bool encrypt) {
+    // Marked (2026 hardening, project owner's explicit request): this is
+    // the exact point where TRANSPORT_KEY's raw bytes (passed in as `key`
+    // by GcmProtect/GcmUnprotect below) actually get consumed by the AES-
+    // GCM primitive - the lowest-level, most concrete target for anyone
+    // trying to trace how that key is used. Single exit via the existing
+    // goto-cleanup pattern (everything funnels to the one `return ok;`
+    // below), so the whole function body is safely wrapped in one ULTRA
+    // region. Not hot-path - called only when the Installer encrypts/
+    // decrypts a signup/transfer payload.
+    NUT_VMP_BEGIN_ULTRA("MachineId_GcmCrypt");
     BCRYPT_ALG_HANDLE alg = nullptr;
     BCRYPT_KEY_HANDLE keyHandle = nullptr;
     DWORD objectSize = 0, result = 0, outputLen = 0;
@@ -1222,6 +1245,7 @@ static bool GcmCrypt(const unsigned char* key, const unsigned char* nonce, const
 cleanup:
     if (keyHandle) BCryptDestroyKey(keyHandle);
     if (alg) BCryptCloseAlgorithmProvider(alg, 0);
+    NUT_VMP_END();
     return ok;
 }
 
@@ -1248,11 +1272,18 @@ static const unsigned char TRANSPORT_KEY[32] = {
 };
 
 static bool GcmProtect(const std::vector<unsigned char>& plaintext, std::string& envelope) {
+    // Marked (2026 hardening, project owner's explicit request): this
+    // function references TRANSPORT_KEY by name and hands it to GcmCrypt -
+    // protecting GcmCrypt's own internals (see its marker above) is not
+    // enough on its own if the CALL SITE that names TRANSPORT_KEY stays in
+    // plain, staticaly-readable code. Four linear exits (no nesting/loops),
+    // each covered by its own END below.
+    NUT_VMP_BEGIN_ULTRA("MachineId_GcmProtect");
     unsigned char nonce[GCM_NONCE_BYTES] = {};
     unsigned char tag[GCM_TAG_BYTES] = {};
-    if (!RandomBytes(nonce, sizeof(nonce))) return false;
+    if (!RandomBytes(nonce, sizeof(nonce))) { NUT_VMP_END(); return false; }
     std::vector<unsigned char> ciphertext(plaintext.size());
-    if (!GcmCrypt(TRANSPORT_KEY, nonce, plaintext.data(), (ULONG)plaintext.size(), ciphertext.data(), tag, true)) return false;
+    if (!GcmCrypt(TRANSPORT_KEY, nonce, plaintext.data(), (ULONG)plaintext.size(), ciphertext.data(), tag, true)) { NUT_VMP_END(); return false; }
 
     std::vector<unsigned char> packed;
     packed.reserve(sizeof(nonce) + sizeof(tag) + ciphertext.size());
@@ -1261,16 +1292,20 @@ static bool GcmProtect(const std::vector<unsigned char>& plaintext, std::string&
     packed.insert(packed.end(), ciphertext.begin(), ciphertext.end());
 
     std::string b64;
-    if (!Base64Encode(packed, b64)) return false;
+    if (!Base64Encode(packed, b64)) { NUT_VMP_END(); return false; }
     envelope = "N3:" + b64;
+    NUT_VMP_END();
     return true;
 }
 
 static bool GcmUnprotect(const std::string& envelope, std::vector<unsigned char>& plaintext) {
-    if (envelope.size() < 4 || envelope.compare(0, 3, "N3:") != 0) return false;
+    // Marked for the same reason as GcmProtect above - this is the other
+    // call site that names TRANSPORT_KEY directly.
+    NUT_VMP_BEGIN_ULTRA("MachineId_GcmUnprotect");
+    if (envelope.size() < 4 || envelope.compare(0, 3, "N3:") != 0) { NUT_VMP_END(); return false; }
     std::vector<unsigned char> packed;
-    if (!Base64Decode(envelope.substr(3), packed)) return false;
-    if (packed.size() < GCM_NONCE_BYTES + GCM_TAG_BYTES) return false;
+    if (!Base64Decode(envelope.substr(3), packed)) { NUT_VMP_END(); return false; }
+    if (packed.size() < GCM_NONCE_BYTES + GCM_TAG_BYTES) { NUT_VMP_END(); return false; }
 
     const unsigned char* nonce = packed.data();
     const unsigned char* tag = packed.data() + GCM_NONCE_BYTES;
@@ -1280,6 +1315,7 @@ static bool GcmUnprotect(const std::string& envelope, std::vector<unsigned char>
     std::vector<unsigned char> tagCopy(tag, tag + GCM_TAG_BYTES);
     bool ok = GcmCrypt(TRANSPORT_KEY, nonce, ciphertext, cipherLen, plaintext.data(), tagCopy.data(), false);
     if (!ok) plaintext.clear();
+    NUT_VMP_END();
     return ok;
 }
 
@@ -1539,12 +1575,23 @@ int GenerateMachineIdImpl(char* output, int outputCapacity, bool includeMachineG
     if (!collected) { g_lastStatus = 2; return -2; }
     if (!HasAtLeastCoreIdentity(r)) { g_lastStatus = 1; return 0; }
 
+    // Marked (2026 hardening, project owner's explicit request): the
+    // canonical-string-to-final-hex-id derivation - the part of this
+    // function that is actual "secret sauce" rather than platform-
+    // detection/WMI-collection scaffolding. Deliberately scoped to just
+    // this linear segment (3 exits, no nesting beyond the fixed 32-
+    // iteration hex loop) rather than the whole multi-branch function
+    // above it, for the same reason CoreIntegrityStatus in the DLL was
+    // left unmarked: a complex, many-return function is where a BEGIN/END
+    // mismatch is most likely, so the value here is in marking the tight,
+    // single-purpose core, not the surrounding branching.
+    NUT_VMP_BEGIN_ULTRA("MachineId_CanonicalToHash");
     std::wstring canonical = Canonicalize(r, includeMachineGuidForPhysical);
     std::string utf8 = ToUtf8(canonical);
-    if (utf8.empty()) { g_lastStatus = 3; return -2; }
+    if (utf8.empty()) { g_lastStatus = 3; NUT_VMP_END(); return -2; }
 
     std::vector<unsigned char> data(utf8.begin(), utf8.end()), digest;
-    if (!Sha256Bytes(data, digest) || digest.size() != 32) { g_lastStatus = 3; return -2; }
+    if (!Sha256Bytes(data, digest) || digest.size() != 32) { g_lastStatus = 3; NUT_VMP_END(); return -2; }
 
     static const char* digits = "0123456789ABCDEF";
     for (size_t i = 0; i < digest.size(); ++i) {
@@ -1552,6 +1599,7 @@ int GenerateMachineIdImpl(char* output, int outputCapacity, bool includeMachineG
         output[i * 2 + 1] = digits[digest[i] & 0xF];
     }
     output[64] = '\0';
+    NUT_VMP_END();
     g_lastStatus = 0;
 
     switch (r.platform) {
