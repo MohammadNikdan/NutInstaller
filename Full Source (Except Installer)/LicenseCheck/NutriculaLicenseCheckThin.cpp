@@ -331,6 +331,17 @@ std::atomic<bool> g_hsLastAttemptOk{false};
 // file than Nutricula_Poll, can see them. Full explanation of what each
 // means sits with Nutricula_Poll's own implementation further down.
 std::atomic<bool> g_pollEverCompleted{false};
+
+// 2026 (Check_Core_Integrity rule: never report 1 or 2 until sure): one-way
+// latch, true only once a genuinely SETTLED answer from the Broker has been
+// processed in this process - a verified Lease (2), a signed Free (1),
+// update-required, blocked, TIER_FAILED or file-locked. A failed pipe
+// connect, a Broker still warming up, or a reply carrying no signed result
+// never sets it. Until it is true, Check_Core_Integrity reports -1 ("keep
+// waiting") - never the default tier - for at most NUT_WAIT_MAX_MS, then -2.
+std::atomic<bool> g_everGotRealAnswer{false};
+std::atomic<unsigned long long> g_waitStartTickMs{0};
+constexpr unsigned long long NUT_WAIT_MAX_MS = 90ULL * 1000ULL;
 std::atomic<bool> g_lastPollOutcomeOk{false};
 
 // Consecutive-failure tolerance for ONE specific, narrow failure mode:
@@ -2675,7 +2686,17 @@ __attribute__((noinline)) int __stdcall Check_Core_Integrity() {
     if (!g_hsEverAttempted.load()) return 0;
     if (!g_hsLastAttemptOk.load()) return -2;   // most recent attempt was wrong - immediate, regardless of any earlier grant still technically valid
     if (!HandshakeValid()) return -2;           // was right before, but that grant has since lapsed with no fresh attempt
-    if (!g_pollEverCompleted.load()) return -1; // handshake is fine, just no answer from the Coordinator/server yet
+    if (!g_everGotRealAnswer.load())
+    {
+        // No settled answer yet in this process: never the default tier.
+        // A zero-tolerance problem (bad signature, missing key) is -2 at once.
+        if (g_pollEverCompleted.load() && !g_lastPollOutcomeOk.load()) return -2;
+        unsigned long long zero = 0;
+        const unsigned long long nowMs = GetTickCount64();
+        g_waitStartTickMs.compare_exchange_strong(zero, nowMs);
+        if (nowMs - g_waitStartTickMs.load() > NUT_WAIT_MAX_MS) return -2; // never answered in time
+        return -1;                                                          // still connecting - keep waiting
+    }
     if (!g_lastPollOutcomeOk.load()) return -2; // zero-tolerance problem: missing public key, invalid server signature, or a TIER_FAILED verdict - never a local-pipe miss (see g_pipeFailStreak's own comment)
     if (g_pipeFailStreak.load() >= NUT_PIPE_FAIL_TOLERANCE) return -2; // local pipe to Coordinator has failed too many times IN A ROW - a one-off hiccup is tolerated, a sustained one is not
     // 2026 hardening: routed through the same anti-tamper reverification as
@@ -9059,6 +9080,7 @@ extern "C" __declspec(dllexport) void __cdecl Pavo_Sync_85()
                     g_verifiedRequestedAt = 0;
                 }
                 SetTier(TIER_FAILED);
+                g_everGotRealAnswer.store(true);
                 g_lastReverifyTickMs.store(0);
                 g_lastPollOutcomeOk.store(false);
                 g_pollEverCompleted.store(true);
@@ -9083,6 +9105,7 @@ extern "C" __declspec(dllexport) void __cdecl Pavo_Sync_85()
                 g_verifiedRequestedAt = canonicalRequestedAt;
             }
             SetTier(TIER_LICENSED);
+            g_everGotRealAnswer.store(true);
             // Force GetLicenseTier's own rate-limited cache to re-check
             // immediately on the next call rather than serving a stale
             // cached result from before this fresh verification.
@@ -9091,12 +9114,14 @@ extern "C" __declspec(dllexport) void __cdecl Pavo_Sync_85()
         else if (sigOk && status.tier == TIER_FREE)
         {
             SetTier(TIER_FREE);
+            g_everGotRealAnswer.store(true);
             std::lock_guard<NutMutex> lock(g_verifiedCacheMutex);
             g_verifiedTierClaim = TIER_FREE;
         }
         else if (sigOk && status.tier == TIER_UPDATE_REQUIRED)
         {
             SetTier(TIER_UPDATE_REQUIRED);
+            g_everGotRealAnswer.store(true);
             std::lock_guard<NutMutex> lock(g_verifiedCacheMutex);
             g_verifiedTierClaim = TIER_UPDATE_REQUIRED;
         }
@@ -9113,6 +9138,7 @@ extern "C" __declspec(dllexport) void __cdecl Pavo_Sync_85()
             // re-verification only re-checks the LAST cached verified
             // canonical, which without this branch would never be replaced.
             SetTier(TIER_BLOCKED);
+            g_everGotRealAnswer.store(true);
             std::lock_guard<NutMutex> lock(g_verifiedCacheMutex);
             g_verifiedTierClaim = TIER_BLOCKED;
         }
@@ -9147,6 +9173,7 @@ extern "C" __declspec(dllexport) void __cdecl Pavo_Sync_85()
         // failure OF the polling mechanism itself) - Check_Core_Integrity
         // folds this into "-2" separately, via g_tier, not via this flag.
         SetTier(TIER_FAILED);
+        g_everGotRealAnswer.store(true);
         g_lastPollOutcomeOk.store(true);
     }
     else if (status.tier == TIER_FILE_LOCKED)
@@ -9156,6 +9183,7 @@ extern "C" __declspec(dllexport) void __cdecl Pavo_Sync_85()
         // was identity-verified by QueryCoordinatorStatus above. Latched.
         g_fileLockedLatched.store(true);
         SetTier(TIER_FILE_LOCKED);
+        g_everGotRealAnswer.store(true);
         g_lastPollOutcomeOk.store(true);
     }
     else
