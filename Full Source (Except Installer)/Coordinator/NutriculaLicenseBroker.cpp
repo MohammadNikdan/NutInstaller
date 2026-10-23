@@ -135,6 +135,70 @@ unsigned __stdcall ServeOneClient(void* param)
 std::atomic<bool> g_brokerSelfDebugActive{false};
 std::atomic<bool> g_brokerSelfDebugAttachDone{false};
 
+// =========================================================================
+// Kernel-mode debugger detection (2026 hardening, project owner's explicit
+// request, mirroring NutriculaLicenseCheckThin.cpp's IsKernelDebuggerActive
+// exactly - see that function's own comment for the full rationale). The
+// short version: self-debugging above only wins exclusivity over OTHER
+// USER-MODE debuggers; a kernel debugger (WinDbg attached via kernel
+// debugging) never goes through DebugActiveProcess at all, so it is
+// invisible to everything built so far for this process. VMProtect's own
+// built-in debugger detection was deliberately left OFF for this build
+// (project owner's decision after confirming it cannot be configured as
+// "kernel-mode only" - the user-mode half of it would misread this
+// process's own self-debug session as an attacker), so kernel-mode
+// coverage is implemented here instead, independently of self-debug.
+//
+// SystemKernelDebuggerInformation (class 35) is the standard, long-stable
+// NtQuerySystemInformation class for this - identical to the DLL's own
+// copy of this function, resolved via GetProcAddress rather than linking
+// ntdll.lib directly.
+using NtQuerySystemInformationFn = LONG(WINAPI*)(ULONG, PVOID, ULONG, PULONG);
+
+struct NUT_SystemKernelDebuggerInformation
+{
+    BOOLEAN KernelDebuggerEnabled;
+    BOOLEAN KernelDebuggerNotPresent;
+};
+
+bool IsKernelDebuggerActive()
+{
+    // Marked (2026 hardening, found during a re-check of marker coverage):
+    // called from two already-marked decision points
+    // (BrokerMain_KernelDebugGate and BrokerDebugWatchdogThreadProc_Check)
+    // - a single static patch to this shared function alone, forcing it to
+    // always return false, would defeat both at once. Four linear exits,
+    // each covered by its own END below. Mirrors the DLL's own
+    // IsKernelDebuggerActive marker exactly.
+    NUT_VMP_BEGIN_ULTRA("IsKernelDebuggerActive");
+    HMODULE ntdll = GetModuleHandleA("ntdll.dll");
+    if (!ntdll) { NUT_VMP_END(); return false; }
+
+    auto ntQuerySystemInformation = reinterpret_cast<NtQuerySystemInformationFn>(
+        GetProcAddress(ntdll, "NtQuerySystemInformation"));
+    if (!ntQuerySystemInformation) { NUT_VMP_END(); return false; }
+
+    const ULONG SystemKernelDebuggerInformation = 35;
+    NUT_SystemKernelDebuggerInformation info{};
+    ULONG returned = 0;
+    if (ntQuerySystemInformation(SystemKernelDebuggerInformation, &info, sizeof(info), &returned) != 0)
+    {
+        // Fail open on the QUERY only (not on a detected debugger) - a
+        // failed query is not evidence of a kernel debugger, and a false
+        // positive here would deny every EA in this session their license
+        // for no real reason.
+        NUT_VMP_END();
+        return false;
+    }
+
+    // KernelDebuggerEnabled alone only means kernel-debugging support is
+    // switched on; KernelDebuggerNotPresent == FALSE is what confirms a
+    // kernel debugger is actually attached right now. Both are required.
+    auto __nut_vmp_r = info.KernelDebuggerEnabled && !info.KernelDebuggerNotPresent;
+    NUT_VMP_END();
+    return __nut_vmp_r;
+}
+
 unsigned __stdcall BrokerSelfDebugLoopThreadProc(void*)
 {
     // Marked (2026 hardening, project owner's explicit request): this is
@@ -211,9 +275,14 @@ unsigned __stdcall BrokerDebugWatchdogThreadProc(void*)
         // meaningful here.
         NUT_VMP_BEGIN_ULTRA("BrokerDebugWatchdogThreadProc_Check");
         const bool isActive = g_brokerSelfDebugActive.load();
-        if (wasActive && !isActive)
+        const bool selfDebugEnded = wasActive && !isActive;
+        // Independent of self-debug state entirely - see
+        // IsKernelDebuggerActive's own comment for why.
+        const bool kernelDebuggerNow = IsKernelDebuggerActive();
+        if (selfDebugEnded || kernelDebuggerNow)
         {
-            printf("Self-debug session ended unexpectedly - exiting rather than running unprotected.\n");
+            printf("%s - exiting rather than running unprotected.\n",
+                kernelDebuggerNow ? "Kernel-mode debugger detected" : "Self-debug session ended unexpectedly");
             NUT_VMP_END();
             TerminateProcess(GetCurrentProcess(), 0xDEADBEEF);
         }
@@ -256,6 +325,22 @@ int main()
         }
 
         if (!g_brokerSelfDebugActive.load())
+        {
+            printf("Could not establish exclusive debug access to this process (a debugger may already be attached) - refusing to start.\n");
+            NUT_VMP_END();
+            return 1;
+        }
+        NUT_VMP_END();
+    }
+    {
+        // Kernel-mode fail-closed check (2026 hardening, project owner's
+        // explicit request): self-debugging above only ever covers user-
+        // mode debuggers - see IsKernelDebuggerActive's own comment for
+        // why a kernel debugger needs this completely separate check.
+        // Same policy as the self-debug gate just above: refuse to start
+        // at all rather than run with a kernel debugger already attached.
+        NUT_VMP_BEGIN_ULTRA("BrokerMain_KernelDebugGate");
+        if (IsKernelDebuggerActive())
         {
             printf("Could not establish exclusive debug access to this process (a debugger may already be attached) - refusing to start.\n");
             NUT_VMP_END();
