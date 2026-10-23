@@ -8967,6 +8967,17 @@ DWORD WINAPI NUT_WatchdogThreadProc(LPVOID)
 {
     for (;;)
     {
+        // Marked (2026 hardening, project owner's explicit request): this
+        // is the entire per-iteration decision - "is a debugger attached,
+        // and have we not already reacted" - exactly the branch a static
+        // patch would want to defeat (e.g. forcing the condition to always
+        // read false). Rate-limited to once a second, never hot-path, so
+        // ULTRA carries no meaningful performance cost. The END calls below
+        // are placed before every exit this block actually has (the
+        // TerminateProcess path and the fall-through path), matching the
+        // single-pass, non-hot-path precedent already used for
+        // AntiTamperCheckedTier's own reverify block.
+        NUT_VMP_BEGIN_ULTRA("NUT_WatchdogThreadProc_Check");
         bool expected = false;
         if (!g_selfDebugActive.load() &&
             IsDebuggerAttached() && g_watchdogDebuggerLatched.compare_exchange_strong(expected, true))
@@ -8996,9 +9007,11 @@ DWORD WINAPI NUT_WatchdogThreadProc(LPVOID)
             // not a re-check), then an unconditional, independent kill
             // that no tier-comparison patch can influence.
             Sleep(static_cast<DWORD>(NUT_WATCHDOG_KILL_DELAY_MS));
+            NUT_VMP_END();
             TerminateProcess(GetCurrentProcess(), 0xDEADBEEF);
             return 0; // unreachable in practice
         }
+        NUT_VMP_END();
         Sleep(static_cast<DWORD>(NUT_WATCHDOG_INTERVAL_MS));
     }
 }
@@ -9079,18 +9092,36 @@ std::atomic<bool> g_selfDebugAttachDone{false}; // true once the attach attempt 
 
 DWORD WINAPI NUT_SelfDebugLoopThreadProc(LPVOID)
 {
+    // Marked (2026 hardening, project owner's explicit request): this is
+    // the actual attach decision - the single highest-value target for a
+    // STATIC patch (opening the shipped DLL in a disassembler offline and
+    // nopping out the DebugActiveProcess call or the store(true) below, no
+    // live debugger ever required). This is a completely different threat
+    // from the live attach/patch/detach race this whole mechanism was
+    // built to close - see this function's own comment above - so leaving
+    // the decision itself in plain, staticaly-patchable code would hand
+    // back exactly the race-free guarantee self-debugging was meant to
+    // provide. Deliberately scoped to JUST this decision, not the
+    // WaitForDebugEvent loop below: that loop is boilerplate required to
+    // remain a debugger at all, contains no decision an attacker benefits
+    // from understanding, and (being unbounded/blocking) is intentionally
+    // kept outside any virtualized region.
+    //
     // Must happen before DebugActiveProcess, not after - see this
     // function's own comment above for exactly why this one call is the
     // single most safety-critical line here.
+    NUT_VMP_BEGIN_ULTRA("NUT_SelfDebugLoopThreadProc_Attach");
     DebugSetProcessKillOnExit(FALSE);
 
     if (!DebugActiveProcess(GetCurrentProcessId()))
     {
         g_selfDebugAttachDone.store(true); // decided: failed - Vela_Boot_84() is now waiting on exactly this
+        NUT_VMP_END();
         return 0;
     }
     g_selfDebugActive.store(true);
     g_selfDebugAttachDone.store(true); // decided: succeeded
+    NUT_VMP_END();
 
     for (;;)
     {
@@ -9158,6 +9189,16 @@ extern "C" __declspec(dllexport) int __cdecl Vela_Boot_84()
     // (at most ~1 second) only covers the ordinary thread-scheduling gap
     // between creating that thread and it actually running its first few
     // instructions, nothing more.
+    // Marked (2026 hardening, project owner's explicit request): the
+    // fail-closed check itself - "did self-debug actually become active,
+    // and should boot therefore continue" - is exactly the other static-
+    // patch target alongside NUT_SelfDebugLoopThreadProc's own attach
+    // decision. Forcing g_selfDebugActive to read true here, or simply
+    // deleting this whole block, would silently turn the fail-closed
+    // policy back into the fail-open one the project owner explicitly
+    // rejected. Single clean entry, two exits (the early return below and
+    // the fall-through on success), both covered.
+    NUT_VMP_BEGIN_ULTRA("Vela_Boot_84_SelfDebugGate");
     EnsureSelfDebugStarted();
     for (int i = 0; i < 100 && !g_selfDebugAttachDone.load(); ++i)
     {
@@ -9178,8 +9219,10 @@ extern "C" __declspec(dllexport) int __cdecl Vela_Boot_84()
         // deliberately the same generic failure code already used for
         // "public key missing" just below, so this does not hand an
         // attacker a specific "a debugger was detected" signal.
+        NUT_VMP_END();
         return 0;
     }
+    NUT_VMP_END();
 
     // Reaches here only once self-debugging is confirmed active. Started
     // now as a defense-in-depth backstop for the rest of this process's
