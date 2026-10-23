@@ -1068,8 +1068,30 @@ void CoordinatorCore::WorkerLoop()
             ? DeriveRandomOffsetFromToken(local.lease.refreshToken)
             : MIN_RANDOM_OFFSET_SEC;
 
+        // 2026 hardening: withinCooldown must never fire on a raw, unprotected
+        // wall-clock read. EstimatedNow() only resists clock *rollback* once a
+        // ClockAnchor record already exists; with none at all (deleted, or a
+        // fresh install with a lease dropped in by some other means), it falls
+        // back to plain NowUnix() with zero protection - see EstimatedNow's own
+        // comment. Without this check, someone who deletes just the
+        // .clockanchor file (the lease file itself untouched) and then
+        // freezes/rewinds the system clock near that lease's own requestedAt
+        // could make `now - local.requestedAt` stay under randomOffset
+        // forever, serving the cached Lease from disk with NO further network
+        // contact ever again - the hash-integrity check (Layer 3) still runs,
+        // but it only catches tampered FILES, not a tampered clock. Requiring
+        // a genuinely loadable (MAC-verified) anchor here forces that case
+        // into the real refresh path below instead, which re-establishes the
+        // anchor from a fresh signed server answer. A legitimate fresh
+        // install is unaffected: it has no lease yet either, so hasLease
+        // above already keeps it out of this branch until its first real
+        // activation creates both the lease and the anchor together.
+        ClockAnchor anchorPresenceCheck;
+        const bool haveValidClockAnchor = LoadClockAnchor(anchorPresenceCheck);
+
         bool withinCooldown = local.fileValid && local.hasLease && machineMatches &&
             !local.licenseCurrentlyExpired && local.requestedAt != 0 &&
+            haveValidClockAnchor &&
             (now - local.requestedAt) < randomOffset;
 
         // EA-activity gate (2026 hardening): computed here, before the
