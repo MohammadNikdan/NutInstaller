@@ -236,6 +236,11 @@ private:
     // gets one full idle window to actually be used before it can exit,
     // instead of measuring idleness from the Unix epoch (0).
     long long m_processStartedAt = 0;
+    // GetTickCount64() at the same moment (milliseconds, monotonic, immune to
+    // wall-clock changes) - the warm-up gate's basis (BROKER_WARMUP_MS), which
+    // needs sub-second resolution that m_processStartedAt (whole seconds)
+    // cannot give.
+    unsigned long long m_processStartedTickMs = 0;
     // 2026 hardening: throttles ReportFailureBestEffort (see
     // CoordinatorCore.cpp) so a sustained local failure (e.g. a real,
     // ongoing network outage) reports itself to nutricula_failure_report.php

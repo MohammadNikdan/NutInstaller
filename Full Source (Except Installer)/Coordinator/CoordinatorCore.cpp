@@ -252,7 +252,13 @@ constexpr long long IDLE_SELF_EXIT_SEC = 3600; // 60:00
 // Broker is deliberately NOT kept running in the background between
 // sessions - see IDLE_SELF_EXIT_SEC above), so it trades off against the
 // project owner's own explicit choice of a fully on-demand lifecycle.
-constexpr long long BROKER_WARMUP_SEC = 6;
+//
+// UPDATE (project owner's decision): reduced from 6 s to 200 ms. The real
+// time bounds (1 h canonical age, 21 min silence, anchor-gated cooldown)
+// do not depend on this value; it is only a speed bump for kill/relaunch
+// loops and a short guaranteed window before the first trusted answer, so
+// a long wait mostly just cost every legitimate cold start.
+constexpr unsigned long long BROKER_WARMUP_MS = 200;
 
 // -2 diagnostic reporting (2026, project owner's explicit request): how
 // often THIS SAME locally-decided failure (see ReportFailureBestEffort's own
@@ -790,6 +796,7 @@ void CoordinatorCore::Start()
     }
 
     m_processStartedAt = EstimatedNow();
+    m_processStartedTickMs = GetTickCount64();
     m_wakeEvent = CreateEventW(nullptr, TRUE, FALSE, nullptr);
     m_worker = std::thread([this]() { WorkerLoop(); });
     m_worker.detach();
@@ -1004,11 +1011,15 @@ void CoordinatorCore::WorkerLoop()
         // EstimatedNow() - nothing reachable from a pipe client can move it
         // backward or forward, so the only way to pass this gate sooner is
         // to actually keep the process running that long.
-        if (now - m_processStartedAt < BROKER_WARMUP_SEC)
+        // Measured with GetTickCount64() (monotonic milliseconds), not the
+        // second-resolution EstimatedNow(): the warm-up is now 200 ms, finer
+        // than whole seconds can express, and a monotonic tick counter also
+        // can't be shifted by wall-clock changes.
+        if (GetTickCount64() - m_processStartedTickMs < BROKER_WARMUP_MS)
         {
             m_state.pending.store(PENDING_WARMING_UP);
             ResetEvent(m_wakeEvent);
-            WaitForSingleObject(m_wakeEvent, 500);
+            WaitForSingleObject(m_wakeEvent, 50);
             continue;
         }
 
