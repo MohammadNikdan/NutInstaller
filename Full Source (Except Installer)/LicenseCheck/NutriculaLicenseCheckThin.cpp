@@ -8915,6 +8915,228 @@ int AntiTamperCheckedTier(int rawTier)
     return result;
 }
 
+// =========================================================================
+// 2026 hardening (project owner's explicit request) - independent debugger
+// watchdog, specifically against a LIVE return-value patch: a breakpoint
+// set right after `call EffectiveTier`/`call Check_Core_Integrity`, forcing
+// the result register to 2 on every single call. NOTHING inside either of
+// those two functions can stop that - by the time a debugger overwrites
+// the register, the callee has already returned and has no further say
+// over what value the caller sees. The only thing that actually helps is
+// a reaction that lives in a COMPLETELY SEPARATE code path, one that does
+// not depend on any caller ever reading a tier value correctly at all.
+//
+// This also runs fully decoupled from AntiTamperCheckedTier's own
+// debugger check (which only fires when rawTier == TIER_LICENSED, rate-
+// limited to once every TIER_REVERIFY_INTERVAL_MS - it would never even
+// run for someone patching toward Tier 2 starting from a raw Free tier).
+//
+// Reaction, in order (project owner's explicit choice after discussing the
+// tradeoff): immediate cache wipe (harmless, helps against anyone NOT
+// actively live-patching - i.e. most real debugging/inspection attempts),
+// then a short grace delay (covers a transient false positive from
+// unrelated tooling), then an unconditional, independent process kill -
+// the step that actually defeats the literal register-patch attack, since
+// it does not read or trust any tier comparison at all.
+//
+// STATED PLAINLY: TerminateProcess here ends the WHOLE MetaTrader
+// terminal.exe process - every chart and every other EA running in it,
+// not just this one - because MT4/5 hosts an entire terminal instance in
+// one process and this DLL has no way to affect only its own EA's chart.
+// This is the project owner's informed, explicit choice, made after this
+// exact tradeoff (vs. a softer cache-wipe-only reaction) was laid out.
+constexpr unsigned long long NUT_WATCHDOG_INTERVAL_MS = 1000;   // how often this independent check itself runs
+constexpr unsigned long long NUT_WATCHDOG_KILL_DELAY_MS = 5000; // grace window between detection and process termination
+std::atomic<bool> g_watchdogStarted{false};
+std::atomic<bool> g_watchdogDebuggerLatched{false};
+
+// Set true once this process has successfully made itself its own
+// debugger (see NUT_SelfDebugLoopThreadProc below). From that point on,
+// EVERY standard debugger-presence check (IsDebuggerPresent,
+// CheckRemoteDebuggerPresent, the ProcessDebugPort query) correctly
+// reports "yes" FOREVER, because this process genuinely is being
+// debugged - by itself, on purpose. Without this flag, the polling
+// watchdog just below would immediately misread its own self-debug
+// session as an attacker and wipe/kill the process on legitimate,
+// intended behavior. The watchdog checks this flag and stands down once
+// it is true, since self-debugging has already made external attachment
+// impossible - its job is done.
+std::atomic<bool> g_selfDebugActive{false};
+
+DWORD WINAPI NUT_WatchdogThreadProc(LPVOID)
+{
+    for (;;)
+    {
+        bool expected = false;
+        if (!g_selfDebugActive.load() &&
+            IsDebuggerAttached() && g_watchdogDebuggerLatched.compare_exchange_strong(expected, true))
+        {
+            // Immediate, harmless half of the reaction - wipe the cached
+            // Lease so no later legitimate re-verification can
+            // accidentally resurrect a real Tier 2 claim from it, and
+            // force the normal state machine to -2 as well (defense in
+            // depth for anyone not actively patching a return register).
+            {
+                std::lock_guard<NutMutex> lock(g_verifiedCacheMutex);
+                g_verifiedCanonical.clear();
+                g_verifiedSignatureB64.clear();
+                g_verifiedTierClaim = TIER_FREE;
+                g_verifiedLicenseExpiresAt = 0;
+                g_verifiedMachineId.clear();
+                g_verifiedDeviceKeyHash.clear();
+                g_verifiedRequestedAt = 0;
+            }
+            SetTier(TIER_FAILED);
+            g_everGotRealAnswer.store(true);
+            g_lastPollOutcomeOk.store(false);
+            g_lastReverifyTickMs.store(0);
+
+            // The actual defense against a live return-value patch: a
+            // fixed grace delay (the decision is already made - this is
+            // not a re-check), then an unconditional, independent kill
+            // that no tier-comparison patch can influence.
+            Sleep(static_cast<DWORD>(NUT_WATCHDOG_KILL_DELAY_MS));
+            TerminateProcess(GetCurrentProcess(), 0xDEADBEEF);
+            return 0; // unreachable in practice
+        }
+        Sleep(static_cast<DWORD>(NUT_WATCHDOG_INTERVAL_MS));
+    }
+}
+
+// Starts the watchdog thread above exactly once per process, regardless of
+// how many charts/EAs in this terminal call Vela_Boot_84 - one DLL
+// instance (and therefore one watchdog) is shared by the whole terminal.exe
+// process.
+void EnsureDebuggerWatchdogStarted()
+{
+    bool expected = false;
+    if (g_watchdogStarted.compare_exchange_strong(expected, true))
+    {
+        HANDLE h = CreateThread(nullptr, 0, NUT_WatchdogThreadProc, nullptr, 0, nullptr);
+        if (h) CloseHandle(h); // intentionally not joined - runs for the process's lifetime
+    }
+}
+
+// =========================================================================
+// 2026 hardening (project owner's explicit, FULLY INFORMED choice, made
+// after the exact tradeoff below was laid out in detail and a softer
+// alternative - just polling faster - was offered and declined):
+//
+// The watchdog above still has a race window: it only POLLS for a
+// debugger once a second. An attacker who scripts "attach, patch one
+// call's return value, detach" to complete in well under a second (fully
+// achievable - a scripted breakpoint hit + register write + continue
+// takes microseconds, and MT4/5 can run all ~1020 calculation functions
+// for one OnTick in that same fraction of a second) can slip the entire
+// attach/patch/detach cycle between two watchdog polls, every tick,
+// indefinitely. No amount of polling faster closes this race, it only
+// shrinks it - a fast enough scripted attack still fits.
+//
+// Windows allows at most ONE debugger attached to a process at a time.
+// This function makes THIS process become its own debugger via
+// DebugActiveProcess, as early as possible. From that moment on, any
+// external tool's attempt to attach (x64dbg, OllyDbg, WinDbg, a custom
+// scripted debugger - anything using the standard Windows debugging API)
+// fails OUTRIGHT, instantly, with no race window at all - not "probably
+// caught within a second," but structurally impossible, the same way two
+// processes cannot both hold an exclusive file lock.
+//
+// THE REAL RISK, stated exactly as plainly to the code as it was to the
+// project owner: being a debugger means this process must now service
+// ITS OWN debug events (WaitForDebugEvent/ContinueDebugEvent) for as
+// long as it runs. Getting this wrong - swallowing an exception the CRT
+// or a Windows API needs to see, or simply not answering an event -
+// can hang or crash the ENTIRE MetaTrader terminal.exe process, for
+// every legitimate user, not just an attacker. This is real, non-
+// theoretical systems-programming risk, accepted deliberately here.
+//
+// The loop below is written to be maximally transparent specifically to
+// minimize that risk: it inspects NOTHING about any event's content, and
+// passes EVERY exception through with DBG_EXCEPTION_NOT_HANDLED (exactly
+// the outcome the CRT/Windows APIs would see with no debugger attached
+// at all) rather than ever claiming to have handled one. Its only
+// purpose is to exist and keep calling WaitForDebugEvent, which is what
+// makes Windows consider this process "already being debugged" and
+// reject every other attach attempt. DebugSetProcessKillOnExit(FALSE) is
+// not optional: without it, Windows's default is to TERMINATE the
+// debuggee (this same process) the instant this debug session ends for
+// ANY reason - a crash in this one thread would otherwise take the
+// entire terminal down with it.
+//
+// UPDATE (project owner's explicit, stronger requirement): the paragraph
+// above originally described this as falling back to the polling
+// watchdog if DebugActiveProcess fails. That is no longer the policy -
+// Vela_Boot_84() (below) now FAILS OUTRIGHT (returns a non-1 result,
+// which MQL's own existing "Vela_Boot_84() != 1" handling already turns
+// into an Alert + ExpertRemove + INIT_FAILED) if self-debugging does not
+// become active. g_selfDebugAttachDone/g_selfDebugActive below are what
+// Vela_Boot_84() waits on and checks to make that decision. Note this
+// failure mode only blocks THIS ONE EA's own initialization through
+// MQL's normal, existing error path - it is not the watchdog's
+// TerminateProcess reaction and does not affect the rest of the
+// terminal or its other charts.
+std::atomic<bool> g_selfDebugAttachDone{false}; // true once the attach attempt itself has been decided, success or failure
+
+DWORD WINAPI NUT_SelfDebugLoopThreadProc(LPVOID)
+{
+    // Must happen before DebugActiveProcess, not after - see this
+    // function's own comment above for exactly why this one call is the
+    // single most safety-critical line here.
+    DebugSetProcessKillOnExit(FALSE);
+
+    if (!DebugActiveProcess(GetCurrentProcessId()))
+    {
+        g_selfDebugAttachDone.store(true); // decided: failed - Vela_Boot_84() is now waiting on exactly this
+        return 0;
+    }
+    g_selfDebugActive.store(true);
+    g_selfDebugAttachDone.store(true); // decided: succeeded
+
+    for (;;)
+    {
+        DEBUG_EVENT ev{};
+        if (!WaitForDebugEvent(&ev, INFINITE))
+        {
+            break; // should not happen while actively self-debugging; stop cleanly rather than spin
+        }
+
+        DWORD continueStatus = DBG_CONTINUE;
+        if (ev.dwDebugEventCode == EXCEPTION_DEBUG_EVENT)
+        {
+            // Never claim to have handled an exception - pass it through
+            // exactly as it would behave with no debugger present at
+            // all, so none of this process's own exception handling
+            // (CRT, Windows APIs, MQL's own runtime) is ever silently
+            // altered by this self-debug session existing.
+            continueStatus = DBG_EXCEPTION_NOT_HANDLED;
+        }
+
+        ContinueDebugEvent(ev.dwProcessId, ev.dwThreadId, continueStatus);
+
+        if (ev.dwDebugEventCode == EXIT_PROCESS_DEBUG_EVENT)
+        {
+            break; // this process (itself) is exiting normally; nothing further to service
+        }
+    }
+
+    g_selfDebugActive.store(false);
+    return 0;
+}
+
+// Starts the self-debug loop above exactly once per process, for the same
+// reason EnsureDebuggerWatchdogStarted is idempotent (one DLL instance is
+// shared by every chart/EA in this terminal).
+void EnsureSelfDebugStarted()
+{
+    static std::atomic<bool> started{false};
+    bool expected = false;
+    if (started.compare_exchange_strong(expected, true))
+    {
+        HANDLE h = CreateThread(nullptr, 0, NUT_SelfDebugLoopThreadProc, nullptr, 0, nullptr);
+        if (h) CloseHandle(h); // intentionally not joined - runs for the process's lifetime
+    }
+}
+
 } // namespace
 
 // Renamed from Nutricula_Initialize (2026 hardening): the old name told
@@ -8924,6 +9146,49 @@ int AntiTamperCheckedTier(int rawTier)
 // must use this exact new name.
 extern "C" __declspec(dllexport) int __cdecl Vela_Boot_84()
 {
+    // 2026 hardening (project owner's explicit, stronger requirement):
+    // self-debugging is no longer best-effort - this DLL must come up
+    // ONLY in self-debugging mode, or refuse to initialize at all.
+    // EnsureSelfDebugStarted is idempotent (only the first call in this
+    // process actually starts the thread); every call, including this
+    // one, then waits here for that attempt to be DECIDED.
+    //
+    // DebugActiveProcess itself resolves almost immediately - it is not
+    // a genuine wait for anything external or slow. This bounded spin
+    // (at most ~1 second) only covers the ordinary thread-scheduling gap
+    // between creating that thread and it actually running its first few
+    // instructions, nothing more.
+    EnsureSelfDebugStarted();
+    for (int i = 0; i < 100 && !g_selfDebugAttachDone.load(); ++i)
+    {
+        Sleep(10);
+    }
+
+    if (!g_selfDebugActive.load())
+    {
+        // Either DebugActiveProcess itself failed (most plausibly: a
+        // real debugger was already attached to this process - e.g. a
+        // developer debugging an unrelated EA in the same terminal - at
+        // the exact moment this ran), or it simply did not resolve
+        // within the bound above. Fail closed, exactly as asked: do not
+        // proceed to machine-identity/public-key loading at all, and
+        // return a non-1 result so MQL's own existing
+        // "Vela_Boot_84() != 1" handling reports this as an
+        // initialization failure (Alert + ExpertRemove + INIT_FAILED) -
+        // deliberately the same generic failure code already used for
+        // "public key missing" just below, so this does not hand an
+        // attacker a specific "a debugger was detected" signal.
+        return 0;
+    }
+
+    // Reaches here only once self-debugging is confirmed active. Started
+    // now as a defense-in-depth backstop for the rest of this process's
+    // lifetime, in case this self-debug session ever ends on its own
+    // later (see NUT_SelfDebugLoopThreadProc's own cleanup path) - the
+    // boot-time decision above is already fail-closed on its own and
+    // does not depend on this.
+    EnsureDebuggerWatchdogStarted();
+
     // Establish this machine's identity now, while the EA is still in
     // OnInit, rather than leaving the first (slow) attempt to land inside
     // AntiTamperCheckedTier - which a licensed EA reaches from OnTick, under
