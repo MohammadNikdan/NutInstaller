@@ -75,6 +75,14 @@ constexpr int TIER_FILE_LOCKED = -5;
 constexpr int PENDING_IDLE = -1;
 constexpr int PENDING_COMM_FAIL = -2;
 constexpr int PENDING_REFRESH_IN_PROGRESS = -3;
+// Layer 2 (2026 hardening): the Broker reports this instead of a real
+// tier/canonical for as long as its OWN process uptime is below
+// BROKER_WARMUP_SEC (CoordinatorCore.cpp) - it is reachable and answering,
+// just not old enough yet to vouch for anything. Deliberately NOT treated
+// as a pipe failure (the pipe answered fine) and NOT treated as a
+// completed decision either - see Pavo_Sync_85's handling of it just
+// below for why this needs its own value rather than reusing -1/-2.
+constexpr int PENDING_WARMING_UP = -4;
 
 // Hot-path state (architecture point 3): plain atomics, no locks, no IPC,
 // no file I/O, no signature check on every read - only Poll() ever touches
@@ -8683,6 +8691,26 @@ int AntiTamperCheckedTier(int rawTier)
 {
     if (rawTier != TIER_LICENSED) return rawTier;
 
+    // Layer 1 (2026 hardening): the same short-timescale pipe-outage
+    // tolerance Check_Core_Integrity already uses for its own -2
+    // diagnostic must also gate the actual trading-math tier, not just a
+    // status report - otherwise a sustained Broker outage shows up as
+    // "broken" to Check_Core_Integrity while the ~1020 calculation
+    // functions keep computing fully-licensed values anyway, because they
+    // only ever went through this function, which never looked at
+    // g_pipeFailStreak at all. Checked unconditionally, even ahead of the
+    // rate-limit cache below - it is a single cheap atomic load, and a
+    // crossing of the tolerance must not wait up to
+    // TIER_REVERIFY_INTERVAL_MS to take effect. The cache below is also
+    // updated here so a fast-path hit in the next few seconds doesn't
+    // echo a stale TIER_LICENSED result after this decision.
+    if (g_pipeFailStreak.load() >= NUT_PIPE_FAIL_TOLERANCE)
+    {
+        g_lastReverifyTier.store(TIER_FAILED);
+        g_lastReverifyTickMs.store(GetTickCount64());
+        return TIER_FAILED;
+    }
+
     unsigned long long nowTick = GetTickCount64();
     unsigned long long lastTick = g_lastReverifyTickMs.load();
     if (lastTick != 0 && (nowTick - lastTick) < TIER_REVERIFY_INTERVAL_MS)
@@ -8910,9 +8938,49 @@ extern "C" __declspec(dllexport) void __cdecl Pavo_Sync_85()
         return;
     }
 
-    // Reached only when the local pipe to Coordinator just succeeded -
-    // reset the consecutive-failure streak immediately (a single success
-    // fully clears any prior run of hiccups).
+    // Layer 2 (2026 hardening): the pipe answered fine, but the Broker
+    // says it hasn't been continuously alive long enough yet to vouch for
+    // anything (see PENDING_WARMING_UP's own comment and
+    // BROKER_WARMUP_SEC in CoordinatorCore.cpp). This is the exact
+    // countermeasure for "kill the Broker, let it flash up just long
+    // enough to grab one trusted answer, kill it again": no answer is
+    // trusted until it has stayed up past this floor.
+    if (status.pending == PENDING_WARMING_UP)
+    {
+        if (!g_pollEverCompleted.load())
+        {
+            // This process's very first poll cycle ever: stay in the
+            // free, uncounted "-1: still waiting" state exactly as if no
+            // cycle had run at all yet - do NOT latch g_pollEverCompleted
+            // and do NOT touch g_pipeFailStreak. Check_Core_Integrity
+            // keeps reporting -1 (which OnInit's loop tolerates for free,
+            // indefinitely) for as long as warm-up takes, instead of ever
+            // looking like a problem. A legitimate cold start (install,
+            // reboot, EA reopened after the Broker's own 1-hour idle
+            // self-exit) pays this once, silently.
+            g_pollInFlight.store(false);
+            return;
+        }
+        // Any LATER cycle, after this process already completed at least
+        // one poll: a Broker that is warming up again (crash-recovery, an
+        // update, or someone deliberately killing/relaunching it) is from
+        // here on indistinguishable from an ordinary transient pipe miss
+        // - fold it into the exact same g_pipeFailStreak bucket a plain
+        // "Coordinator unavailable" uses, which Check_Core_Integrity and
+        // the EA's own OnTimer switch already handle via the existing -2
+        // path. It deliberately never goes back to -1 once
+        // g_pollEverCompleted is true (see that flag's own comment).
+        g_pending.store(PENDING_COMM_FAIL);
+        g_lastPollOutcomeOk.store(true);
+        g_pipeFailStreak.fetch_add(1);
+        g_pollInFlight.store(false);
+        return;
+    }
+
+    // Reached only when the local pipe to Coordinator just succeeded with
+    // a real answer (not a warm-up placeholder) - reset the
+    // consecutive-failure streak immediately (a single success fully
+    // clears any prior run of hiccups).
     g_pipeFailStreak.store(0);
 
     // Ask the Coordinator to ensure a refresh happens if one is due - a
