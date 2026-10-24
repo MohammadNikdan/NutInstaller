@@ -1,0 +1,79 @@
+name: Build Linux installer package
+#
+# ============================================================================
+# SCOPE, STATED PLAINLY: this workflow does NOT rebuild the installer .exe
+# from source - see build-mac.yml's header comment for the full reasoning
+# (same applies here). It expects "dist/Nutricula Setup.exe" to already
+# exist in the repo (built + signed your usual way, then renamed to that
+# exact file name), and only wraps that existing file for Linux
+# double-click (AppImage) launch.
+#
+# The output file name is "Nutricula Setup" everywhere - this .AppImage,
+# build-windows.yml's .exe, and build-mac.yml's .app all use this same
+# name, on purpose.
+#
+# This workflow is independent of build-windows.yml and build-mac.yml -
+# each has its own "Run workflow" button on the Actions tab, so you can
+# build just this one platform whenever you want, without touching the
+# other two. A tag push (v*) triggers all three at once, each attaching
+# its own file to the same GitHub Release separately.
+# ============================================================================
+
+on:
+  workflow_dispatch: {}
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Verify the pre-built Windows installer is present
+        run: |
+          if [ ! -f "dist/Nutricula Setup.exe" ]; then
+            echo "::error::'dist/Nutricula Setup.exe' is missing. Build it your usual way first, rename it to that exact name, and place it there."
+            exit 1
+          fi
+
+      - name: Assemble the AppDir
+        run: |
+          set -e
+          APPDIR="build/Nutricula Setup.AppDir"
+          mkdir -p "$APPDIR/Resources"
+          cp linux-appdir/AppRun "$APPDIR/AppRun"
+          chmod +x "$APPDIR/AppRun"
+          cp linux-appdir/NutriculaInstaller.desktop "$APPDIR/NutriculaInstaller.desktop"
+          cp "dist/Nutricula Setup.exe" "$APPDIR/Resources/Nutricula Setup.exe"
+          # appimagetool requires SOME icon file to exist. linux-appdir/NutriculaInstaller.png
+          # is a tiny 1x1 placeholder checked into the repo - replace that
+          # file with a real icon (same name, same location) whenever you
+          # have one; nothing here needs to change.
+          cp linux-appdir/NutriculaInstaller.png "$APPDIR/NutriculaInstaller.png"
+
+      - name: Download appimagetool
+        run: |
+          set -e
+          curl -L -o appimagetool "https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage"
+          chmod +x appimagetool
+
+      - name: Build the AppImage
+        run: |
+          set -e
+          ./appimagetool --appimage-extract-and-run "build/Nutricula Setup.AppDir" "build/Nutricula Setup.AppImage"
+          chmod +x "build/Nutricula Setup.AppImage"
+
+      - name: Upload Linux build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Nutricula Setup
+          path: build/Nutricula Setup.AppImage
+
+      - name: Attach to GitHub Release (tag pushes only)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: build/Nutricula Setup.AppImage

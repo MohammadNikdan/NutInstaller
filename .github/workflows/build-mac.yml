@@ -1,0 +1,144 @@
+name: Build Mac installer package
+#
+# ============================================================================
+# SCOPE, STATED PLAINLY: this workflow does NOT rebuild NutriculaInstaller.exe
+# from source. It expects an ALREADY-BUILT, ALREADY-SIGNED NutriculaInstaller.exe
+# to exist in the repo at dist/NutriculaInstaller.exe (built your usual way,
+# locally), and only wraps that existing file for Mac double-click launch.
+#
+# Why: the real Windows build involves KeyBaker.exe baking real private keys
+# (from Keys/*.pem, deliberately kept empty in the repo and only filled in
+# temporarily on a secure local machine - see Keys/*.pem's own comments) and
+# VMProtect obfuscation. Piping those real secrets through GitHub Actions
+# secrets would work technically, but it is a real security decision - it
+# changes where your most sensitive key material can be touched/exposed, and
+# that call is yours to make deliberately, not something to end up doing
+# as a side effect of a convenience workflow. So this workflow starts from
+# whatever .exe you already produced your own, trusted way, and only adds
+# the NEW part: wrapping it for Mac double-click launch.
+#
+# The output file name is "Nutricula Setup" everywhere - this .app,
+# build-windows.yml's .exe, and build-linux.yml's .AppImage all use this
+# same name, on purpose. Place your built/signed exe at
+# "dist/Nutricula Setup.exe" (rename it to that exact name) before running
+# this workflow.
+#
+# This workflow is independent of build-windows.yml and build-linux.yml -
+# each has its own "Run workflow" button on the Actions tab, so you can
+# build just this one platform whenever you want, without touching the
+# other two. A tag push (v*) triggers all three at once, each attaching
+# its own file to the same GitHub Release separately.
+# ============================================================================
+
+on:
+  workflow_dispatch: {}
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build-mac:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Verify the pre-built Windows installer is present
+        run: |
+          if [ ! -f "dist/Nutricula Setup.exe" ]; then
+            echo "::error::'dist/Nutricula Setup.exe' is missing. Build it your usual way first, rename it to that exact name, and place it there."
+            exit 1
+          fi
+
+      - name: Assemble the .app bundle
+        run: |
+          set -e
+          APP="build/Nutricula Setup.app"
+          mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
+          cp -R "mac-wrapper/Contents/Info.plist" "$APP/Contents/Info.plist"
+          cp -R "mac-wrapper/Contents/MacOS/Nutricula Setup" "$APP/Contents/MacOS/Nutricula Setup"
+          chmod +x "$APP/Contents/MacOS/Nutricula Setup"
+          cp "dist/Nutricula Setup.exe" "$APP/Contents/Resources/Nutricula Setup.exe"
+          echo "APP_PATH=$APP" >> "$GITHUB_ENV"
+
+      # ---- Signing + notarization: SKIPPED gracefully if the Apple
+      # secrets below are not configured yet, so the unsigned .app still
+      # builds and uploads for local testing while you decide whether to
+      # buy the $99/year Apple Developer Program membership. Once you have
+      # it, add these repo secrets (Settings -> Secrets and variables ->
+      # Actions) to turn signing on:
+      #   MACOS_CERTIFICATE_P12_BASE64 - your Developer ID Application
+      #     certificate, exported as a .p12, base64-encoded (base64 -i
+      #     cert.p12 | pbcopy on your own Mac, paste the result as the
+      #     secret value).
+      #   MACOS_CERTIFICATE_PASSWORD - the password you set when exporting
+      #     that .p12.
+      #   APPLE_ID - the Apple ID email on the Developer Program account.
+      #   APPLE_TEAM_ID - your 10-character Team ID (developer.apple.com
+      #     -> Membership).
+      #   APPLE_APP_SPECIFIC_PASSWORD - an app-specific password for that
+      #     Apple ID (appleid.apple.com -> Sign-In and Security ->
+      #     App-Specific Passwords), used by notarytool instead of your
+      #     real account password.
+      - name: Import signing certificate
+        id: import_cert
+        if: ${{ secrets.MACOS_CERTIFICATE_P12_BASE64 != '' }}
+        env:
+          MACOS_CERTIFICATE_P12_BASE64: ${{ secrets.MACOS_CERTIFICATE_P12_BASE64 }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+        run: |
+          set -e
+          KEYCHAIN_PASSWORD="$(uuidgen)"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
+          security set-keychain-settings -lut 21600 build.keychain
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
+          echo "$MACOS_CERTIFICATE_P12_BASE64" | base64 --decode > cert.p12
+          security import cert.p12 -k build.keychain -P "$MACOS_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" build.keychain
+          security list-keychain -d user -s build.keychain login.keychain
+          rm -f cert.p12
+          echo "did_import=true" >> "$GITHUB_OUTPUT"
+
+      - name: Code-sign the .app
+        if: steps.import_cert.outputs.did_import == 'true'
+        run: |
+          set -e
+          IDENTITY="$(security find-identity -v -p codesigning build.keychain | grep 'Developer ID Application' | head -n1 | sed -E 's/.*"(.+)"/\1/')"
+          if [ -z "$IDENTITY" ]; then
+            echo "::error::No 'Developer ID Application' identity found in the imported certificate."
+            exit 1
+          fi
+          codesign --force --deep --options runtime --timestamp --sign "$IDENTITY" "$APP_PATH"
+          codesign --verify --deep --strict --verbose=2 "$APP_PATH"
+
+      - name: Notarize and staple
+        if: ${{ steps.import_cert.outputs.did_import == 'true' && secrets.APPLE_ID != '' }}
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+        run: |
+          set -e
+          ditto -c -k --keepParent "$APP_PATH" "build/Nutricula Setup-for-notarize.zip"
+          xcrun notarytool submit "build/Nutricula Setup-for-notarize.zip" \
+            --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" --password "$APPLE_APP_SPECIFIC_PASSWORD" \
+            --wait
+          xcrun stapler staple "$APP_PATH"
+          rm -f "build/Nutricula Setup-for-notarize.zip"
+
+      - name: Zip the final .app for distribution
+        run: |
+          set -e
+          ditto -c -k --keepParent "$APP_PATH" "build/Nutricula Setup.zip"
+
+      - name: Upload Mac build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Nutricula Setup
+          path: build/Nutricula Setup.zip
+
+      - name: Attach to GitHub Release (tag pushes only)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: build/Nutricula Setup.zip
