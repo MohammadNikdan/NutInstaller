@@ -52,7 +52,7 @@ jobs:
       HAS_APPLE_ID: ${{ secrets.APPLE_ID != '' }}
     steps:
       - name: Checkout repo
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Verify the pre-built Windows installer is present
         run: |
@@ -143,13 +143,13 @@ jobs:
           ditto -c -k --keepParent "$APP_PATH" "build/Nutricula Setup.zip"
 
       - name: Upload Mac build artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: Nutricula Setup
           path: build/Nutricula Setup.zip
 
       - name: Attach to GitHub Release (tag pushes only)
         if: startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: build/Nutricula Setup.zip
