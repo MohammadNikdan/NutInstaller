@@ -1,0 +1,215 @@
+#!/bin/bash
+# ==============================================================================
+# NutriculaInstaller AppRun (2026, Linux double-click wrapper).
+#
+# When packaged into a .AppImage (via appimagetool - see the CI workflow),
+# this is the entry point the AppImage runtime executes directly when the
+# person double-clicks the .AppImage file in their file manager - no
+# terminal window, no visible script, same experience as any other
+# AppImage app they may have used before.
+#
+# From here down, everything is invisible: find a usable Wine (almost
+# always already on this system if MetaTrader is running at all - unlike
+# Mac, Linux has no official MetaQuotes build, so SOME Wine install is how
+# MetaTrader got here in the first place) and launch the real Windows
+# installer (Nutricula Setup.exe, bundled alongside this script) through
+# it. If nothing usable is found anywhere, show a plain English message
+# (via whatever GUI dialog tool is available, or a desktop notification as
+# a fallback) saying no MetaTrader installation was found, and exit.
+# ==============================================================================
+
+set -u
+
+# $APPDIR is set automatically by the AppImage runtime once this is
+# actually packaged and run as a .AppImage. When testing this AppDir
+# directly (before packaging), fall back to resolving our own location.
+if [ -z "${APPDIR:-}" ]; then
+    APPDIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+fi
+
+INSTALLER_EXE="$APPDIR/Resources/Nutricula Setup.exe"
+LOG_FILE="$HOME/.nutricula_installer_launcher.log"
+log() { printf '%s %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$1" >> "$LOG_FILE" 2>/dev/null; }
+
+log "---- launch ----"
+
+# A GUI message box, trying whatever is actually available on this
+# desktop, in roughly descending order of how common each is. Falls back
+# to a desktop notification, and finally to doing nothing visible beyond
+# the log file if truly nothing GUI-capable is present (better than
+# crashing or silently exiting with zero explanation).
+show_message() {
+    local text="$1"
+    if command -v zenity >/dev/null 2>&1; then
+        zenity --error --title="Nutricula Installer" --text="$text" 2>/dev/null
+        return
+    fi
+    if command -v kdialog >/dev/null 2>&1; then
+        kdialog --title "Nutricula Installer" --error "$text" 2>/dev/null
+        return
+    fi
+    if command -v xmessage >/dev/null 2>&1; then
+        xmessage -center "$text" 2>/dev/null
+        return
+    fi
+    if command -v notify-send >/dev/null 2>&1; then
+        notify-send "Nutricula Installer" "$text" 2>/dev/null
+        return
+    fi
+    log "No GUI dialog tool available to show: $text"
+}
+
+if [ ! -f "$INSTALLER_EXE" ]; then
+    show_message "Nutricula Setup.exe is missing from this package. Reinstall it, or contact support."
+    log "ERROR: $INSTALLER_EXE not found."
+    exit 1
+fi
+
+# Manual override escape hatch, same idea as the Mac wrapper: a text file
+# named "wine_override.txt" placed next to the AppImage, first two
+# non-empty lines used verbatim as WINE_BIN / WINEPREFIX, bypassing the
+# search below entirely.
+OVERRIDE_FILE="$(dirname "${APPIMAGE:-$APPDIR}")/wine_override.txt"
+WINE_BIN=""
+WINE_PREFIX_PATH=""
+if [ -f "$OVERRIDE_FILE" ]; then
+    WINE_BIN="$(sed -n '1p' "$OVERRIDE_FILE" 2>/dev/null)"
+    WINE_PREFIX_PATH="$(sed -n '2p' "$OVERRIDE_FILE" 2>/dev/null)"
+    log "Using manual override: WINE_BIN=$WINE_BIN WINEPREFIX=$WINE_PREFIX_PATH"
+fi
+
+# NOTE on why WHICH tier below matches doesn't matter for which terminals
+# get found: once Nutricula Setup.exe is running (under whatever Wine
+# binary/prefix matched first), its own TerminalDiscoveryService scans
+# every known bottle location on the filesystem directly (Z:\ maps the
+# whole real filesystem regardless of which WINEPREFIX is active), so it
+# finds MT4 and/or MT5 wherever they actually live, even in a different
+# prefix than the one that launched it. These tiers only decide which
+# Wine binary gets handed the .exe to run under.
+#
+# KNOWN OPEN RISK, not yet confirmed on real hardware: Nutricula Setup.exe
+# is a classic .NET Framework 4.8 app, not self-contained. Most distro
+# Wine packages pull in wine-mono (or prompt to auto-install it on first
+# .NET app launch) which usually covers this, but it hasn't been verified
+# against this specific installer on a real machine - if that first-run
+# Mono prompt does appear, it's an extra Wine-owned dialog, not a crash,
+# but it's also not the fully silent experience asked for.
+#
+# Tier 1 (most common on Linux by far): a system Wine already on PATH.
+# Getting MetaTrader running on Linux at all almost always means Wine was
+# installed through the normal package manager at some point - the person
+# may not remember doing it, but `wine`/`wine64` on PATH is the typical
+# end state. Uses WINEPREFIX from the environment if already set
+# (respects a person who deliberately configured one), else Wine's own
+# default of "~/.wine".
+# ------------------------------------------------------------------------
+if [ -z "$WINE_BIN" ]; then
+    SYSTEM_WINE="$(command -v wine64 2>/dev/null || command -v wine 2>/dev/null || true)"
+    if [ -n "$SYSTEM_WINE" ]; then
+        DEFAULT_PREFIX="${WINEPREFIX:-$HOME/.wine}"
+        if [ -d "$DEFAULT_PREFIX/drive_c" ]; then
+            WINE_BIN="$SYSTEM_WINE"
+            WINE_PREFIX_PATH="$DEFAULT_PREFIX"
+        fi
+    fi
+fi
+
+# ------------------------------------------------------------------------
+# find_prefix_with_drive_c <root> -> prints the first immediate
+# subdirectory of <root> that itself contains "drive_c", or nothing.
+# Shared helper for every "one prefix per named subfolder" tool below
+# (Bottles, PlayOnLinux, Lutris) - mirrors AddBottleDriveCRoots on the
+# Windows/Installer side exactly, so "which prefix this wrapper picks" and
+# "which prefixes the Installer itself scans" stay the same shape.
+# ------------------------------------------------------------------------
+find_prefix_with_drive_c() {
+    local root="$1"
+    [ -d "$root" ] || return 1
+    local sub
+    for sub in "$root"/*/; do
+        [ -d "${sub}drive_c" ] && printf '%s\n' "${sub%/}" && return 0
+    done
+    return 1
+}
+
+# Tier 2: Bottles (Flatpak build first - the far more common distribution
+# path - then the native/XDG install location).
+if [ -z "$WINE_BIN" ]; then
+    for BOTTLES_ROOT in \
+        "$HOME/.var/app/com.usebottles.bottles/data/bottles/bottles" \
+        "$HOME/.local/share/bottles/bottles"
+    do
+        PREFIX="$(find_prefix_with_drive_c "$BOTTLES_ROOT")" || continue
+        # Bottles manages its own private Wine runner versions; search its
+        # runners folder (Flatpak and native layouts both covered) for any
+        # wine64/wine binary rather than guessing one exact version string.
+        for RUNNERS_ROOT in \
+            "$HOME/.var/app/com.usebottles.bottles/data/bottles/runners" \
+            "$HOME/.local/share/bottles/runners"
+        do
+            [ -d "$RUNNERS_ROOT" ] || continue
+            FOUND_BIN="$(find "$RUNNERS_ROOT" -maxdepth 4 \( -name 'wine64' -o -name 'wine' \) -type f -perm -u+x 2>/dev/null | head -n 1)"
+            if [ -n "$FOUND_BIN" ]; then
+                WINE_BIN="$FOUND_BIN"
+                WINE_PREFIX_PATH="$PREFIX"
+                break 2
+            fi
+        done
+    done
+fi
+
+# Tier 3: PlayOnLinux - its own Wine versions under ~/.PlayOnLinux/wine.
+if [ -z "$WINE_BIN" ]; then
+    PREFIX="$(find_prefix_with_drive_c "$HOME/.PlayOnLinux/wineprefix")"
+    if [ -n "$PREFIX" ]; then
+        FOUND_BIN="$(find "$HOME/.PlayOnLinux/wine" -maxdepth 5 \( -name 'wine64' -o -name 'wine' \) -type f -perm -u+x 2>/dev/null | head -n 1)"
+        if [ -n "$FOUND_BIN" ]; then
+            WINE_BIN="$FOUND_BIN"
+            WINE_PREFIX_PATH="$PREFIX"
+        fi
+    fi
+fi
+
+# Tier 4: Lutris's conventional per-install root under ~/Games, and its
+# own managed Wine runner versions.
+if [ -z "$WINE_BIN" ]; then
+    PREFIX="$(find_prefix_with_drive_c "$HOME/Games")"
+    if [ -n "$PREFIX" ]; then
+        FOUND_BIN="$(find "$HOME/.local/share/lutris/runners/wine" -maxdepth 4 \( -name 'wine64' -o -name 'wine' \) -type f -perm -u+x 2>/dev/null | head -n 1)"
+        if [ -n "$FOUND_BIN" ]; then
+            WINE_BIN="$FOUND_BIN"
+            WINE_PREFIX_PATH="$PREFIX"
+        fi
+    fi
+fi
+
+# Tier 5: a bounded, one-level scan of every other top-level folder
+# directly under home for one that itself contains a drive_c - catches a
+# hand-picked, arbitrarily-named WINEPREFIX, exactly mirroring the same
+# fallback added to GetExistingWinePrefixDriveCRoots on the Installer side.
+if [ -z "$WINE_BIN" ]; then
+    SYSTEM_WINE="$(command -v wine64 2>/dev/null || command -v wine 2>/dev/null || true)"
+    if [ -n "$SYSTEM_WINE" ]; then
+        PREFIX="$(find_prefix_with_drive_c "$HOME")"
+        if [ -n "$PREFIX" ]; then
+            WINE_BIN="$SYSTEM_WINE"
+            WINE_PREFIX_PATH="$PREFIX"
+        fi
+    fi
+fi
+
+if [ -z "$WINE_BIN" ]; then
+    log "No usable Wine runtime/prefix found anywhere."
+    show_message "No MetaTrader 4 or MetaTrader 5 installation was found on this computer. Please install MetaTrader first, then run this installer again."
+    exit 1
+fi
+
+log "Using WINE_BIN=$WINE_BIN WINEPREFIX=$WINE_PREFIX_PATH"
+
+export WINEPREFIX="$WINE_PREFIX_PATH"
+export WINEDEBUG="${WINEDEBUG:--all}"
+
+"$WINE_BIN" "$INSTALLER_EXE" >>"$LOG_FILE" 2>&1
+STATUS=$?
+log "Wine exited with status $STATUS"
+exit "$STATUS"

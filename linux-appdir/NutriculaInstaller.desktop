@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Nutricula Setup
+Comment=Install Nutricula into MetaTrader 4/5
+Exec=AppRun
+Icon=NutriculaInstaller
+Categories=Utility;
+Terminal=false

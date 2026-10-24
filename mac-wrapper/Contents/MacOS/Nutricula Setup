@@ -1,0 +1,232 @@
+#!/bin/bash
+# ==============================================================================
+# NutriculaInstaller.app launcher (2026, Mac double-click wrapper).
+#
+# This is the file Finder actually runs when the person double-clicks the
+# .app - macOS Launch Services executes Contents/MacOS/<CFBundleExecutable>
+# directly, with no Terminal window shown, exactly like any other Mac app.
+# From here down, everything is invisible to the person: we find the Wine
+# runtime already hiding inside their MetaTrader installation (or another
+# Wine-based tool, if that's what they used instead) and launch the real
+# Windows installer (Nutricula Setup.exe, bundled in Contents/Resources)
+# through it. If we succeed, the person just sees the ordinary Windows
+# installer window pop up and never learns Wine was involved at all.
+#
+# If NOTHING usable is found anywhere, we show a native dialog (English,
+# per the project owner's explicit instruction) saying no MetaTrader
+# installation was found, and exit - never a silent no-op, never a
+# Terminal window, never a crash dialog.
+# ==============================================================================
+
+set -u
+
+# Resolve our own real location (not the symlinked/working directory),
+# so this still finds its sibling files correctly no matter where the
+# .app itself was moved to (Desktop, Downloads, /Applications, ...).
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+APP_CONTENTS_DIR="$(dirname "$SCRIPT_DIR")"
+RESOURCES_DIR="$APP_CONTENTS_DIR/Resources"
+INSTALLER_EXE="$RESOURCES_DIR/Nutricula Setup.exe"
+
+LOG_FILE="$HOME/Library/Logs/NutriculaInstallerLauncher.log"
+mkdir -p "$(dirname "$LOG_FILE")" 2>/dev/null
+log() { printf '%s %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$1" >> "$LOG_FILE" 2>/dev/null; }
+
+log "---- launch ----"
+
+if [ ! -f "$INSTALLER_EXE" ]; then
+    osascript -e 'display dialog "Nutricula Setup.exe is missing from this app bundle. Reinstall this app, or contact support." buttons {"OK"} with icon stop with title "Nutricula Installer"' >/dev/null 2>&1
+    log "ERROR: $INSTALLER_EXE not found."
+    exit 1
+fi
+
+# A manual override escape hatch: if a plain text file named
+# "wine_override.txt" sits right next to the .app (one level above it),
+# its first two non-empty lines are used verbatim as WINE_BIN and
+# WINEPREFIX, skipping all of the search logic below entirely. Not needed
+# for the common case - this exists purely so a specific machine's exact
+# Wine location can be pinned by hand if the automatic search below ever
+# guesses wrong, without having to rebuild or re-sign the app.
+APP_BUNDLE_DIR="$(cd "$APP_CONTENTS_DIR/.." && pwd)"
+OVERRIDE_FILE="$(dirname "$APP_BUNDLE_DIR")/wine_override.txt"
+WINE_BIN=""
+WINE_PREFIX_PATH=""
+if [ -f "$OVERRIDE_FILE" ]; then
+    WINE_BIN="$(sed -n '1p' "$OVERRIDE_FILE" 2>/dev/null)"
+    WINE_PREFIX_PATH="$(sed -n '2p' "$OVERRIDE_FILE" 2>/dev/null)"
+    log "Using manual override: WINE_BIN=$WINE_BIN WINEPREFIX=$WINE_PREFIX_PATH"
+fi
+
+# ------------------------------------------------------------------------
+# find_wine_in_bundle <app bundle path> -> prints the first plausible wine
+# binary found inside it, or nothing. Tries a short list of known-common
+# relative layouts first (fast path - matches the typical structure of a
+# Wine-wrapper .app), then falls back to a bounded `find` across the whole
+# bundle for anything literally named wine64/wine/wineloader, in case a
+# given app version lays itself out differently than expected.
+# ------------------------------------------------------------------------
+find_wine_in_bundle() {
+    local bundle="$1"
+    [ -d "$bundle" ] || return 1
+
+    local candidates=(
+        "$bundle/Contents/SharedSupport"/*/wine/bin/wine64
+        "$bundle/Contents/SharedSupport"/*/wine/bin/wine
+        "$bundle/Contents/SharedSupport/wine/bin/wine64"
+        "$bundle/Contents/SharedSupport/wine/bin/wine"
+        "$bundle/Contents/Resources/wine/bin/wine64"
+        "$bundle/Contents/Resources/wine/bin/wine"
+        "$bundle/Contents/MacOS/wine64"
+        "$bundle/Contents/MacOS/wine"
+    )
+    local c
+    for c in "${candidates[@]}"; do
+        if [ -f "$c" ] && [ -x "$c" ]; then
+            printf '%s\n' "$c"
+            return 0
+        fi
+    done
+
+    # Bounded fallback scan - depth-limited so a huge app bundle can't
+    # turn this into a slow, unbounded search.
+    local found
+    found="$(find "$bundle" -maxdepth 8 \( -name 'wine64' -o -name 'wine' -o -name 'wineloader' \) -type f -perm -u+x -print 2>/dev/null | head -n 1)"
+    if [ -n "$found" ]; then
+        printf '%s\n' "$found"
+        return 0
+    fi
+    return 1
+}
+
+# ------------------------------------------------------------------------
+# IMPORTANT, so this isn't misread as "only looks for MetaTrader 5": the
+# four try_pair calls right below check MT5's bottle AND MT4's bottle,
+# in both of the two install locations each can live in - whichever one
+# is actually present (MT4-only, MT5-only, or both) is found, because
+# try_pair simply returns 1 (continue to the next candidate) whenever a
+# given prefix/app pair isn't there. Which specific pair happens to match
+# does NOT decide which terminals Nutricula can install into: once the
+# .exe is running (under WHATEVER Wine binary launched it), its own
+# TerminalDiscoveryService scans the filesystem directly (every known
+# bottle location, same as the broadened scan on Windows/Linux too), and
+# Wine maps the entire real filesystem under Z:\ regardless of which
+# WINEPREFIX is currently active - so an .exe booted from inside the MT5
+# bottle can still see and install into an MT4 terminal that lives in a
+# completely separate bottle, and vice versa. The only thing deciding
+# which pair we try is "which Wine binary do we hand the .exe to run
+# under", not "which terminal(s) will be found".
+#
+# KNOWN OPEN RISK, not yet confirmed on real hardware: Nutricula Setup.exe
+# targets classic .NET Framework 4.8 (TargetFrameworkVersion v4.8 in its
+# .csproj), not a self-contained runtime. MetaQuotes' own embedded Wine
+# (bundled only to run the native MT4/MT5 terminal, which is plain C++)
+# has no obvious reason to already include .NET Framework/wine-mono
+# support, and if it doesn't, Wine will either show its own "Mono Windows
+# Support" install prompt (an extra dialog + a wait for a download, not a
+# silent failure, but also not the fully silent double-click experience
+# asked for) or the .exe may fail to start at all. A real Mac with only
+# MetaTrader installed (no separate Wine of its own) is the case most
+# likely to hit this, since there is then no alternative Wine to fall
+# back to. This needs a real-device test to know for sure; if it turns
+# out to be a real problem, the fix is to stop reusing MetaTrader's own
+# bottle at all and instead create/reuse one small Wine prefix of our
+# own (via a user-installed Wine, or a one-time winetricks dotnet48 run)
+# specifically for launching the installer - since, as explained above,
+# discovery doesn't care which prefix launched it anyway. Flagging this
+# now rather than treating it as already solved.
+# ------------------------------------------------------------------------
+try_pair() {
+    local prefix="$1"
+    local app="$2"
+    [ -d "$prefix" ] || return 1
+    local bin
+    bin="$(find_wine_in_bundle "$app")" || return 1
+    WINE_PREFIX_PATH="$prefix"
+    WINE_BIN="$bin"
+    return 0
+}
+
+if [ -z "$WINE_BIN" ]; then
+    # MetaQuotes' own official installers - by far the most common case.
+    # MT5 checked first here only because it's the newer/more common
+    # platform to default to when both happen to be present; an MT4-only
+    # install matches on the third/fourth line below exactly the same way.
+    try_pair "$HOME/Library/Application Support/net.metaquotes.wine.metatrader5" "/Applications/MetaTrader 5.app" ||
+    try_pair "$HOME/Library/Application Support/net.metaquotes.wine.metatrader5" "$HOME/Applications/MetaTrader 5.app" ||
+    try_pair "$HOME/Library/Application Support/net.metaquotes.wine.metatrader4" "/Applications/MetaTrader 4.app" ||
+    try_pair "$HOME/Library/Application Support/net.metaquotes.wine.metatrader4" "$HOME/Applications/MetaTrader 4.app" ||
+    true
+fi
+
+if [ -z "$WINE_BIN" ]; then
+    # CrossOver - one bottle per name under its own Bottles folder; the
+    # wine binary lives inside CrossOver.app itself, shared by every bottle.
+    CROSSOVER_APP=""
+    for candidate in "/Applications/CrossOver.app" "$HOME/Applications/CrossOver.app"; do
+        [ -d "$candidate" ] && CROSSOVER_APP="$candidate" && break
+    done
+    if [ -n "$CROSSOVER_APP" ]; then
+        BOTTLES_DIR="$HOME/Library/Application Support/CrossOver/Bottles"
+        if [ -d "$BOTTLES_DIR" ]; then
+            for bottle in "$BOTTLES_DIR"/*/; do
+                [ -d "$bottle" ] || continue
+                if try_pair "${bottle%/}" "$CROSSOVER_APP"; then
+                    break
+                fi
+            done
+        fi
+    fi
+fi
+
+if [ -z "$WINE_BIN" ]; then
+    # PlayOnMac - separately-installed Wine versions under its own folder.
+    POM_WINE_ROOT="$HOME/Library/PlayOnMac/wine"
+    POM_PREFIX_ROOT="$HOME/Library/PlayOnMac/wineprefix"
+    if [ -d "$POM_WINE_ROOT" ] && [ -d "$POM_PREFIX_ROOT" ]; then
+        POM_BIN="$(find "$POM_WINE_ROOT" -maxdepth 4 -name 'wine64' -type f -perm -u+x 2>/dev/null | head -n 1)"
+        [ -z "$POM_BIN" ] && POM_BIN="$(find "$POM_WINE_ROOT" -maxdepth 4 -name 'wine' -type f -perm -u+x 2>/dev/null | head -n 1)"
+        if [ -n "$POM_BIN" ]; then
+            for prefix in "$POM_PREFIX_ROOT"/*/; do
+                [ -d "$prefix" ] || continue
+                WINE_BIN="$POM_BIN"
+                WINE_PREFIX_PATH="${prefix%/}"
+                break
+            done
+        fi
+    fi
+fi
+
+if [ -z "$WINE_BIN" ]; then
+    # Last resort: a plain Wine install on PATH (Homebrew, winehq, etc.) -
+    # uses its default prefix (~/.wine) unless WINEPREFIX is already set
+    # in the environment this was launched from.
+    SYSTEM_WINE="$(command -v wine64 2>/dev/null || command -v wine 2>/dev/null || true)"
+    if [ -n "$SYSTEM_WINE" ]; then
+        WINE_BIN="$SYSTEM_WINE"
+        WINE_PREFIX_PATH="${WINEPREFIX:-$HOME/.wine}"
+    fi
+fi
+
+if [ -z "$WINE_BIN" ]; then
+    log "No usable Wine runtime found anywhere."
+    # Same exact English wording as InstallerService.cs's Messages.NoTerminalFound
+    # on Windows ("No MetaTrader 4 or MetaTrader 5 installation was found on this
+    # computer. ...") - this is not a new/separate message, it is the same
+    # pre-flight check the Windows installer already does, just shown here
+    # before Wine/the .exe even get a chance to run, since on Mac/Linux we
+    # have to find a Wine environment BEFORE we can hand off to the .exe
+    # (which does its own, identical check again once it does start, as a
+    # second safety net - belt and suspenders, not a different behavior).
+    osascript -e 'display dialog "No MetaTrader 4 or MetaTrader 5 installation was found on this computer. Please install MetaTrader first, then run this installer again." buttons {"OK"} with icon stop with title "Nutricula Installer"' >/dev/null 2>&1
+    exit 1
+fi
+
+log "Using WINE_BIN=$WINE_BIN WINEPREFIX=$WINE_PREFIX_PATH"
+
+export WINEPREFIX="$WINE_PREFIX_PATH"
+export WINEDEBUG="${WINEDEBUG:--all}"
+
+"$WINE_BIN" "$INSTALLER_EXE" >>"$LOG_FILE" 2>&1
+STATUS=$?
+log "Wine exited with status $STATUS"
+exit "$STATUS"
