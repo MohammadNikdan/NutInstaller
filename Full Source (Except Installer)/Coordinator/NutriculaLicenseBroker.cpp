@@ -161,7 +161,17 @@ struct NUT_SystemKernelDebuggerInformation
     BOOLEAN KernelDebuggerNotPresent;
 };
 
-bool IsKernelDebuggerActive()
+// __attribute__((noinline)) (2026 fix, same reasoning as the DLL's own
+// copy of this function in NutriculaLicenseCheckThin.cpp): called from
+// inside BrokerDebugWatchdogThreadProc_Check's and BrokerMain_
+// KernelDebugGate's own marked regions below. Left inlinable, GCC's -O2
+// could fold this function's body - and its own "IsKernelDebuggerActive"
+// Begin/End marker pair - directly into one of those callers, the same
+// "address already used" hazard already found and fixed elsewhere in
+// this project this session. Not yet seen in a VMProtect run (this
+// function is large enough that GCC likely never actually chose to
+// inline it), but it is the identical hazard, fixed pre-emptively.
+__attribute__((noinline)) bool IsKernelDebuggerActive()
 {
     // Marked (2026 hardening, found during a re-check of marker coverage):
     // called from two already-marked decision points
