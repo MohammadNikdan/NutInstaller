@@ -8559,7 +8559,19 @@ void NoteServerTimestamp(unsigned long long requestedAt)
     NUT_VMP_END();
 }
 
-unsigned long long ThinDllWallClockUnixSeconds()
+// __attribute__((noinline)) (2026 fix): ThinDllNowUnixSeconds() calls this
+// as the very first statement inside its own marked region
+// ("ThinDllNowUnixSeconds"). Left inlinable, GCC's -O2 folds this small
+// function's body - and its own "ThinDllWallClockUnixSeconds" Begin/End
+// marker pair - directly into the caller, so that marker ends up
+// physically sitting inside ThinDllNowUnixSeconds's own marked address
+// range. VMProtect's scanner then rejects this with "Address is already
+// used by function ThinDllNowUnixSeconds" - reproduced and confirmed for
+// real. noinline keeps this as a genuine out-of-line call with its own
+// address, so the two marker regions never overlap. (Same fix, same
+// reasoning, as Canonicalize/MachineId_CanonicalToHash in
+// NutriculaMachineId.cpp.)
+__attribute__((noinline)) unsigned long long ThinDllWallClockUnixSeconds()
 {
     NUT_VMP_BEGIN_MUTATION("ThinDllWallClockUnixSeconds");
     FILETIME ft;
@@ -8573,7 +8585,16 @@ unsigned long long ThinDllWallClockUnixSeconds()
     return __nut_vmp_r;
 }
 
-unsigned long long ThinDllNowUnixSeconds()
+// __attribute__((noinline)) (2026 fix): ThinDllNowUnixSeconds() is itself
+// called from inside the "AntiTamperCheckedTier_Reverify" marked region
+// (the re-verification block). Same hazard as above one level up - left
+// inlinable, this function's own "ThinDllNowUnixSeconds" marker could get
+// cloned into AntiTamperCheckedTier_Reverify's marked range the same way
+// ThinDllWallClockUnixSeconds's marker was being cloned into this
+// function. Not yet seen in a VMProtect run, but it is the identical
+// hazard on the same call chain, found while fixing the one that was -
+// fixed pre-emptively rather than waiting for it to surface separately.
+__attribute__((noinline)) unsigned long long ThinDllNowUnixSeconds()
 {
     NUT_VMP_BEGIN_ULTRA("ThinDllNowUnixSeconds");
     const unsigned long long wall = ThinDllWallClockUnixSeconds();
