@@ -8157,7 +8157,19 @@ std::atomic<unsigned long long> g_lastVerifiedTierTickMs{0};
 
 using NtQueryInformationProcessFn = LONG(WINAPI*)(HANDLE, ULONG, PVOID, ULONG, PULONG);
 
-bool IsDebuggerAttached()
+// __attribute__((noinline)) (2026 fix, same reasoning as Canonicalize/
+// GcmCrypt in NutriculaMachineId.cpp and ThinDllWallClockUnixSeconds
+// above in this file): this function is called from inside
+// NUT_WatchdogThreadProc_Check's own marked region below. Left inlinable,
+// GCC's -O2 could fold this function's body - and its own
+// "IsDebuggerAttached" Begin/End marker pair - directly into that caller,
+// the same "address already used" hazard already found and fixed
+// elsewhere in this project this session. Not yet seen in a VMProtect run
+// (this function is large enough that GCC likely never actually chose to
+// inline it - unlike the small one-line functions that did trigger the
+// error), but it is the identical hazard, so fixed pre-emptively rather
+// than waiting for it to surface separately.
+__attribute__((noinline)) bool IsDebuggerAttached()
 {
     // Marked (2026 hardening, found during a re-check of marker coverage
     // triggered by IsKernelDebuggerActive's own addition above - the exact
@@ -8270,7 +8282,13 @@ struct NUT_SystemKernelDebuggerInformation
     BOOLEAN KernelDebuggerNotPresent;
 };
 
-bool IsKernelDebuggerActive()
+// __attribute__((noinline)) (2026 fix, same reasoning as IsDebuggerAttached
+// just above): called from inside NUT_WatchdogThreadProc_Check's and
+// Vela_Boot_84_KernelDebugGate's own marked regions below (and from the
+// Broker's equivalent marked regions in its own copy of this function) -
+// left inlinable, the same "address already used" hazard applies. Fixed
+// pre-emptively, same as above.
+__attribute__((noinline)) bool IsKernelDebuggerActive()
 {
     // Marked (2026 hardening, found during a re-check of marker coverage
     // for everything added this session, not just the call sites). This
@@ -9132,6 +9150,14 @@ std::atomic<bool> g_selfDebugActive{false};
 
 DWORD WINAPI NUT_WatchdogThreadProc(LPVOID)
 {
+    // 2026 hardening (added alongside the Broker's own watchdog pattern -
+    // see BrokerDebugWatchdogThreadProc's comment in NutriculaLicenseBroker.cpp
+    // for the full reasoning): tracks whether self-debug was genuinely
+    // active on the PREVIOUS tick, so a tick where it was active before
+    // and is not anymore is detected immediately, in its own right - not
+    // only once IsDebuggerAttached() separately happens to notice an
+    // external attacher later.
+    bool wasSelfDebugActive = false;
     for (;;)
     {
         // Marked (2026 hardening, project owner's explicit request): this
@@ -9145,9 +9171,16 @@ DWORD WINAPI NUT_WatchdogThreadProc(LPVOID)
         // single-pass, non-hot-path precedent already used for
         // AntiTamperCheckedTier's own reverify block.
         NUT_VMP_BEGIN_ULTRA("NUT_WatchdogThreadProc_Check");
+        const bool isSelfDebugActive = g_selfDebugActive.load();
+        // While self-debug is genuinely active, Windows's one-debugger-
+        // per-process exclusivity makes external attachment structurally
+        // impossible - so the only way an external attacher becomes
+        // possible again is if self-debug itself stops first. React to
+        // THAT the instant it's noticed.
+        const bool selfDebugEndedUnexpectedly = wasSelfDebugActive && !isSelfDebugActive;
         bool expected = false;
         bool expectedKernel = false;
-        const bool userModeHit = !g_selfDebugActive.load() &&
+        const bool userModeHit = !isSelfDebugActive &&
             IsDebuggerAttached() && g_watchdogDebuggerLatched.compare_exchange_strong(expected, true);
         // Runs unconditionally, regardless of g_selfDebugActive - self-
         // debug only wins exclusivity over OTHER USER-MODE debuggers; it
@@ -9157,7 +9190,7 @@ DWORD WINAPI NUT_WatchdogThreadProc(LPVOID)
         // once a reaction is already underway, not for correctness.
         const bool kernelModeHit = !userModeHit && IsKernelDebuggerActive() &&
             g_watchdogKernelDebuggerLatched.compare_exchange_strong(expectedKernel, true);
-        if (userModeHit || kernelModeHit)
+        if (selfDebugEndedUnexpectedly || userModeHit || kernelModeHit)
         {
             // Immediate, harmless half of the reaction - wipe the cached
             // Lease so no later legitimate re-verification can
@@ -9189,6 +9222,7 @@ DWORD WINAPI NUT_WatchdogThreadProc(LPVOID)
             return 0; // unreachable in practice
         }
         NUT_VMP_END();
+        wasSelfDebugActive = isSelfDebugActive;
         Sleep(static_cast<DWORD>(NUT_WATCHDOG_INTERVAL_MS));
     }
 }
