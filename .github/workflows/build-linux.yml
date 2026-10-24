@@ -1,4 +1,4 @@
-name: Build Linux installer package
+name: 3. Linux - Final Output
 #
 # ============================================================================
 # SCOPE, STATED PLAINLY: this workflow does NOT rebuild the installer .exe

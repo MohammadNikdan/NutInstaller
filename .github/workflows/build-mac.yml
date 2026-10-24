@@ -1,4 +1,4 @@
-name: Build Mac installer package
+name: 2. Mac - Final Output
 #
 # ============================================================================
 # SCOPE, STATED PLAINLY: this workflow does NOT rebuild NutriculaInstaller.exe

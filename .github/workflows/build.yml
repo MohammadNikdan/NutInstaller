@@ -1,4 +1,4 @@
-name: Build Nutricula Installer
+name: 1. Main Build (needs ConfuserEx & Signing)
 
 on:
   workflow_dispatch:
