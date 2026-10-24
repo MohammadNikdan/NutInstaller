@@ -67,6 +67,27 @@
 // ----------------------------------------------------------------------
 
 #ifdef NUTRICULA_VMPROTECT_BUILD
+    #if defined(__GNUC__) && !defined(_MSC_VER)
+        // VMProtectSDK.h picks its import library by checking MSVC's
+        // compiler-builtin _M_IX86/_M_X64/_M_ARM64 macros. Under real MSVC
+        // those are defined from the very first line of the file, with no
+        // header needed, so include order never matters there. Under
+        // MinGW/g++ (what every .bat in this project actually uses),
+        // those macros only come to exist once <windows.h> (or one of its
+        // MinGW-internal compatibility headers) has been included -
+        // that's where MinGW defines them, purely for MSVC-source
+        // compatibility like this. A few translation units in this project
+        // include this header before their own <windows.h> include (plain
+        // header-ordering, nothing load-bearing), which left none of those
+        // three macros defined yet and tripped VMProtectSDK.h's own
+        // #error "Unsupported target architecture" - even though the
+        // build genuinely does target x86/x64 correctly. Including
+        // <windows.h> right here guarantees the macros exist in time, with
+        // zero effect on what the final binary does: windows.h is always
+        // included again later in each .cpp regardless, and its own
+        // include guard makes that repeat a complete no-op.
+        #include <windows.h>
+    #endif
     #include "VMProtectSDK.h"
     #define NUT_VMP_BEGIN(name)          VMProtectBeginVirtualization(name)
     #define NUT_VMP_BEGIN_ULTRA(name)    VMProtectBeginUltra(name)
