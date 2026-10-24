@@ -70,6 +70,7 @@ namespace NutriculaInstaller
 
             RemoveBroker(log);
             RemoveCoordinatorDirectories(outcome, log);
+            RemoveCoordinatorDirectoriesFromOtherWinePrefixes(outcome, log);
             RemoveTerminalFiles(outcome, log);
             RemoveDeviceIdentityAndLicenseFiles(log);
             RemoveUninstallRegistryEntries(log);
@@ -123,6 +124,65 @@ namespace NutriculaInstaller
             if (Directory.Exists(localAppDataNutricula))
             {
                 DeleteDirectoryBestEffort(localAppDataNutricula, outcome, log);
+            }
+        }
+
+        /// <summary>
+        /// 2026 Wine hardening: removes the per-prefix Broker install
+        /// InstallerService.InstallCoordinatorIntoOtherWinePrefixesAsync
+        /// puts into every OTHER Wine prefix's own
+        /// "%LocalAppData%\Nutricula\" equivalent - without this, running
+        /// "Uninstall" from just ONE prefix (the normal way, via Apps &
+        /// Features or this same /uninstall flow) would clean up this
+        /// prefix and every discovered terminal's EA/DLL files (see
+        /// RemoveTerminalFiles, which already reaches every prefix the
+        /// same way the Installer does) but leave a stale, no-longer-
+        /// matched Broker + manifest + MachineId DLL sitting in each other
+        /// prefix. Reached the same way the Installer reaches them -
+        /// TerminalDiscoveryService.GetExistingWinePrefixDriveCRoots, so
+        /// both sides always agree on exactly which prefixes those are.
+        ///
+        /// The one thing this does NOT need to special-case: whichever
+        /// Broker processes are actually still running. RemoveBroker above
+        /// already matches by image name only (Process.GetProcessesByName),
+        /// with no prefix-specific path involved, so it already catches a
+        /// Broker running from another prefix's install directory exactly
+        /// as readily as this prefix's own - nothing extra is needed here
+        /// for that part.
+        /// </summary>
+        private static void RemoveCoordinatorDirectoriesFromOtherWinePrefixes(UninstallOutcome outcome, Action<string> log)
+        {
+            try
+            {
+                if (!MachineIdService.IsWineEnvironment()) return;
+
+                var discovery = new TerminalDiscoveryService();
+                foreach (string driveC in discovery.GetExistingWinePrefixDriveCRoots(log))
+                {
+                    string usersRoot = Path.Combine(driveC, "users");
+                    if (!Directory.Exists(usersRoot)) continue;
+
+                    IEnumerable<string> userDirs;
+                    try { userDirs = Directory.EnumerateDirectories(usersRoot); }
+                    catch (Exception ex)
+                    {
+                        outcome.Warnings.Add("Could not scan " + usersRoot + " for another Wine prefix's Coordinator: " + ex.Message);
+                        continue;
+                    }
+
+                    foreach (string userDir in userDirs)
+                    {
+                        string nutriculaRoot = Path.Combine(userDir, "AppData", "Local", "Nutricula");
+                        if (Directory.Exists(nutriculaRoot))
+                        {
+                            DeleteDirectoryBestEffort(nutriculaRoot, outcome, log);
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                outcome.Warnings.Add("Could not clean up the License Coordinator in other Wine prefixes: " + ex.Message);
             }
         }
 

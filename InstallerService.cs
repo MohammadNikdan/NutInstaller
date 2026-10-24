@@ -664,6 +664,42 @@ namespace NutriculaInstaller
                     "EA/DLL files were installed successfully, but License activation will not work until this is resolved.");
             }
 
+            // 2026 Wine hardening: on Wine only, ALSO install a Broker into
+            // every OTHER Wine prefix on this real host that has its own
+            // MetaTrader - TerminalDiscoveryService.GetExistingWinePrefixDriveCRoots
+            // is the exact same list DiscoverWinePrefixes used to find the
+            // EA/DLL terminals already installed above, so both always
+            // agree on which prefixes those are. Each such prefix runs its
+            // OWN independent Broker (Wine cannot share one native Windows
+            // mutex-backed singleton Broker across prefixes the way real
+            // Windows shares exactly one system-wide - see the accompanying
+            // Wine architecture design notes), so each one needs its own
+            // copy of the same three files InstallCoordinatorAsync just
+            // installed into THIS prefix. Deliberately best-effort and
+            // non-fatal to the overall install outcome, matching
+            // InstallCoordinatorAsync's own catch immediately above -
+            // every discovered terminal's EA/DLL files are already
+            // correctly placed either way.
+            if (MachineIdService.IsWineEnvironment())
+            {
+                try
+                {
+                    await InstallCoordinatorIntoOtherWinePrefixesAsync(
+                        resBroker32, resBroker64, resManifest, resMachineId32, resMachineId64,
+                        token, log).ConfigureAwait(true);
+                }
+                catch (OperationCanceledException)
+                {
+                    throw;
+                }
+                catch (Exception ex)
+                {
+                    log("WARNING: could not install the License Coordinator into every other Wine prefix (" + ex.Message +
+                        "). The current prefix's Coordinator and every discovered terminal's EA/DLL files were " +
+                        "installed successfully regardless.");
+                }
+            }
+
             return new FileInstallOutcome(allSucceeded, allSucceeded ? LocalFileFailureKind.None : worstFailure)
             {
                 CoordinatorWarning = coordinatorWarning,
@@ -928,6 +964,103 @@ namespace NutriculaInstaller
                 throw;
             }
 
+        }
+
+        /// <summary>
+        /// 2026 Wine hardening: installs the SAME Broker + manifest + one
+        /// matching MachineId DLL that InstallCoordinatorAsync just
+        /// installed into THIS prefix, into every OTHER Wine prefix's own
+        /// "%LocalAppData%\Nutricula\LicenseService\" equivalent - the same
+        /// per-user install location GetCoordinatorInstallDir uses, reached
+        /// inside a different prefix's own drive_c via
+        /// TerminalDiscoveryService.GetExistingWinePrefixDriveCRoots (Wine's
+        /// WINEHOMEDIR/"Z:" real-host mapping - the same mechanism
+        /// GetCommonLicensePath already relies on).
+        ///
+        /// Deliberately scoped to a plain file copy only - it does NOT
+        /// attempt to write that other prefix's own registry (HKCU Run key,
+        /// "Apps & Features" entry) or to launch its Broker right now.
+        /// Both would mean operating ACROSS prefixes: a different prefix's
+        /// registry is backed by its own separate wineserver and is not
+        /// reachable through this process's ordinary Registry APIs at all,
+        /// and correctly launching a binary inside a different prefix needs
+        /// THAT prefix's own WINE/WINEPREFIX environment, not just a file
+        /// path - neither is something this process can safely do to
+        /// another, unrelated prefix.
+        ///
+        /// Neither omission breaks licensing there: the DLL's own on-demand
+        /// launch the moment an EA attaches (NutriculaLicenseCheckThin.cpp
+        /// EnsureCoordinatorRunning) needs no registry at all and starts the
+        /// Broker the first time a chart with the EA opens in that other
+        /// prefix's terminal - exactly the same cold-start path real
+        /// Windows already relies on. Only the "start at login" convenience
+        /// (the HKCU Run key just above, for THIS prefix) does not carry
+        /// over to the others - a genuinely best-effort extra everywhere
+        /// else in this method too, not a required part of licensing
+        /// working correctly.
+        /// </summary>
+        private async Task InstallCoordinatorIntoOtherWinePrefixesAsync(
+            ResourceItem resBroker32, ResourceItem resBroker64,
+            ResourceItem resManifest,
+            ResourceItem resMachineId32, ResourceItem resMachineId64,
+            CancellationToken token, Action<string> log)
+        {
+            List<string> otherDriveCRoots = discovery.GetExistingWinePrefixDriveCRoots(log);
+            if (otherDriveCRoots.Count == 0) return;
+
+            bool osIs64Bit = Environment.Is64BitOperatingSystem;
+            ResourceItem selectedBroker = osIs64Bit ? resBroker64 : resBroker32;
+            ResourceItem selectedMachineId = osIs64Bit ? resMachineId64 : resMachineId32;
+
+            foreach (string driveC in otherDriveCRoots)
+            {
+                string usersRoot = Path.Combine(driveC, "users");
+                if (!Directory.Exists(usersRoot)) continue;
+
+                List<string> userDirs;
+                try { userDirs = Directory.EnumerateDirectories(usersRoot).ToList(); }
+                catch (Exception ex)
+                {
+                    log("Wine Coordinator install warning (" + usersRoot + "): " + ex.Message);
+                    continue;
+                }
+
+                foreach (string userDir in userDirs)
+                {
+                    token.ThrowIfCancellationRequested();
+                    string installDir = Path.Combine(userDir, "AppData", "Local", "Nutricula", "LicenseService");
+                    try
+                    {
+                        await EnsureDirectoryAsync(installDir).ConfigureAwait(true);
+                        await CopyEmbeddedResourceAsync(selectedBroker, installDir, token, overrideFileName: "NutriculaLicenseBroker.exe").ConfigureAwait(true);
+                        VerifyInstalledFile(Path.Combine(installDir, "NutriculaLicenseBroker.exe"));
+
+                        ResourceItem[] coordinatorResources = { resManifest, selectedMachineId };
+                        foreach (ResourceItem item in coordinatorResources)
+                        {
+                            await CopyEmbeddedResourceAsync(item, installDir, token).ConfigureAwait(true);
+                            VerifyInstalledFile(Path.Combine(installDir, item.FileName));
+                        }
+                        log("Installed License Coordinator into another Wine prefix -> " + installDir);
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        throw;
+                    }
+                    catch (Exception ex)
+                    {
+                        // Best-effort, per-prefix (2026 hardening): one
+                        // locked file (e.g. that prefix's own Broker
+                        // currently running under an old build) or one
+                        // unwritable profile must never stop the others,
+                        // and must never fail the overall install - every
+                        // discovered terminal's EA/DLL files, installed
+                        // separately above, are the part that genuinely
+                        // matters most.
+                        log("WARNING: could not install the License Coordinator into " + installDir + " (" + ex.Message + ").");
+                    }
+                }
+            }
         }
 
         /// <summary>
