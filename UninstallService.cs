@@ -68,12 +68,28 @@ namespace NutriculaInstaller
             var outcome = new UninstallOutcome();
             Action<string> log = outcome.Log.Add;
 
+            // 2026 Wine hardening: signal every OTHER Wine prefix's own
+            // Broker to exit BEFORE touching any directory - see
+            // SignalOtherWineBrokersToExit's own comment for why this is
+            // needed at all (Process.GetProcessesByName, used by
+            // RemoveBroker right below for THIS prefix's own Broker,
+            // cannot see a Broker running under a different prefix's
+            // separate wineserver). No-op, no filesystem access at all, on
+            // real Windows.
+            SignalOtherWineBrokersToExit(log);
+
             RemoveBroker(log);
             RemoveCoordinatorDirectories(outcome, log);
             RemoveCoordinatorDirectoriesFromOtherWinePrefixes(outcome, log);
             RemoveTerminalFiles(outcome, log);
             RemoveDeviceIdentityAndLicenseFiles(log);
             RemoveUninstallRegistryEntries(log);
+
+            // Always last: never leave this signal file lying around, or a
+            // future reinstall's freshly-launched Broker would see a stale
+            // "please exit" the moment it starts (harmless - the DLL would
+            // just relaunch it again - but pointless and worth cleaning up).
+            RemoveWineUninstallSignalFile(log);
 
             return outcome;
         }
@@ -112,6 +128,100 @@ namespace NutriculaInstaller
             log("Stopped the License Broker and removed its automatic-startup registrations.");
         }
 
+        /// <summary>
+        /// 2026 Wine hardening: writes a small sentinel file into the SAME
+        /// shared, host-level directory every Wine prefix already reads and
+        /// writes the license file from (see
+        /// InstallerService.GetCommonLicensePath's own Wine branch, and
+        /// CoordinatorCore.cpp's GetWineUninstallSignalFilePathW on the
+        /// native side, which derives the exact same path from the exact
+        /// same license path so both sides always agree on it without
+        /// either one hard-coding it independently).
+        ///
+        /// WHY this is needed at all: every Wine prefix runs its own,
+        /// separate wineserver, so a Broker launched inside a DIFFERENT
+        /// prefix is not visible to Process.GetProcessesByName from this
+        /// one, from any prefix - RemoveBroker's direct Kill() only ever
+        /// reaches THIS prefix's own Broker. Left alone, every other
+        /// prefix's Broker would keep running and keep its own Broker.exe
+        /// locked, so RemoveCoordinatorDirectoriesFromOtherWinePrefixes
+        /// could delete everything else in that prefix's install folder
+        /// but not the running .exe itself.
+        ///
+        /// Every Broker on this host, in every prefix, polls for this exact
+        /// file (CoordinatorCore.cpp's WorkerLoop, via
+        /// WineUninstallRequested/WineAwareWait) and exits on its own,
+        /// typically within a few seconds - purely through the filesystem,
+        /// no cross-process Windows API involved at all, so the same
+        /// per-prefix wineserver wall never comes into play.
+        ///
+        /// The short sleep afterward is a courtesy, not a guarantee - a
+        /// Broker mid-way through a long operation may take a little
+        /// longer to notice. That is exactly why every deletion downstream
+        /// already treats a locked file as a best-effort warning, never a
+        /// fatal error: this makes the common case fast and clean without
+        /// making the uncommon case any worse than it already was.
+        ///
+        /// No-op (and no filesystem access at all) on real Windows, where
+        /// there is only ever one prefix and RemoveBroker's direct Kill
+        /// already handles it immediately.
+        /// </summary>
+        private static void SignalOtherWineBrokersToExit(Action<string> log)
+        {
+            try
+            {
+                if (!MachineIdService.IsWineEnvironment()) return;
+
+                string signalPath = GetWineUninstallSignalPath();
+                if (string.IsNullOrEmpty(signalPath)) return;
+
+                File.WriteAllText(signalPath, "uninstall requested " + DateTime.UtcNow.ToString("O"));
+                log("Signaled every Wine prefix's License Broker to exit.");
+
+                System.Threading.Thread.Sleep(4000);
+            }
+            catch (Exception ex)
+            {
+                log("Could not write the Wine cross-prefix uninstall signal (best-effort, not fatal): " + ex.Message);
+            }
+        }
+
+        /// <summary>
+        /// Deletes the sentinel SignalOtherWineBrokersToExit writes - always
+        /// called last in PerformUninstall, so it never lingers into a
+        /// future reinstall. No-op on real Windows.
+        /// </summary>
+        private static void RemoveWineUninstallSignalFile(Action<string> log)
+        {
+            try
+            {
+                if (!MachineIdService.IsWineEnvironment()) return;
+                string signalPath = GetWineUninstallSignalPath();
+                if (string.IsNullOrEmpty(signalPath)) return;
+                DeleteFileBestEffort(signalPath, log);
+            }
+            catch
+            {
+                // Best-effort - see RemoveWineUninstallSignalFile's own
+                // summary for why leaving this behind in a truly unusual
+                // failure case is not fatal either way.
+            }
+        }
+
+        /// <summary>
+        /// Same path CoordinatorCore.cpp's GetWineUninstallSignalFilePathW
+        /// computes natively (license path + ".uninstall_requested") -
+        /// reusing InstallerService.GetCommonLicensePath keeps both sides
+        /// derived from the exact same single source instead of two
+        /// independent hard-coded conventions that could ever drift apart.
+        /// </summary>
+        private static string GetWineUninstallSignalPath()
+        {
+            string licensePath = new InstallerService().GetCommonLicensePath();
+            if (string.IsNullOrEmpty(licensePath)) return null;
+            return licensePath + ".uninstall_requested";
+        }
+
         private static void RemoveCoordinatorDirectories(UninstallOutcome outcome, Action<string> log)
         {
             // %LocalAppData%\Nutricula is EVERY mode's root (see
@@ -142,13 +252,17 @@ namespace NutriculaInstaller
         /// TerminalDiscoveryService.GetExistingWinePrefixDriveCRoots, so
         /// both sides always agree on exactly which prefixes those are.
         ///
-        /// The one thing this does NOT need to special-case: whichever
-        /// Broker processes are actually still running. RemoveBroker above
-        /// already matches by image name only (Process.GetProcessesByName),
-        /// with no prefix-specific path involved, so it already catches a
-        /// Broker running from another prefix's install directory exactly
-        /// as readily as this prefix's own - nothing extra is needed here
-        /// for that part.
+        /// CORRECTION (2026, found on review): an earlier version of this
+        /// comment claimed RemoveBroker's Process.GetProcessesByName
+        /// already catches a Broker running in another prefix "for free",
+        /// by image name alone. That is not actually true - each Wine
+        /// prefix runs its own, separate wineserver, so a process started
+        /// under a DIFFERENT WINEPREFIX is not visible to that call from
+        /// this one, regardless of name. PerformUninstall now calls
+        /// SignalOtherWineBrokersToExit (see its own comment) before this
+        /// method runs, specifically to close that gap through a shared
+        /// file instead of a cross-process Windows API that cannot reach
+        /// across prefixes at all.
         /// </summary>
         private static void RemoveCoordinatorDirectoriesFromOtherWinePrefixes(UninstallOutcome outcome, Action<string> log)
         {

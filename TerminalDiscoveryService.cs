@@ -321,15 +321,22 @@ namespace NutriculaInstaller
         // nothing about HOW a terminal is recognized changes, only WHERE
         // these methods are told to look.
         //
-        // Coverage is deliberately best-effort, not exhaustive: it covers
-        // MetaQuotes' own official Mac installer path (documented, and by
-        // far the most common real-world case), the default Wine prefix
-        // naming convention on Linux, and CrossOver/PlayOnMac's own
-        // Mac-specific bottle layouts. A MetaTrader installed in a prefix
-        // with a genuinely custom name/location that matches none of
-        // these will still need its own Installer run inside that prefix,
-        // exactly like today - this closes the common case, not every
-        // conceivable one.
+        // Coverage (2026, widened): MetaQuotes' own official Mac installer
+        // path (documented, and by far the most common real-world case),
+        // CrossOver/PlayOnMac's own Mac-specific bottle layouts, Bottles
+        // (both the Flatpak and native Linux install locations),
+        // PlayOnLinux, Lutris's conventional per-game install root, AND a
+        // bounded one-level scan of every other top-level folder directly
+        // under the real home directory for one that itself contains a
+        // "drive_c" - which also catches a hand-picked, arbitrarily-named
+        // WINEPREFIX (e.g. "~/MyPrefix") that matches none of the named
+        // tools above, without needing to recurse further or know its name
+        // in advance. Only a prefix nested two or more levels under some
+        // OTHER, entirely unlisted tool's own data folder (not directly
+        // under home, not one of the tools named above) would still need
+        // its own Installer run inside that prefix, exactly like today -
+        // this closes every common case, not literally every conceivable
+        // one.
         // ====================================================================
         /// <summary>
         /// Every OTHER Wine prefix's drive_c root this real host is known to
@@ -376,18 +383,58 @@ namespace NutriculaInstaller
             AddBottleDriveCRoots(Path.Combine(wineMappedHome, "Library", "PlayOnMac", "wineprefix"),
                 candidatePrefixDriveCRoots, log);
 
-            // Default/vanilla Wine prefixes (common on Linux, and some
-            // Mac setups using plain Wine instead of the official
-            // installer): "~/.wine" is the WINEPREFIX default, and some
-            // users run a second one under a differently-named folder for
-            // a different MetaTrader build - matching "~/.wine*" by name
-            // catches ".wine", ".wine32", ".wine-mt5" and similar without
-            // having to know every possible name in advance.
+            // 2026 widened coverage - other common Wine-prefix-management
+            // tools, mostly Linux-side, not previously checked. Bottles is
+            // listed twice because it ships two different ways: the
+            // Flatpak build (by far the more common install path - Bottles
+            // is primarily distributed via Flathub) keeps its data under
+            // ~/.var/app/<id>/data/..., while a native/non-Flatpak install
+            // uses the ordinary ~/.local/share/... XDG location instead -
+            // a given machine only ever has one of the two populated, so
+            // checking both and letting AddBottleDriveCRoots's own
+            // Directory.Exists-gated best-effort handle whichever is
+            // absent costs nothing.
+            AddBottleDriveCRoots(Path.Combine(wineMappedHome, ".var", "app", "com.usebottles.bottles", "data", "bottles", "bottles"),
+                candidatePrefixDriveCRoots, log);
+            AddBottleDriveCRoots(Path.Combine(wineMappedHome, ".local", "share", "bottles", "bottles"),
+                candidatePrefixDriveCRoots, log);
+            AddBottleDriveCRoots(Path.Combine(wineMappedHome, ".PlayOnLinux", "wineprefix"),
+                candidatePrefixDriveCRoots, log);
+            // Lutris has no single fixed prefix location (it is configured
+            // per game/installer), but defaulting a game's install under
+            // "~/Games/<name>" is its own common convention - best-effort,
+            // matches the same "one drive_c per named subfolder" shape as
+            // every bottle-style tool above.
+            AddBottleDriveCRoots(Path.Combine(wineMappedHome, "Games"),
+                candidatePrefixDriveCRoots, log);
+
+            // 2026 widened coverage - bounded (ONE level only, never
+            // recursive) scan of every other top-level folder directly
+            // under the real home directory for one that itself contains
+            // a "drive_c". This is a superset of the old "~/.wine*"-only
+            // glob (so that narrower check has been folded into this one)
+            // and additionally catches a hand-picked, arbitrarily-named
+            // WINEPREFIX living directly under home (e.g. "~/MyPrefix")
+            // that matches none of the named tools above - without having
+            // to know its name in advance, and without the cost or risk of
+            // a deep/unbounded crawl of the whole home directory: each
+            // entry costs one cheap Directory.Exists check, nothing more.
+            // A hard cap guards against a pathologically large home
+            // directory turning this into a slow scan.
             try
             {
-                foreach (string prefixDir in Directory.EnumerateDirectories(wineMappedHome, ".wine*"))
+                int scanned = 0;
+                const int MAX_TOP_LEVEL_ENTRIES_TO_CHECK = 5000;
+                foreach (string topLevelDir in Directory.EnumerateDirectories(wineMappedHome))
                 {
-                    candidatePrefixDriveCRoots.Add(Path.Combine(prefixDir, "drive_c"));
+                    if (++scanned > MAX_TOP_LEVEL_ENTRIES_TO_CHECK)
+                    {
+                        log("Wine prefix scan: home directory has an unusually large number of top-level folders - stopped the generic drive_c scan early after " + MAX_TOP_LEVEL_ENTRIES_TO_CHECK + " entries.");
+                        break;
+                    }
+                    string candidate = Path.Combine(topLevelDir, "drive_c");
+                    if (Directory.Exists(candidate))
+                        candidatePrefixDriveCRoots.Add(candidate);
                 }
             }
             catch (Exception ex)
