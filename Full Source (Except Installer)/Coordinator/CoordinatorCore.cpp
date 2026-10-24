@@ -490,6 +490,92 @@ std::wstring GetClockAnchorFilePathW()
     return licensePath + L".clockanchor";
 }
 
+// ============================================================================
+// Wine cross-prefix uninstall signal (2026 hardening).
+//
+// PROBLEM (found during review, not previously handled): UninstallService
+// on the Installer side kills THIS prefix's own Broker directly, by image
+// name, via .NET's Process.GetProcessesByName - which works fine within one
+// prefix, but each Wine prefix runs its own, separate wineserver, so a
+// Broker launched inside a DIFFERENT prefix is simply not visible to that
+// call at all, from any prefix. Left alone, that other Broker keeps running
+// and keeps its own Broker.exe file locked, so
+// RemoveCoordinatorDirectoriesFromOtherWinePrefixes (Installer side) could
+// delete everything else in that prefix's install folder but not the
+// running .exe itself - an incomplete uninstall.
+//
+// FIX: the exact same shared, host-level directory every Wine prefix
+// already reads/writes the license file from (GetLicenseFilePathW, mapped
+// through WINEHOMEDIR/"Z:" to the real Unix home - see that function's own
+// comment) gets one more sibling file, following the identical pattern as
+// GetClockAnchorFilePathW just above. Every Broker on this host, in every
+// prefix, can see this exact same file - it is "please exit" communicated
+// purely through the filesystem, needing no cross-process Windows API that
+// would hit the same per-prefix wineserver wall as Process.GetProcessesByName.
+// UninstallService writes this file (and deletes it again once the
+// uninstall finishes); WorkerLoop below polls for it and exits on its own.
+//
+// Inert on real Windows: IsWineEnvironment() is false there, so this never
+// even touches the filesystem - there is only ever one prefix on Windows,
+// and RemoveBroker's direct Process.Kill already handles it.
+// ============================================================================
+std::wstring GetWineUninstallSignalFilePathW()
+{
+    std::wstring licensePath = GetLicenseFilePathW();
+    if (licensePath.empty()) return L"";
+    return licensePath + L".uninstall_requested";
+}
+
+bool WineUninstallRequested()
+{
+    if (!MachineIdBridge::IsWineEnvironment()) return false;
+    std::wstring signalPath = GetWineUninstallSignalFilePathW();
+    if (signalPath.empty()) return false;
+    return GetFileAttributesW(signalPath.c_str()) != INVALID_FILE_ATTRIBUTES;
+}
+
+// On real Windows (IsWineEnvironment() false): an exact, single-call
+// passthrough to WaitForSingleObject(wakeEvent, totalMs) - identical
+// return value, identical timing, no behavior change whatsoever.
+//
+// On Wine only: the SAME total wait is chopped into short slices so a
+// pending WineUninstallRequested() signal is noticed within a few seconds
+// instead of only the next time this loop naturally wakes on its own -
+// which, for the licensed-refresh wait specifically (the "waitSeconds" call
+// site below, tied to the next scheduled server check-in), could otherwise
+// be hours away. This helper only shortens how soon control gets back to
+// WorkerLoop's own top-of-loop check; it does not itself decide to exit -
+// see that check for why this split keeps the actual exit decision in
+// exactly one place.
+//
+// Not VMProtect-marked, matching this file's existing idle-self-exit logic
+// right below (also unmarked): forcing this to always return early costs
+// at most a little Broker responsiveness (fail-open, same philosophy as
+// the Ledger Lock above), and forcing WineUninstallRequested() to always
+// read true costs at most a spurious exit the DLL relaunches on demand -
+// neither is a security decision an attacker gains anything real from
+// defeating.
+DWORD WineAwareWait(HANDLE wakeEvent, DWORD totalMs)
+{
+    if (!MachineIdBridge::IsWineEnvironment())
+    {
+        return WaitForSingleObject(wakeEvent, totalMs);
+    }
+
+    constexpr DWORD WINE_WAIT_SLICE_MS = 2000;
+    DWORD waited = 0;
+    for (;;)
+    {
+        DWORD remaining = (totalMs > waited) ? (totalMs - waited) : 0;
+        DWORD thisSlice = (remaining < WINE_WAIT_SLICE_MS) ? remaining : WINE_WAIT_SLICE_MS;
+        DWORD rc = WaitForSingleObject(wakeEvent, thisSlice);
+        if (rc == WAIT_OBJECT_0) return rc;
+        if (WineUninstallRequested()) return WAIT_OBJECT_0; // loop-top check will see it and exit
+        waited += thisSlice;
+        if (waited >= totalMs) return WAIT_TIMEOUT;
+    }
+}
+
 // Deliberately plain (not signed/encrypted) - this file's purpose is
 // raising the bar against casual wall-clock tampering, not protecting a
 // secret. A sophisticated attacker who locates and hand-edits this exact
@@ -1112,6 +1198,21 @@ void CoordinatorCore::WorkerLoop()
 {
     for (;;)
     {
+        // 2026 Wine hardening - see WineUninstallRequested's own comment
+        // above. Checked first, every single iteration: combined with
+        // WineAwareWait's shortened slices used throughout this loop below,
+        // this turns into an actual exit within a few seconds of the signal
+        // file appearing, regardless of which wait branch the previous
+        // iteration was sitting in. On real Windows this is a single cheap
+        // boolean check (IsWineEnvironment() false) that never touches the
+        // filesystem at all - no behavior change there.
+        if (WineUninstallRequested())
+        {
+            printf("Cross-prefix uninstall signal detected (Wine) - exiting. "
+                   "The DLL will relaunch this automatically if reinstalled.\n");
+            ExitProcess(0);
+        }
+
         LocalFileState local = EvaluateLocalFile();
 
         // A license file that is readable but whose content is invalid (cannot
@@ -1565,7 +1666,7 @@ void CoordinatorCore::WorkerLoop()
                     // shortens how long we wait before the SAME single-owner
                     // loop re-checks whether a refresh is genuinely due yet.
                     ResetEvent(m_wakeEvent);
-                    WaitForSingleObject(m_wakeEvent, static_cast<DWORD>(waitSeconds * 1000));
+                    WineAwareWait(m_wakeEvent, static_cast<DWORD>(waitSeconds * 1000));
                     continue;
                 }
             }
@@ -1581,7 +1682,7 @@ void CoordinatorCore::WorkerLoop()
                 {
                     if (gateWait > 30) gateWait = 30;
                     ResetEvent(m_wakeEvent);
-                    WaitForSingleObject(m_wakeEvent, static_cast<DWORD>(gateWait) * 1000);
+                    WineAwareWait(m_wakeEvent, static_cast<DWORD>(gateWait) * 1000);
                     continue;
                 }
             }
@@ -1638,7 +1739,7 @@ void CoordinatorCore::WorkerLoop()
                 // yet" periodically. NoteEaActivity also signals
                 // m_wakeEvent directly, so a newly-opened EA is picked up
                 // immediately rather than waiting out this timeout anyway.
-                WaitForSingleObject(m_wakeEvent, 30000);
+                WineAwareWait(m_wakeEvent, 30000);
                 continue;
             }
 
@@ -1943,7 +2044,7 @@ void CoordinatorCore::WorkerLoop()
                 if (untilNextRound < freeWaitSec) freeWaitSec = untilNextRound;
                 if (freeWaitSec < 5) freeWaitSec = 5;
                 ResetEvent(m_wakeEvent);
-                WaitForSingleObject(m_wakeEvent, static_cast<DWORD>(freeWaitSec) * 1000);
+                WineAwareWait(m_wakeEvent, static_cast<DWORD>(freeWaitSec) * 1000);
                 continue;
             }
 
