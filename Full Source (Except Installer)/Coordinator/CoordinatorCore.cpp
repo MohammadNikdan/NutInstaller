@@ -2,6 +2,7 @@
 #include "ManifestVerify.h"
 #include "RuntimeMeasure.h"
 #include "CoordinatorProtocol.h"
+#include "VMProtectMarkers.h"
 #include "../LicenseCheck/LicenseProtocol.h"
 #include "../LicenseCheck/MachineIdBridge.h"
 #include "../LicenseCheck/Transport.h"
@@ -651,6 +652,155 @@ long long ClampToSilenceDeadline(long long delaySec, long long maxSilenceSec)
     long long until = (a.wallClockUnix + maxSilenceSec) - EstimatedNow() + 1;
     if (until < 5) until = 5;
     return delaySec < until ? delaySec : until;
+}
+
+// ============================================================================
+// Wine multi-prefix refresh coordination ("Ledger Lock", 2026 hardening,
+// Wine/macOS and Wine/Linux ONLY - inert on real Windows).
+//
+// On Wine, every WINEPREFIX for the same Unix user already shares the
+// identical license file, device key and machine ID (see
+// GetWineHomeDirWindowsPath() in NutriculaMachineId.cpp - the WINEHOMEDIR/
+// Z: mapping). A user with MT4 and MT5 both installed via Wine typically
+// has TWO such prefixes, each running its OWN independent Broker process
+// (unlike real Windows, where exactly one Broker ever runs system-wide -
+// see the Local\\NutriculaLicenseBrokerSingleton mutex). Both Brokers'
+// WorkerLoop threads refresh the SAME shared lease/refresh_token on their
+// own independent schedules; left uncoordinated, they could occasionally
+// both reach the challenge/verify attempt loop below at close to the same
+// moment, sending the server two overlapping requests for one license -
+// exactly the pattern the server's clone-detection design (see
+// verifyFields["refresh_token"]'s comment above) exists to flag.
+//
+// Fix: before a Broker enters its own attempt loop, it must hold this
+// lock - so at most one Broker, across every Wine prefix on this machine,
+// is ever mid-refresh at a time. Critically, the lock stays held across
+// the ENTIRE attempt loop (including its network round-trips), not just
+// around a file read/write - releasing it early and re-acquiring it only
+// around the write would reopen exactly the race this exists to close.
+// A Broker that waited re-reads the shared license file the instant it
+// gets the lock and, if another holder just wrote a strictly fresher
+// lease, adopts it instead of making its own redundant/overlapping
+// server call - see WineRefreshLock_ShouldAdoptFreshLease below and its
+// one call site further down in WorkerLoop.
+//
+// Deliberately NOT a new, separate "ledger" file holding its own copy of
+// the token/generation: the already-shared license file (identical bytes
+// visible to every prefix via the same Z: mapping) IS the ledger. Adding
+// a second, independent source of truth would only create a new way for
+// the two to drift out of sync with each other. The one new file this
+// introduces (".refreshlock") holds no license data at all - its sole
+// purpose is to be an OS-level mutual-exclusion handle, standing in for
+// a native Windows mutex, which Wine cannot share across prefixes the
+// way a real Windows install shares one system-wide.
+//
+// Advisory, kernel-held: Wine implements LockFileEx on a real host file
+// via a genuine fcntl() lock, which the kernel releases on its own the
+// instant a crashed/killed Broker's process exits - a dead holder can
+// never wedge this permanently. Acquisition polls rather than blocking
+// forever and FAILS OPEN after NUT_LEDGER_LOCK_MAX_WAIT_MS: if the lock
+// is somehow held far longer than any real refresh cycle legitimately
+// takes, proceeding without coordination is still no worse than this
+// mechanism not existing at all, which is strictly safer than a Broker
+// that could otherwise wedge itself and never serve a license decision
+// again. On real Windows this class is simply never given a live lock to
+// hold - every call site below gates its use behind
+// MachineIdBridge::IsWineEnvironment(), so the pre-existing Windows code
+// path is untouched by any of this.
+//
+// NOT VMProtect-marked (deliberately, matching WriteLicenseFileAtomic and
+// the ClockAnchor file-IO helpers above, which are the same kind of
+// generic file-locking/IO plumbing and are also left unmarked in this
+// file): there is nothing here an attacker gains from reversing beyond
+// what any CreateFileW/LockFileEx call already reveals. The actual
+// decision this plumbing exists to protect - whether a freshly re-read
+// lease is good enough to adopt - is the separate, small function right
+// below, which IS marked.
+// ============================================================================
+constexpr DWORD NUT_LEDGER_LOCK_POLL_MS = 400;
+constexpr DWORD NUT_LEDGER_LOCK_MAX_WAIT_MS = 90000;
+
+class WineRefreshLock
+{
+public:
+    ~WineRefreshLock() { Release(); }
+
+    // Only ever called already gated behind
+    // MachineIdBridge::IsWineEnvironment() at the call site - an empty
+    // licensePath here is a defensive fallback only, never the expected
+    // path, and simply means "proceed without the lock" (fail open,
+    // same as the polling-timeout case below).
+    void AcquireBlocking(const std::wstring& licensePath)
+    {
+        if (licensePath.empty()) return;
+        std::wstring lockPath = licensePath + L".refreshlock";
+        DWORD waited = 0;
+        for (;;)
+        {
+            m_handle = CreateFileW(lockPath.c_str(), GENERIC_READ | GENERIC_WRITE,
+                FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_ALWAYS,
+                FILE_ATTRIBUTE_NORMAL, nullptr);
+            if (m_handle != INVALID_HANDLE_VALUE)
+            {
+                OVERLAPPED ov = {};
+                if (LockFileEx(m_handle, LOCKFILE_EXCLUSIVE_LOCK | LOCKFILE_FAIL_IMMEDIATELY,
+                                0, MAXDWORD, MAXDWORD, &ov))
+                {
+                    m_locked = true;
+                    return; // acquired
+                }
+                CloseHandle(m_handle);
+                m_handle = INVALID_HANDLE_VALUE;
+            }
+            if (waited >= NUT_LEDGER_LOCK_MAX_WAIT_MS) return; // fail open
+            Sleep(NUT_LEDGER_LOCK_POLL_MS);
+            waited += NUT_LEDGER_LOCK_POLL_MS;
+        }
+    }
+
+    void Release()
+    {
+        if (m_locked && m_handle != INVALID_HANDLE_VALUE)
+        {
+            OVERLAPPED ov = {};
+            UnlockFileEx(m_handle, 0, MAXDWORD, MAXDWORD, &ov);
+        }
+        if (m_handle != INVALID_HANDLE_VALUE) { CloseHandle(m_handle); m_handle = INVALID_HANDLE_VALUE; }
+        m_locked = false;
+    }
+
+private:
+    HANDLE m_handle = INVALID_HANDLE_VALUE;
+    bool m_locked = false;
+};
+
+// The one piece of this mechanism actually worth protecting: whether a
+// lease the shared file just revealed (re-read right after acquiring
+// WineRefreshLock) is fresh enough that THIS Broker should adopt it and
+// skip its own attempt loop, rather than send a redundant/overlapping
+// request. An attacker able to force this to always return false would
+// silently defeat the whole point of the lock (every Broker goes back to
+// calling the server on its own schedule, recreating the exact race this
+// exists to close); able to force it to always return true, a Broker
+// could be made to keep publishing a stale/expired lease as current.
+// Linear exits, each covered by its own END, matching this file's
+// existing convention for small ULTRA-marked decision functions.
+bool WineRefreshLock_ShouldAdoptFreshLease(const LocalFileState& original, const LocalFileState& fresh)
+{
+    NUT_VMP_BEGIN_ULTRA("CoordinatorCore_WineRefreshLock_ShouldAdoptFreshLease");
+    if (!fresh.hasLease || fresh.licenseCurrentlyExpired)
+    {
+        NUT_VMP_END();
+        return false;
+    }
+    if (!original.hasLease)
+    {
+        NUT_VMP_END();
+        return true;
+    }
+    bool strictlyNewer = fresh.requestedAt > original.requestedAt;
+    NUT_VMP_END();
+    return strictlyNewer;
 }
 
 LocalFileState EvaluateLocalFile()
@@ -1903,7 +2053,41 @@ void CoordinatorCore::WorkerLoop()
                 return true;
             };
 
-            for (int attempt = 1; attempt <= MAX_ATTEMPTS && !licenseIdForRequest.empty(); attempt++)
+            // 2026 Wine hardening: see the WineRefreshLock /
+            // WineRefreshLock_ShouldAdoptFreshLease block above. Inert on
+            // real Windows - IsWineEnvironment() is false there, wineLock
+            // is destructed below having never locked anything, and
+            // skipOwnAttempt stays false, leaving the attempt loop exactly
+            // as it already was. wineLock intentionally stays in scope
+            // (and therefore holds the lock, on Wine) through the end of
+            // this licensed-path block below, not just through the loop -
+            // releasing a few milliseconds of bookkeeping later than
+            // strictly necessary costs nothing, and keeping its lifetime
+            // simple avoids introducing a second nested scope around a
+            // block that already has many variables used both inside and
+            // after the loop.
+            WineRefreshLock wineLock;
+            bool skipOwnAttempt = false;
+            if (MachineIdBridge::IsWineEnvironment())
+            {
+                wineLock.AcquireBlocking(GetLicenseFilePathW());
+                LocalFileState freshLocal = EvaluateLocalFile();
+                if (WineRefreshLock_ShouldAdoptFreshLease(local, freshLocal))
+                {
+                    // Another Wine prefix's Broker already completed a
+                    // fresher refresh while we were waiting for the lock -
+                    // adopt its result instead of making our own
+                    // redundant/overlapping server call.
+                    local = freshLocal;
+                    finalStable = TIER_LICENSED;
+                    finalCanonical = freshLocal.canonical;
+                    finalSignatureB64 = freshLocal.signatureB64;
+                    gotServerDecision = true;
+                    skipOwnAttempt = true;
+                }
+            }
+
+            for (int attempt = 1; attempt <= MAX_ATTEMPTS && !licenseIdForRequest.empty() && !skipOwnAttempt; attempt++)
             {
                 std::map<std::string, std::string> challengeFields;
                 challengeFields["v"] = "3";
