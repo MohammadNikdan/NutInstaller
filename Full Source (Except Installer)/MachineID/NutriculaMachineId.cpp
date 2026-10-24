@@ -1497,19 +1497,36 @@ std::atomic<bool> g_selfDebugActive{false};
 
 DWORD WINAPI NUT_WatchdogThreadProc(LPVOID)
 {
+    // 2026 hardening (added alongside the Broker's own watchdog pattern -
+    // see BrokerDebugWatchdogThreadProc's comment for the full reasoning):
+    // tracks whether self-debug was genuinely active on the PREVIOUS tick,
+    // so a tick where it was active before and is not anymore is detected
+    // immediately, in its own right - not only once IsDebuggerAttached()
+    // separately happens to notice an external attacher later.
+    bool wasSelfDebugActive = false;
     for (;;)
     {
         // Marked: this is the entire per-iteration decision - exactly the
         // branch a static patch would want to defeat. Rate-limited to once
         // a second, never hot-path, so ULTRA carries no meaningful cost.
         NUT_VMP_BEGIN_ULTRA("NUT_WatchdogThreadProc_Check");
+        const bool isSelfDebugActive = g_selfDebugActive.load();
+        // While self-debug is genuinely active, Windows's one-debugger-
+        // per-process exclusivity makes external attachment structurally
+        // impossible - so the only way an external attacher becomes
+        // possible again is if self-debug itself stops first (a crashed/
+        // exited NUT_SelfDebugLoopThreadProc). React to THAT the instant
+        // it's noticed, rather than waiting for an attacker to separately
+        // show up and get caught by IsDebuggerAttached() below.
+        const bool selfDebugEndedUnexpectedly = wasSelfDebugActive && !isSelfDebugActive;
+
         bool expected = false;
         bool expectedKernel = false;
-        const bool userModeHit = !g_selfDebugActive.load() &&
+        const bool userModeHit = !isSelfDebugActive &&
             IsDebuggerAttached() && g_watchdogDebuggerLatched.compare_exchange_strong(expected, true);
         const bool kernelModeHit = !userModeHit && IsKernelDebuggerActive() &&
             g_watchdogKernelDebuggerLatched.compare_exchange_strong(expectedKernel, true);
-        if (userModeHit || kernelModeHit)
+        if (selfDebugEndedUnexpectedly || userModeHit || kernelModeHit)
         {
             // This DLL has no license-cache/tier state of its own to wipe
             // (unlike the License Check DLL) - the independent,
@@ -1521,6 +1538,7 @@ DWORD WINAPI NUT_WatchdogThreadProc(LPVOID)
             return 0; // unreachable in practice
         }
         NUT_VMP_END();
+        wasSelfDebugActive = isSelfDebugActive;
         Sleep(static_cast<DWORD>(NUT_WATCHDOG_INTERVAL_MS));
     }
 }
