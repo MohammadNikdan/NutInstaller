@@ -39,6 +39,17 @@ on:
 jobs:
   build-mac:
     runs-on: macos-latest
+    # GitHub Actions does not allow the `secrets` context inside an `if:`
+    # condition at all (only inside `env:`/`with:` blocks) - trying to
+    # reference secrets.X directly in a step's `if:` fails the whole
+    # workflow at parse time with "Unrecognized named-value: 'secrets'",
+    # before a single step even runs. So the presence of each optional
+    # Apple secret is captured here, at the job level, into a plain env
+    # var (env IS a valid place to read secrets), and the `if:` conditions
+    # below check those env vars instead.
+    env:
+      HAS_MAC_CERT: ${{ secrets.MACOS_CERTIFICATE_P12_BASE64 != '' }}
+      HAS_APPLE_ID: ${{ secrets.APPLE_ID != '' }}
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
@@ -82,7 +93,7 @@ jobs:
       #     real account password.
       - name: Import signing certificate
         id: import_cert
-        if: ${{ secrets.MACOS_CERTIFICATE_P12_BASE64 != '' }}
+        if: env.HAS_MAC_CERT == 'true'
         env:
           MACOS_CERTIFICATE_P12_BASE64: ${{ secrets.MACOS_CERTIFICATE_P12_BASE64 }}
           MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
@@ -112,7 +123,7 @@ jobs:
           codesign --verify --deep --strict --verbose=2 "$APP_PATH"
 
       - name: Notarize and staple
-        if: ${{ steps.import_cert.outputs.did_import == 'true' && secrets.APPLE_ID != '' }}
+        if: steps.import_cert.outputs.did_import == 'true' && env.HAS_APPLE_ID == 'true'
         env:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
