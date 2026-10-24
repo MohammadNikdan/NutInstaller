@@ -18,6 +18,7 @@
 #include <iomanip>
 #include <memory>
 #include <mutex>
+#include <atomic>
 #include <cstring>
 #include <cstdlib>
 #include <cstdio>
@@ -1344,6 +1345,328 @@ static bool GcmUnprotect(const std::string& envelope, std::vector<unsigned char>
     return ok;
 }
 
+// ============================================================================
+// Anti-debug / anti-tamper (2026 hardening, project owner's explicit
+// request). Identical mechanism, reasoning, and honest-scope caveats as
+// NutriculaLicenseCheckThin.cpp's own IsDebuggerAttached/
+// IsKernelDebuggerActive/self-debug gate (see that file's long comments
+// for the full mechanics - not re-derived here). Added to this DLL for
+// the same reason it was added to the License Check DLL and the Broker:
+// so VMProtect's own built-in debugger detection can be turned OFF here
+// too - it cannot be scoped to kernel-mode only, and its user-mode half
+// would misread this process's own legitimate self-debug session as an
+// attacker. This DLL previously shipped with NEITHER VMProtect's built-in
+// check NOR any manual one - genuinely unprotected against a debugger,
+// unlike its two siblings. This closes that gap.
+//
+// STRUCTURAL DIFFERENCE FROM THE DLL/BROKER: both of those have exactly
+// ONE mandatory entry point every legitimate caller calls first (Vela_
+// Boot_84 / the Broker's own startup gate), so the gate lives there only.
+// This DLL has no such single choke point - the Installer's first call
+// may be Nutricula_GenerateMachineId, the Broker's (via MachineIdBridge)
+// may be Nutricula_SignChallenge or any other export. EnsureAntiDebugGateOk
+// below is therefore a small, cheap, idempotent dispatcher called at the
+// top of every export that does real cryptographic/identity work (see its
+// own comment for exactly which ones, and why the plain informational
+// getters are deliberately left out).
+// ============================================================================
+
+using NtQueryInformationProcessFn = LONG(WINAPI*)(HANDLE, ULONG, PVOID, ULONG, PULONG);
+
+// noinline (same reasoning as GcmCrypt/Canonicalize above in this file,
+// and ThinDllWallClockUnixSeconds in the License Check DLL): called from
+// inside NUT_WatchdogThreadProc_Check's own marked region below. Left
+// inlinable, this function's own "IsDebuggerAttached" marker could get
+// folded into that caller's marked range, which VMProtect would reject as
+// "address already used" - the exact class of error already found and
+// fixed elsewhere in this project this session.
+__attribute__((noinline)) bool IsDebuggerAttached()
+{
+    NUT_VMP_BEGIN_ULTRA("IsDebuggerAttached");
+    // Method 1: the standard, well-known API - trivially patched around by
+    // itself, but still catches naive attach attempts and unmodified tools.
+    if (IsDebuggerPresent()) { NUT_VMP_END(); return true; }
+
+    // Method 2: remote debugger check - catches some debuggers Method 1 misses.
+    BOOL remoteDebugger = FALSE;
+    if (CheckRemoteDebuggerPresent(GetCurrentProcess(), &remoteDebugger) && remoteDebugger) { NUT_VMP_END(); return true; }
+
+    // Method 3: NtQueryInformationProcess(ProcessDebugPort) - catches a
+    // debugger that hides itself from IsDebuggerPresent. Resolved via
+    // GetProcAddress, matching this file's own existing pattern for
+    // undocumented ntdll exports (see DetectWineHostOS above).
+    HMODULE ntdll = GetModuleHandleA("ntdll.dll");
+    if (ntdll)
+    {
+        auto ntQueryInformationProcess = reinterpret_cast<NtQueryInformationProcessFn>(
+            GetProcAddress(ntdll, "NtQueryInformationProcess"));
+        if (ntQueryInformationProcess)
+        {
+            const ULONG ProcessDebugPort = 7;
+            DWORD_PTR debugPort = 0;
+            ULONG returned = 0;
+            if (ntQueryInformationProcess(GetCurrentProcess(), ProcessDebugPort,
+                &debugPort, sizeof(debugPort), &returned) == 0 && debugPort != 0)
+            {
+                NUT_VMP_END();
+                return true;
+            }
+        }
+    }
+
+    // Method 4: coarse timing check - single-stepping/breakpointing through
+    // this exact instruction sequence takes drastically longer than
+    // executing it normally. Generous threshold (50ms) deliberately chosen
+    // to never false-positive on a slow but legitimate machine.
+    LARGE_INTEGER freq, start, end;
+    QueryPerformanceFrequency(&freq);
+    QueryPerformanceCounter(&start);
+    volatile int dummy = 0;
+    for (int i = 0; i < 1000; i++) dummy += i;
+    QueryPerformanceCounter(&end);
+    double elapsedMs = static_cast<double>(end.QuadPart - start.QuadPart) * 1000.0 / static_cast<double>(freq.QuadPart);
+    if (elapsedMs > 50.0) { NUT_VMP_END(); return true; }
+
+    NUT_VMP_END();
+    return false;
+}
+
+using NtQuerySystemInformationFn = LONG(WINAPI*)(ULONG, PVOID, ULONG, PULONG);
+
+struct NUT_SystemKernelDebuggerInformation
+{
+    BOOLEAN KernelDebuggerEnabled;
+    BOOLEAN KernelDebuggerNotPresent;
+};
+
+// noinline - same reasoning as IsDebuggerAttached above: called from
+// inside NUT_WatchdogThreadProc_Check's and MachineId_KernelDebugGate's
+// own marked regions below.
+//
+// WHY THIS IS A SEPARATE CHECK FROM SELF-DEBUG: self-debugging (below)
+// only wins exclusivity over OTHER USER-MODE debuggers. A KERNEL debugger
+// (WinDbg attached via kernel debugging) operates entirely below the
+// user-mode Windows debugging API self-debug relies on - it can read/
+// write this process's memory directly from kernel context, without ever
+// calling DebugActiveProcess or being subject to its one-debugger-per-
+// process exclusivity rule. Self-debugging being active says nothing
+// about whether a kernel debugger is also present.
+__attribute__((noinline)) bool IsKernelDebuggerActive()
+{
+    NUT_VMP_BEGIN_ULTRA("IsKernelDebuggerActive");
+    HMODULE ntdll = GetModuleHandleA("ntdll.dll");
+    if (!ntdll) { NUT_VMP_END(); return false; }
+
+    auto ntQuerySystemInformation = reinterpret_cast<NtQuerySystemInformationFn>(
+        GetProcAddress(ntdll, "NtQuerySystemInformation"));
+    if (!ntQuerySystemInformation) { NUT_VMP_END(); return false; }
+
+    const ULONG SystemKernelDebuggerInformation = 35;
+    NUT_SystemKernelDebuggerInformation info{};
+    ULONG returned = 0;
+    if (ntQuerySystemInformation(SystemKernelDebuggerInformation, &info, sizeof(info), &returned) != 0)
+    {
+        // Query itself failed - fail open on the QUERY only, same
+        // tolerance as IsDebuggerAttached's own per-method handling; a
+        // failed query is not evidence of a kernel debugger, and a false
+        // positive here would deny a paying customer their license.
+        NUT_VMP_END();
+        return false;
+    }
+
+    // KernelDebuggerEnabled alone only means kernel-debugging support is
+    // switched on; KernelDebuggerNotPresent == FALSE is what confirms a
+    // kernel debugger is actually attached right now. Both required.
+    auto __nut_vmp_r = info.KernelDebuggerEnabled && !info.KernelDebuggerNotPresent;
+    NUT_VMP_END();
+    return __nut_vmp_r;
+}
+
+constexpr unsigned long long NUT_WATCHDOG_INTERVAL_MS = 1000;   // how often this independent check itself runs
+constexpr unsigned long long NUT_WATCHDOG_KILL_DELAY_MS = 5000; // grace window between detection and process termination
+std::atomic<bool> g_watchdogStarted{false};
+std::atomic<bool> g_watchdogDebuggerLatched{false};
+std::atomic<bool> g_watchdogKernelDebuggerLatched{false};
+
+// Set true once this process has successfully made itself its own
+// debugger. From that point on, every standard debugger-presence check
+// correctly reports "yes" forever - the watchdog below stands down once
+// this is true, since self-debugging has already made external attachment
+// impossible.
+std::atomic<bool> g_selfDebugActive{false};
+
+DWORD WINAPI NUT_WatchdogThreadProc(LPVOID)
+{
+    for (;;)
+    {
+        // Marked: this is the entire per-iteration decision - exactly the
+        // branch a static patch would want to defeat. Rate-limited to once
+        // a second, never hot-path, so ULTRA carries no meaningful cost.
+        NUT_VMP_BEGIN_ULTRA("NUT_WatchdogThreadProc_Check");
+        bool expected = false;
+        bool expectedKernel = false;
+        const bool userModeHit = !g_selfDebugActive.load() &&
+            IsDebuggerAttached() && g_watchdogDebuggerLatched.compare_exchange_strong(expected, true);
+        const bool kernelModeHit = !userModeHit && IsKernelDebuggerActive() &&
+            g_watchdogKernelDebuggerLatched.compare_exchange_strong(expectedKernel, true);
+        if (userModeHit || kernelModeHit)
+        {
+            // This DLL has no license-cache/tier state of its own to wipe
+            // (unlike the License Check DLL) - the independent,
+            // unconditional process kill below is the actual defense, and
+            // does not depend on or trust any other state.
+            Sleep(static_cast<DWORD>(NUT_WATCHDOG_KILL_DELAY_MS));
+            NUT_VMP_END();
+            TerminateProcess(GetCurrentProcess(), 0xDEADBEEF);
+            return 0; // unreachable in practice
+        }
+        NUT_VMP_END();
+        Sleep(static_cast<DWORD>(NUT_WATCHDOG_INTERVAL_MS));
+    }
+}
+
+// Starts the watchdog thread exactly once per process (one DLL instance
+// per host process - the Installer or the Broker - so one watchdog each).
+void EnsureDebuggerWatchdogStarted()
+{
+    bool expected = false;
+    if (g_watchdogStarted.compare_exchange_strong(expected, true))
+    {
+        HANDLE h = CreateThread(nullptr, 0, NUT_WatchdogThreadProc, nullptr, 0, nullptr);
+        if (h) CloseHandle(h); // intentionally not joined - runs for the process's lifetime
+    }
+}
+
+std::atomic<bool> g_selfDebugAttachDone{false}; // true once the attach attempt itself has been decided, success or failure
+
+DWORD WINAPI NUT_SelfDebugLoopThreadProc(LPVOID)
+{
+    // Marked: the actual attach decision - the single highest-value target
+    // for a STATIC patch (nopping out DebugActiveProcess or the
+    // store(true) below, no live debugger ever required). Must happen
+    // before DebugActiveProcess itself.
+    NUT_VMP_BEGIN_ULTRA("NUT_SelfDebugLoopThreadProc_Attach");
+    DebugSetProcessKillOnExit(FALSE);
+
+    if (!DebugActiveProcess(GetCurrentProcessId()))
+    {
+        g_selfDebugAttachDone.store(true);
+        NUT_VMP_END();
+        return 0;
+    }
+    g_selfDebugActive.store(true);
+    g_selfDebugAttachDone.store(true);
+    NUT_VMP_END();
+
+    for (;;)
+    {
+        DEBUG_EVENT ev{};
+        if (!WaitForDebugEvent(&ev, INFINITE))
+        {
+            break; // should not happen while actively self-debugging; stop cleanly rather than spin
+        }
+
+        DWORD continueStatus = DBG_CONTINUE;
+        if (ev.dwDebugEventCode == EXCEPTION_DEBUG_EVENT)
+        {
+            // Never claim to have handled an exception - pass it through
+            // exactly as it would behave with no debugger present at all.
+            continueStatus = DBG_EXCEPTION_NOT_HANDLED;
+        }
+
+        ContinueDebugEvent(ev.dwProcessId, ev.dwThreadId, continueStatus);
+
+        if (ev.dwDebugEventCode == EXIT_PROCESS_DEBUG_EVENT)
+        {
+            break; // this process (itself) is exiting normally
+        }
+    }
+
+    g_selfDebugActive.store(false);
+    return 0;
+}
+
+// Starts the self-debug loop exactly once per process.
+void EnsureSelfDebugStarted()
+{
+    static std::atomic<bool> started{false};
+    bool expected = false;
+    if (started.compare_exchange_strong(expected, true))
+    {
+        HANDLE h = CreateThread(nullptr, 0, NUT_SelfDebugLoopThreadProc, nullptr, 0, nullptr);
+        if (h) CloseHandle(h); // intentionally not joined - runs for the process's lifetime
+    }
+}
+
+// The two gate checks below are kept as two SEPARATE marked functions
+// (matching Vela_Boot_84_SelfDebugGate / Vela_Boot_84_KernelDebugGate in
+// the License Check DLL exactly) rather than merged into one, so each
+// stays its own distinct static-patch target. EnsureAntiDebugGateOk
+// itself is deliberately left UNMARKED - it is a trivial two-call
+// dispatcher with no decision logic of its own; marking it would also
+// create a nested-marker hazard (a marked function calling these two
+// marked functions from inside its own marked region), the exact bug
+// class already found and fixed elsewhere in this file this session.
+
+__attribute__((noinline)) bool EnsureMachineIdSelfDebugGateOk()
+{
+    // Marked: the fail-closed decision itself - "did self-debug actually
+    // become active, and should this proceed". Forcing g_selfDebugActive
+    // to read true here, or deleting this block, would silently turn the
+    // fail-closed policy back into fail-open.
+    NUT_VMP_BEGIN_ULTRA("MachineId_SelfDebugGate");
+    EnsureSelfDebugStarted();
+    for (int i = 0; i < 100 && !g_selfDebugAttachDone.load(); ++i)
+    {
+        Sleep(10); // bounded (~1s) wait for the attach attempt to resolve; DebugActiveProcess itself is near-instant
+    }
+
+    if (!g_selfDebugActive.load())
+    {
+        NUT_VMP_END();
+        return false;
+    }
+    NUT_VMP_END();
+    return true;
+}
+
+__attribute__((noinline)) bool EnsureMachineIdKernelDebugGateOk()
+{
+    // Marked: same reasoning as the self-debug gate above, for the
+    // kernel-mode half.
+    NUT_VMP_BEGIN_ULTRA("MachineId_KernelDebugGate");
+    if (IsKernelDebuggerActive())
+    {
+        NUT_VMP_END();
+        return false;
+    }
+    NUT_VMP_END();
+    return true;
+}
+
+// Shared anti-debug gate, called as the first line of every export below
+// that does real cryptographic/identity work (GenerateMachineIdImpl,
+// ProtectPayloadGcm/UnprotectPayloadGcm, and the "security protocol"
+// group the header itself already groups together: GetDevicePublicKey/
+// GetDeviceKeyHash/GetLicensePath/SignChallenge). Deliberately NOT called
+// from the plain informational getters (GetLastStatus, IsWineEnvironment,
+// GetLastPlatformProfile) - they read already-cached state, compute
+// nothing, and expose no secret or identity material, so gating them
+// would only add latency with no protection benefit.
+//
+// Unlike the License Check DLL (one mandatory Vela_Boot_84 boot call),
+// this DLL has no single entry point every caller is guaranteed to call
+// first, so this is re-entered at every protected export instead - cheap
+// after the first call in a given process, since EnsureSelfDebugStarted/
+// EnsureDebuggerWatchdogStarted are themselves idempotent one-time starts.
+bool EnsureAntiDebugGateOk()
+{
+    if (!EnsureMachineIdSelfDebugGateOk()) return false;
+    if (!EnsureMachineIdKernelDebugGateOk()) return false;
+    EnsureDebuggerWatchdogStarted();
+    return true;
+}
+
 static bool ProtectWithDpapi(const std::vector<unsigned char>& plain, std::vector<unsigned char>& wrapped) {
     DATA_BLOB in = { (DWORD)plain.size(), const_cast<BYTE*>(plain.data()) };
     DATA_BLOB out = { 0, nullptr };
@@ -1577,6 +1900,12 @@ int GenerateMachineIdImpl(char* output, int outputCapacity, bool includeMachineG
     if (!output || outputCapacity < 65) { g_lastStatus = 4; return -1; }
     output[0] = '\0';
 
+    // Anti-debug gate (2026 hardening) - fail closed, same generic status
+    // code already used for "could not collect identity" just below
+    // (g_lastStatus=2/-2), deliberately not a distinct new code, so this
+    // never hands an attacker a specific "a debugger was detected" signal.
+    if (!EnsureAntiDebugGateOk()) { g_lastStatus = 2; return -2; }
+
     IdentityRecord r;
     bool collected = false;
 
@@ -1692,6 +2021,7 @@ NUTRICULA_API int __cdecl Nutricula_IsWineEnvironment() {
 // underlying implementation.
 NUTRICULA_API int __cdecl Nutricula_ProtectPayloadGcm(const char* plaintext, int plaintextLength, char* output, int outputCapacity) {
     if (!plaintext || plaintextLength < 0 || !output || outputCapacity < 4) return -1;
+    if (!EnsureAntiDebugGateOk()) return 0; // same generic "operation failed" code GcmProtect itself already returns below
     std::vector<unsigned char> data((const unsigned char*)plaintext, (const unsigned char*)plaintext + plaintextLength);
     std::string envelope;
     if (!GcmProtect(data, envelope)) return 0;
@@ -1703,6 +2033,7 @@ NUTRICULA_API int __cdecl Nutricula_ProtectPayloadGcm(const char* plaintext, int
 
 NUTRICULA_API int __cdecl Nutricula_UnprotectPayloadGcm(const char* envelope, int envelopeLength, char* output, int outputCapacity) {
     if (!envelope || envelopeLength <= 0 || !output || outputCapacity < 1) return -1;
+    if (!EnsureAntiDebugGateOk()) return 0; // same generic "operation failed" code GcmUnprotect itself already returns below
     std::string text(envelope, envelope + envelopeLength);
     std::vector<unsigned char> plaintext;
     if (!GcmUnprotect(text, plaintext)) return 0;
@@ -1735,6 +2066,7 @@ NUTRICULA_API int __cdecl Nutricula_GetLastPlatformProfile(char* output, int out
 NUTRICULA_API int __cdecl Nutricula_GetDevicePublicKey(char* output, int outputCapacity) {
     if (!output || outputCapacity < 89) return -1;
     output[0] = '\0';
+    if (!EnsureAntiDebugGateOk()) return 0; // same generic "operation failed" code used just below
     std::vector<unsigned char> raw;
     if (!ExportPublicKeyRaw(raw) || raw.size() != 64) return 0;
     std::string b64;
@@ -1748,6 +2080,7 @@ NUTRICULA_API int __cdecl Nutricula_GetDevicePublicKey(char* output, int outputC
 NUTRICULA_API int __cdecl Nutricula_GetDeviceKeyHash(char* output, int outputCapacity) {
     if (!output || outputCapacity < 65) return -1;
     output[0] = '\0';
+    if (!EnsureAntiDebugGateOk()) return 0; // same generic "operation failed" code used just below
     std::vector<unsigned char> raw;
     if (!ExportPublicKeyRaw(raw) || raw.size() != 64) return 0;
     std::vector<unsigned char> digest;
@@ -1764,6 +2097,7 @@ NUTRICULA_API int __cdecl Nutricula_GetDeviceKeyHash(char* output, int outputCap
 NUTRICULA_API int __cdecl Nutricula_GetLicensePath(char* output, int outputCapacity) {
     if (!output || outputCapacity < 2) return -1;
     output[0] = '\0';
+    if (!EnsureAntiDebugGateOk()) return 0; // same generic "operation failed" code used just below
     std::wstring path;
     if (IsWine()) {
         std::wstring home = GetWineHomeDirWindowsPath();
@@ -1786,6 +2120,7 @@ NUTRICULA_API int __cdecl Nutricula_GetLicensePath(char* output, int outputCapac
 
 NUTRICULA_API int __cdecl Nutricula_SignChallenge(const char* message, int messageLength, char* signatureOutput, int signatureCapacity) {
     if (!message || messageLength < 0 || !signatureOutput || signatureCapacity < 64) return -1;
+    if (!EnsureAntiDebugGateOk()) return 0; // same generic "operation failed" code used just below
     std::vector<unsigned char> data(message, message + messageLength), digest;
     if (!Sha256Bytes(data, digest)) return 0;
 
