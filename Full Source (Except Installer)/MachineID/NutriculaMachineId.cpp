@@ -947,7 +947,20 @@ static void AppendSignal(std::wstringstream& ss, const Signal& s) {
     ss << s.name << L"=" << (s.valid ? s.value : L"<MISSING>") << L"\n";
 }
 
-static std::wstring Canonicalize(const IdentityRecord& r, bool includeMachineGuidForPhysical) {
+// __attribute__((noinline)) (2026 fix, same reasoning and the same fix
+// already used throughout this file's ~1000 calculation functions below):
+// MachineId_CanonicalToHash (GenerateMachineIdImpl's own marked sub-region,
+// see its own comment) calls Canonicalize() from INSIDE that marked
+// region. Left inlinable, GCC's -O2 folds Canonicalize's small body (and
+// its own "MachineId_Canonicalize" Begin/End marker pair) directly into
+// the caller - so the "MachineId_Canonicalize" marker ends up physically
+// sitting inside the "MachineId_CanonicalToHash" marker's own address
+// range in the final binary. VMProtect's scanner then rejects this with
+// "Address is already used by function MachineId_CanonicalToHash" -
+// reproduced and confirmed for real on this exact function. noinline
+// keeps Canonicalize as a genuine out-of-line call with its own address,
+// so the two marker regions never overlap.
+static __attribute__((noinline)) std::wstring Canonicalize(const IdentityRecord& r, bool includeMachineGuidForPhysical) {
     // Marked (2026 hardening, project owner's explicit request): this is
     // the exact field-selection-and-ordering format that turns raw
     // hardware signals into the string that gets hashed into machine_id -
@@ -1199,7 +1212,19 @@ static bool Base64Decode(const std::string& text, std::vector<unsigned char>& ou
     return true;
 }
 
-static bool GcmCrypt(const unsigned char* key, const unsigned char* nonce, const unsigned char* input, ULONG inputLen,
+// __attribute__((noinline)) (2026 fix, same reasoning as Canonicalize
+// above): both GcmProtect ("MachineId_GcmProtect") and GcmUnprotect
+// ("MachineId_GcmUnprotect") call GcmCrypt() from inside their own marked
+// regions. GcmCrypt is static with exactly these two call sites - exactly
+// the shape GCC's -O2 inliner likes best - so without this, its own
+// "MachineId_GcmCrypt" marker pair would get cloned into whichever
+// caller's marked region the compiler chooses to inline it into, and
+// VMProtect would reject that the same way it rejected
+// Canonicalize/MachineId_CanonicalToHash. Not yet seen in a VMProtect run
+// (the build only started succeeding once the earlier #error fix landed),
+// but it is the identical hazard, found and fixed pre-emptively rather
+// than waiting for VMProtect to report it.
+static __attribute__((noinline)) bool GcmCrypt(const unsigned char* key, const unsigned char* nonce, const unsigned char* input, ULONG inputLen,
                      unsigned char* output, unsigned char* tag, bool encrypt) {
     // Marked (2026 hardening, project owner's explicit request): this is
     // the exact point where TRANSPORT_KEY's raw bytes (passed in as `key`
