@@ -89,8 +89,6 @@ namespace NutriculaInstaller
 
             if (mode == InstallMode.Free)
             {
-                Task<FileInstallOutcome> freeInstallTask = InstallFilesAsync(mode, terminals, token, progress, log);
-
                 /* Device key creation is a REQUIRED step for a Free install
                    to report success - the free-tier statistics table
                    identifies a computer by machine_id and/or
@@ -98,25 +96,51 @@ namespace NutriculaInstaller
                    this install could never be recognized in a later
                    free_checkin (and if machine_id also can't be produced
                    on this particular system, the device key becomes the
-                   ONLY identifier available at all). */
-                Task<bool> freeIdentityTask = TryEnsureDeviceIdentityAsync(log);
+                   ONLY identifier available at all).
 
-                await Task.WhenAll(freeInstallTask, freeIdentityTask).ConfigureAwait(true);
-                FileInstallOutcome freeOutcome = freeInstallTask.Result;
-                bool deviceIdentityOk = freeIdentityTask.Result;
-                bool freeSucceeded = freeOutcome.AllSucceeded && deviceIdentityOk;
+                   2026 fix (real report): this used to run CONCURRENTLY
+                   with InstallFilesAsync (Task.WhenAll) purely to save a
+                   little wall-clock time. That let a device-identity
+                   failure leave a half-finished install behind: the EA/DLL
+                   files had already been copied into MetaTrader, and
+                   RegisterUninstaller had already run, by the time anyone
+                   checked whether the identity step itself had succeeded -
+                   RegisterUninstaller was gated on "files copied", not on
+                   overall success. The person saw a failure message, yet
+                   "Uninstall Nutricula" was now enabled, because something
+                   genuinely had been installed. This step now runs FIRST
+                   and gates everything else: nothing is copied into
+                   MetaTrader, and nothing is registered as installed,
+                   unless it succeeds - a Free install is now all-or-
+                   nothing, never partial. The only cost is a small amount
+                   of wall-clock time in the success case (this step is
+                   fast once the DLL is loaded); the failure case is, if
+                   anything, faster than before, since it no longer waits
+                   on a parallel file copy that was always going to be
+                   thrown away. */
+                bool deviceIdentityOk = await TryEnsureDeviceIdentityAsync(log).ConfigureAwait(true);
+                if (!deviceIdentityOk)
+                {
+                    result.FilesInstalled = false;
+                    result.ServerRequestFinished = true;
+                    result.LicenseFileOperationFinished = true;
+                    result.LicenseSucceeded = false;
+                    result.OverallSuccess = false;
+                    result.FinalMessage = Messages.FreeDeviceIdentityFailure;
+                    return result;
+                }
+
+                FileInstallOutcome freeOutcome = await InstallFilesAsync(mode, terminals, token, progress, log).ConfigureAwait(true);
 
                 result.FilesInstalled = freeOutcome.AllSucceeded;
                 if (freeOutcome.AllSucceeded) RegisterUninstaller(log);
                 result.ServerRequestFinished = true;
                 result.LicenseFileOperationFinished = true;
-                result.LicenseSucceeded = freeSucceeded;
-                result.OverallSuccess = freeSucceeded;
-                string freeBaseMessage = freeSucceeded
+                result.LicenseSucceeded = freeOutcome.AllSucceeded;
+                result.OverallSuccess = freeOutcome.AllSucceeded;
+                string freeBaseMessage = freeOutcome.AllSucceeded
                     ? Messages.FreeSuccess
-                    : (!freeOutcome.AllSucceeded
-                        ? Messages.ForFileFailure(freeOutcome.FailureKind)
-                        : Messages.FreeDeviceIdentityFailure);
+                    : Messages.ForFileFailure(freeOutcome.FailureKind);
                 // See FileInstallOutcome.CoordinatorWarning / TerminalWarning -
                 // both used to be swallowed into a log line nobody ever saw.
                 if (freeOutcome.CoordinatorWarning != null) freeBaseMessage += "\n\n" + freeOutcome.CoordinatorWarning;
@@ -396,7 +420,20 @@ namespace NutriculaInstaller
                         // prefer the "stable across OS reinstall" property
                         // here. This matches what CoordinatorCore.cpp's own
                         // free_checkin path sends.
-                        MachineIdService.GenerateComputerIdWithGuid();
+                        //
+                        // 2026 fix: this call now has its own try/catch,
+                        // separate from GetDevicePublicKey() below - it used
+                        // to share the single try/catch for this whole
+                        // attempt, so a machine-id failure on a system where
+                        // machine_id genuinely can never be produced (the
+                        // "very rare" case the comment above already
+                        // documents) would skip GetDevicePublicKey() entirely
+                        // on every attempt and fail the free install forever,
+                        // even though machine_id was never supposed to gate
+                        // it in the first place.
+                        try { MachineIdService.GenerateComputerIdWithGuid(); }
+                        catch (Exception machineIdEx) { lastException = machineIdEx; }
+
                         string devicePublicKey = MachineIdService.GetDevicePublicKey();
                         if (!string.IsNullOrEmpty(devicePublicKey))
                         {
@@ -1671,10 +1708,25 @@ namespace NutriculaInstaller
             public const string FreeSuccess =
                 "Nutricula Free Version was installed successfully." + ToolsOptionsReminder;
 
+            // 2026 fix (real report): this used to tell the person to "make
+            // sure the installer is running with sufficient permissions" -
+            // wrong advice that sends a legitimate user toward "Run as
+            // Administrator" for nothing. The device identity file this
+            // step reads/writes lives under the user's own
+            // %APPDATA%\Nutricula\DeviceKey.bin (see
+            // NutriculaMachineId.cpp's GetDeviceKeyPath), a per-user
+            // location the installer can always write to regardless of
+            // elevation - the whole install is non-elevated by design (see
+            // Program.cs's own comments). The real, documented cause here
+            // is near-always transient (e.g. security software briefly
+            // locking the freshly extracted DLL, or a slow first WMI/COM
+            // call) - see TryEnsureDeviceIdentityAsync, which already
+            // retries a few times before this message is ever shown.
             public const string FreeDeviceIdentityFailure =
                 "Nutricula could not complete the free installation because it was unable to create or " +
-                "read a required device identity file on this computer. Please make sure the installer is " +
-                "running with sufficient permissions and try again, or contact Nutricula support.";
+                "read this computer's device identity file. This is often temporary (for example, security " +
+                "software briefly scanning a newly installed file) — please click \"Try Again,\" and if " +
+                "the problem continues, please contact Nutricula support.";
 
             public const string PremiumSuccess =
                 "Your license was successfully activated and Nutricula was installed on your computer. " +
