@@ -364,15 +364,34 @@ namespace NutriculaInstaller
         }
 
         /// <summary>
-        /// Creates (or confirms) this computer's machine ID and device key
-        /// pair for Free installs. This is a REQUIRED step - a Free install
-        /// only reports success if the device key was actually created or
-        /// already existed and loaded correctly, because the free-tier
-        /// statistics table identifies a computer by machine_id and/or
-        /// device_key_hash; without at least the device key, this
-        /// install could never be recognized in a later free_checkin, and
-        /// (if machine_id also can't be generated on this computer) the
-        /// device key becomes the ONLY identifier available at all.
+        /// Creates (or confirms) this computer's machine ID (both variants)
+        /// and device key for Free installs. ALL THREE are REQUIRED for the
+        /// install to report success.
+        ///
+        /// 2026 fix: this used to treat machine_id as optional (only the
+        /// device key was required) on the theory that free_checkin could
+        /// fall back to the device key alone. That theory does not match
+        /// what actually runs later: CoordinatorCore.cpp's own runtime gate
+        /// (the Broker, every cycle, free tier included - confirmed by its
+        /// own ReportFailureBestEffort call passing local.hasLease ?
+        /// "licensed" : "free", so this is not a licensed-only path) requires
+        /// MachineIdBridge::GenerateMachineId (primary), ::
+        /// GenerateMachineIdWithGuid (alt - the variant Free's free_checkin
+        /// actually sends) AND ::GetDeviceKeyHash to ALL succeed, or the
+        /// whole cycle becomes TIER_FAILED and free_checkin is not even
+        /// attempted that round. A Free install that reported "success" here
+        /// while machine_id could never be produced on this computer would
+        /// therefore be a device that can never pass that gate once the EA
+        /// starts running in MetaTrader - this would just move the same
+        /// failure, unexplained and much later, instead of catching it now
+        /// with an actionable message.
+        ///
+        /// Deliberately returns a plain bool, and deliberately never
+        /// surfaces anything about machine_id vs. the device key anywhere
+        /// the person can see (not in the UI, not in the final message) -
+        /// that these are separate, named identifiers is internal detail the
+        /// install is not meant to reveal. log() calls below are for
+        /// internal/diagnostic purposes only.
         /// </summary>
         private static Task<bool> TryEnsureDeviceIdentityAsync(Action<string> log)
         {
@@ -407,33 +426,23 @@ namespace NutriculaInstaller
                 {
                     try
                     {
-                        // Machine ID is attempted but its success is NOT
-                        // required here (see the free_checkin design: a device
-                        // key alone is sufficient to identify this computer in
-                        // the unlicensed-usage table if machine_id can't be
-                        // produced on this particular system - very rare, but
-                        // possible, e.g. inside certain restricted containers).
-                        // 2026 hardening: Free installs always use the WithGuid
-                        // variant (never the primary/no-GUID one) - Free's
-                        // machine_id exists purely for check-in statistics and
-                        // never gates activation, so there's no reason to
-                        // prefer the "stable across OS reinstall" property
-                        // here. This matches what CoordinatorCore.cpp's own
-                        // free_checkin path sends.
+                        // All three calls share this one try/catch
+                        // deliberately - see this method's own doc comment:
+                        // the Broker's later gate requires all three to
+                        // succeed, so a failure in any one of them must fail
+                        // this whole attempt (and, after maxAttempts, the
+                        // Free install itself) exactly the same way.
                         //
-                        // 2026 fix: this call now has its own try/catch,
-                        // separate from GetDevicePublicKey() below - it used
-                        // to share the single try/catch for this whole
-                        // attempt, so a machine-id failure on a system where
-                        // machine_id genuinely can never be produced (the
-                        // "very rare" case the comment above already
-                        // documents) would skip GetDevicePublicKey() entirely
-                        // on every attempt and fail the free install forever,
-                        // even though machine_id was never supposed to gate
-                        // it in the first place.
-                        try { MachineIdService.GenerateComputerIdWithGuid(); }
-                        catch (Exception machineIdEx) { lastException = machineIdEx; }
-
+                        // Primary (no-GUID) machine_id - Free's own
+                        // free_checkin request never sends this value (see
+                        // CoordinatorCore.cpp: it sends only the WithGuid
+                        // variant), but the Broker's gate still requires it
+                        // to have been generated successfully at least once,
+                        // so it is generated here too.
+                        MachineIdService.GenerateComputerId();
+                        // WithGuid variant - the one Free's free_checkin
+                        // actually sends as "machine_id".
+                        MachineIdService.GenerateComputerIdWithGuid();
                         string devicePublicKey = MachineIdService.GetDevicePublicKey();
                         if (!string.IsNullOrEmpty(devicePublicKey))
                         {
@@ -450,7 +459,7 @@ namespace NutriculaInstaller
                     if (attempt < maxAttempts) Thread.Sleep(retryDelayMs);
                 }
 
-                log("Device key could not be created or loaded during the free install after " +
+                log("Device identity could not be created or loaded during the free install after " +
                     maxAttempts + " attempts." + (lastException != null ? " (" + lastException.Message + ")" : ""));
                 return false;
             });

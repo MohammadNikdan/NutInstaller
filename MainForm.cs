@@ -26,7 +26,15 @@ namespace NutriculaInstaller
     // lives in InstallerService.cs, CryptoService.cs and MachineIdService.cs,
     // none of which are touched by this exclusion, so "ctrl flow" keeps
     // protecting what actually needs it.
-    [Obfuscation(Feature = "ctrl flow", Exclude = true, ApplyToMembers = true)]
+    //
+    // NOTE on syntax: Exclude must be false (never true) whenever Feature is
+    // set - ConfuserEx's own ObfAttrMarker throws "Feature property cannot
+    // be set when Exclude is true" otherwise (confirmed against a real run).
+    // A leading "-" in Feature is how ConfuserEx turns OFF one named
+    // protection while leaving every other protection from the active
+    // preset/rule in place - Exclude=true instead would mean "exclude from
+    // every protection", which is not what is wanted here.
+    [Obfuscation(Exclude = false, Feature = "-ctrl flow", ApplyToMembers = true)]
     public sealed class MainForm : Form
     {
         private const int PageWidth = 696; // ClientSize.Width (760) minus contentHost's left+right padding (32+32)

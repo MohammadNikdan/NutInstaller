@@ -18,7 +18,7 @@ namespace NutriculaInstaller
     // IndeterminateBar, CircularSpinner, ResultBadge) are pure drawing/layout
     // code called from MainForm's constructor and from OnPaint on first
     // render, not security-sensitive logic.
-    [Obfuscation(Feature = "ctrl flow", Exclude = true, ApplyToMembers = true)]
+    [Obfuscation(Exclude = false, Feature = "-ctrl flow", ApplyToMembers = true)]
     internal static class UiHelpers
     {
         // ===== App-wide text font (embedded, no install needed on the user's machine) =====
@@ -385,7 +385,7 @@ namespace NutriculaInstaller
     // Material-style clickable list row used on the "choose an option" page.
     // Tapping it fires Click immediately (no radio selection state).
     // ======================================================================
-    [Obfuscation(Feature = "ctrl flow", Exclude = true, ApplyToMembers = true)]
+    [Obfuscation(Exclude = false, Feature = "-ctrl flow", ApplyToMembers = true)]
     internal sealed class OptionTile : Panel
     {
         public InstallMode Mode { get; private set; }
@@ -471,7 +471,7 @@ namespace NutriculaInstaller
     // Custom-painted Material-style button (used for every action button:
     // Install, Back, Finish, and the two footer link buttons).
     // ======================================================================
-    [Obfuscation(Feature = "ctrl flow", Exclude = true, ApplyToMembers = true)]
+    [Obfuscation(Exclude = false, Feature = "-ctrl flow", ApplyToMembers = true)]
     internal sealed class MaterialButton : Panel
     {
         public string Text2 { get; set; }
@@ -624,7 +624,7 @@ namespace NutriculaInstaller
     // Linear "infinite" Material-style progress indicator (a moving segment
     // sliding across a light track). Purely a UI element - no install logic.
     // ======================================================================
-    [Obfuscation(Feature = "ctrl flow", Exclude = true, ApplyToMembers = true)]
+    [Obfuscation(Exclude = false, Feature = "-ctrl flow", ApplyToMembers = true)]
     internal sealed class IndeterminateBar : Panel
     {
         private readonly Timer timer;
@@ -717,7 +717,7 @@ namespace NutriculaInstaller
     // "please wait a moment", and a round spinner reads that way without
     // being confused for the linear progress bar shown a moment later.
     // ======================================================================
-    [Obfuscation(Feature = "ctrl flow", Exclude = true, ApplyToMembers = true)]
+    [Obfuscation(Exclude = false, Feature = "-ctrl flow", ApplyToMembers = true)]
     internal sealed class CircularSpinner : Panel
     {
         private readonly Timer timer;
@@ -782,7 +782,7 @@ namespace NutriculaInstaller
     // Circular result badge (green check / red cross) shown after an
     // install finishes. Purely presentational.
     // ======================================================================
-    [Obfuscation(Feature = "ctrl flow", Exclude = true, ApplyToMembers = true)]
+    [Obfuscation(Exclude = false, Feature = "-ctrl flow", ApplyToMembers = true)]
     internal sealed class ResultBadge : Panel
     {
         private string glyph = UiHelpers.GlyphCheck;
