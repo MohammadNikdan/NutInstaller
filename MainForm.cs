@@ -2,12 +2,31 @@ using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Drawing2D;
+using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 
 namespace NutriculaInstaller
 {
+    // ConfuserEx "ctrl flow" is excluded here (ApplyToMembers = true, so it
+    // covers every method on this class, including BuildUi/BuildHeader/
+    // BuildFooter/LayoutCredentialsFields/BuildSplashOverlay/InitializeForm,
+    // all of which run synchronously from the constructor below, before
+    // Application.Run ever paints the window). "ctrl flow" rewrites a
+    // method's IL into an opaque-predicate switch/state-machine, and on
+    // large, straight-line, auto-generated-style UI-construction methods
+    // like these (the hand-built equivalent of WinForms' InitializeComponent)
+    // that produces a dramatically larger method body for the JIT to compile
+    // on first call - which is exactly what was measured as "the installer
+    // window itself takes forever to appear" once ConfuserEx was added, with
+    // everything else (file size, antivirus, MachineId.dll) ruled out.
+    // There is nothing security-sensitive in this class (it only lays out
+    // buttons, labels and colors) - the real license/crypto/machine-id logic
+    // lives in InstallerService.cs, CryptoService.cs and MachineIdService.cs,
+    // none of which are touched by this exclusion, so "ctrl flow" keeps
+    // protecting what actually needs it.
+    [Obfuscation(Feature = "ctrl flow", Exclude = true, ApplyToMembers = true)]
     public sealed class MainForm : Form
     {
         private const int PageWidth = 696; // ClientSize.Width (760) minus contentHost's left+right padding (32+32)
