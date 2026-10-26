@@ -285,23 +285,25 @@ unsigned __stdcall BrokerDebugWatchdogThreadProc(void*)
     for (;;)
     {
         Sleep(1000);
-        // Marked (2026 hardening): the whole per-iteration check-and-react
-        // body, mirroring NUT_WatchdogThreadProc_Check in the DLL. Runs
-        // once a second - never hot-path - so ULTRA costs nothing
-        // meaningful here.
+        // Marked (2026 hardening): only the decision itself (the two
+        // boolean checks) - mirroring NUT_WatchdogThreadProc_Check in the
+        // DLL after its own 2026 fix. The reaction (log, printf,
+        // TerminateProcess) is deliberately native, outside the marker -
+        // see the DLL's own copy of this fix for the full rationale
+        // (blocking/IO code has no place inside a virtualized region).
         NUT_VMP_BEGIN_ULTRA("BrokerDebugWatchdogThreadProc_Check");
         const bool userModeHit = IsDebuggerAttached();
         // Independent of the user-mode check entirely - see
         // IsKernelDebuggerActive's own comment for why.
         const bool kernelModeHit = !userModeHit && IsKernelDebuggerActive();
+        NUT_VMP_END();
+
         if (userModeHit || kernelModeHit)
         {
             printf("%s - exiting rather than running unprotected.\n",
                 kernelModeHit ? "Kernel-mode debugger detected" : "User-mode debugger detected");
-            NUT_VMP_END();
             TerminateProcess(GetCurrentProcess(), 0xDEADBEEF);
         }
-        NUT_VMP_END();
     }
 }
 
