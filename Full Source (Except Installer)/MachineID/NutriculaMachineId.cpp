@@ -1806,7 +1806,15 @@ NUTRICULA_API int __cdecl Nutricula_GetLicensePath(char* output, int outputCapac
 // session here for a background poll to watch over.
 using NtQueryInformationProcessFnMid = LONG(WINAPI*)(HANDLE, ULONG, PVOID, ULONG, PULONG);
 
-static bool MidIsDebuggerAttached()
+// __attribute__((noinline)) (fix, same reasoning as the License Check
+// DLL's own copy of this function): called from inside
+// Nutricula_SignChallenge_DebuggerGate's own marked region just below.
+// Left inlinable, GCC's -O2 can fold this function's body - and its own
+// "MidIsDebuggerAttached" Begin/End marker pair - directly into that
+// caller, which VMProtect then rejects as "address already used by
+// function X". Confirmed directly: this is exactly the error VMProtect
+// reported before this attribute was added.
+__attribute__((noinline)) static bool MidIsDebuggerAttached()
 {
     NUT_VMP_BEGIN_ULTRA("MidIsDebuggerAttached");
     if (IsDebuggerPresent()) { NUT_VMP_END(); return true; }
@@ -1854,7 +1862,11 @@ struct NutMidSystemKernelDebuggerInformation
     BOOLEAN KernelDebuggerNotPresent;
 };
 
-static bool MidIsKernelDebuggerActive()
+// __attribute__((noinline)) - same reasoning as MidIsDebuggerAttached just
+// above: called from inside Nutricula_SignChallenge_DebuggerGate's own
+// marked region, so leaving this inlinable risks the identical "address
+// already used" rejection from VMProtect.
+__attribute__((noinline)) static bool MidIsKernelDebuggerActive()
 {
     NUT_VMP_BEGIN_ULTRA("MidIsKernelDebuggerActive");
     HMODULE ntdll = GetModuleHandleA("ntdll.dll");
