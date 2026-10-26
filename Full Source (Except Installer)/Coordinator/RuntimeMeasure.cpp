@@ -47,13 +47,29 @@ constexpr unsigned long long MAX_LIB_FILE_BYTES = 24ull * 1024 * 1024;
 // so MeasureSession never gets the chance to compare its hash at all, falls
 // through to the "name matched, no candidate hash matched" branch, and
 // reports exactly this failure even though the real DLL on disk is
-// perfectly correct and perfectly signed. Raised with a large safety
-// margin above the current largest real artifact so future VMProtect growth
-// (more functions marked Ultra, etc.) does not silently reopen this same
-// bug; still comfortably bounded so a pathological/bloated folder cannot
-// turn one refresh cycle into minutes of hashing.
+// perfectly correct and perfectly signed.
+//
+// SECOND FIX, same day: the first pass raised this to 48 MiB, which turned
+// out to be too generous. CoordinatorCore::RequestRefreshIfDue's own comment
+// (just above SESSION_REDISCOVER_INTERVAL_MS) says it plainly: "the actual
+// integrity measurement (hashing) is redone every cycle" - every single poll
+// (an EA polls every few seconds), not once per session. A 48 MiB cap lets
+// every other large-but-irrelevant module MetaTrader happens to have loaded
+// (runtime DLLs, other EAs/indicators, etc.) into candidateModules too, and
+// each one gets fully re-hashed AND entry-point-scanned on every one of
+// those cycles forever - turning what used to be a fast, cheap check into a
+// sustained, repeated, multi-second cost, which is exactly what this cap
+// was always meant to prevent in the first place (see the comment just
+// above this block). That shows up as a long "nothing happens" stall right
+// after attaching the EA, and in the worst case can starve/delay the pipe
+// accept loop enough to exhaust the client's own NUT_PIPE_FAIL_TOLERANCE
+// window. Narrowed back down to a cap that still comfortably covers the
+// current largest real artifact (~11.5 MiB) with real headroom for
+// incremental future VMProtect growth, but stays tight enough that it keeps
+// excluding the kind of unrelated large modules the original 8 MiB design
+// intended to skip.
 constexpr size_t MAX_CANDIDATE_MODULES = 64;
-constexpr unsigned long long MAX_MODULE_BYTES = 48ull * 1024 * 1024;
+constexpr unsigned long long MAX_MODULE_BYTES = 16ull * 1024 * 1024;
 
 // Size of a file without opening it for reading. Returns false when it cannot
 // be determined, which keeps the file out of the candidate list rather than
