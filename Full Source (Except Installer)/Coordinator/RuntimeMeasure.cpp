@@ -31,12 +31,29 @@ constexpr unsigned long long MAX_LIB_FILE_BYTES = 24ull * 1024 * 1024;
 // Loaded modules we are willing to hash while looking for our own. A
 // MetaTrader process loads plenty of libraries - including its own
 // multi-megabyte executable - so the candidate list is bounded both in count
-// and in per-file size. The size cap is comfortably above our own DLLs
-// (hundreds of KB) and below anything like terminal64.exe, which keeps a
-// re-discovery in the low milliseconds without excluding anywhere a user can
-// actually write a module.
+// and in per-file size.
+//
+// FIX (2026, root-causing a persistent "the License Check DLL loaded in
+// MetaTrader does not match the signed manifest" / artifact_check_failed
+// report, even with a correctly-signed manifest and a byte-for-byte correct
+// installed DLL): this cap used to be 8 MiB, sized back when our own DLLs
+// really were "hundreds of KB" (see this comment's own stale claim below,
+// now corrected). VMProtect Ultra/Virtualization protection genuinely
+// inflates the shipped binaries well past that - confirmed against the
+// actual Assets/ artifacts: NutriculaLicenseCheck64.dll ~11.5 MiB,
+// MachineId64.dll ~10.0 MiB, NutriculaLicenseCheck32.dll ~8.1 MiB (already
+// over the old 8 MiB cap by itself). Any candidate module bigger than the
+// cap is silently dropped from candidateModules BEFORE it is ever hashed -
+// so MeasureSession never gets the chance to compare its hash at all, falls
+// through to the "name matched, no candidate hash matched" branch, and
+// reports exactly this failure even though the real DLL on disk is
+// perfectly correct and perfectly signed. Raised with a large safety
+// margin above the current largest real artifact so future VMProtect growth
+// (more functions marked Ultra, etc.) does not silently reopen this same
+// bug; still comfortably bounded so a pathological/bloated folder cannot
+// turn one refresh cycle into minutes of hashing.
 constexpr size_t MAX_CANDIDATE_MODULES = 64;
-constexpr unsigned long long MAX_MODULE_BYTES = 8ull * 1024 * 1024;
+constexpr unsigned long long MAX_MODULE_BYTES = 48ull * 1024 * 1024;
 
 // Size of a file without opening it for reading. Returns false when it cannot
 // be determined, which keeps the file out of the candidate list rather than
