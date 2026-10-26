@@ -8219,6 +8219,7 @@ __attribute__((noinline)) bool IsDebuggerAttached()
             }
         }
     }
+    NUT_VMP_END();
 
     // Method 4: a coarse timing check - single-stepping or breakpointing
     // through this exact sequence of instructions takes drastically longer
@@ -8227,6 +8228,23 @@ __attribute__((noinline)) bool IsDebuggerAttached()
     // used deliberately: this must never produce a false positive on a
     // slow/loaded but otherwise legitimate machine, since a false positive
     // here means denying a paying customer their license.
+    //
+    // FIX (2026 hardening, root-caused after VMProtect's Debugger Detection
+    // surfaced a crash elsewhere and testing without it then showed
+    // Vela_Boot_84() failing closed every time via exactly this method):
+    // this loop used to sit INSIDE the NUT_VMP_BEGIN_ULTRA/_END block above.
+    // VM-interpreted code is inherently and substantially slower than
+    // native code to execute - that is the entire mechanism Ultra
+    // virtualization relies on - so once this function was actually run
+    // through real Ultra virtualization for the first time, the 1000-
+    // iteration loop below routinely took well over the 50ms threshold on
+    // its own, with no debugger involved at all: the protection applied to
+    // this function was tripping the function's own timing heuristic.
+    // Deliberately left OUTSIDE any VMProtect marker now, so it measures
+    // genuine native wall-clock time - the same reason the self-debug
+    // WaitForDebugEvent loop (removed elsewhere in this file) was always
+    // kept outside any marked region: a blocking or timing-sensitive loop
+    // and VM virtualization do not mix safely.
     LARGE_INTEGER freq, start, end;
     QueryPerformanceFrequency(&freq);
     QueryPerformanceCounter(&start);
@@ -8234,9 +8252,8 @@ __attribute__((noinline)) bool IsDebuggerAttached()
     for (int i = 0; i < 1000; i++) dummy += i;
     QueryPerformanceCounter(&end);
     double elapsedMs = static_cast<double>(end.QuadPart - start.QuadPart) * 1000.0 / static_cast<double>(freq.QuadPart);
-    if (elapsedMs > 50.0) { NUT_VMP_END(); return true; }
+    if (elapsedMs > 50.0) return true;
 
-    NUT_VMP_END();
     return false;
 }
 
