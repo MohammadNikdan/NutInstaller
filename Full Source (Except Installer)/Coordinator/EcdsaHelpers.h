@@ -56,12 +56,21 @@ inline bool VerifyP256(const unsigned char publicKeyXY[64],
     // never a hot path. NUT_VMP_* is a no-op everywhere except the thin
     // DLL's own build (see VMProtectMarkers.h), so this has zero effect
     // on the Coordinator/Broker or ManifestVerify builds.
+    //
+    // FIX (2026, root-causing a persistent Tier -2 report - same mistake,
+    // same fix, as NamedPipeIpc::ConnectAndVerify's own 2026 fix): every
+    // early-exit below used to skip NUT_VMP_END(), leaving the marker
+    // unclosed on every path except the final one. This is the function
+    // that proves the Coordinator's identity signature on every single
+    // Poll cycle, so an unclosed marker here is squarely in the path that
+    // decides Tier 2 vs -2. Every return now goes through NUT_VMP_END()
+    // first.
     NUT_VMP_BEGIN_ULTRA("EcdsaHelpers_VerifyP256");
     unsigned char digest[32];
-    if (!Sha256(data, dataLen, digest)) return false;
+    if (!Sha256(data, dataLen, digest)) { NUT_VMP_END(); return false; }
 
     BCRYPT_ALG_HANDLE alg = nullptr;
-    if (BCryptOpenAlgorithmProvider(&alg, BCRYPT_ECDSA_P256_ALGORITHM, nullptr, 0) < 0) return false;
+    if (BCryptOpenAlgorithmProvider(&alg, BCRYPT_ECDSA_P256_ALGORITHM, nullptr, 0) < 0) { NUT_VMP_END(); return false; }
 
     struct { BCRYPT_ECCKEY_BLOB header; unsigned char xy[64]; } blob;
     blob.header.dwMagic = BCRYPT_ECDSA_PUBLIC_P256_MAGIC;
@@ -74,6 +83,7 @@ inline bool VerifyP256(const unsigned char publicKeyXY[64],
     if (st < 0)
     {
         BCryptCloseAlgorithmProvider(alg, 0);
+        NUT_VMP_END();
         return false;
     }
 

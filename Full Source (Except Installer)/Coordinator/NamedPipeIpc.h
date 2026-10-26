@@ -299,6 +299,29 @@ inline HANDLE ConnectAndVerify(const unsigned char coordinatorPublicKeyXY[64], D
     // driven by the periodic Poll (Pavo_Sync_85/OnTimer) - never OnTick.
     // No-op everywhere except the thin DLL's own build (see
     // VMProtectMarkers.h).
+    //
+    // FIX (2026, root-causing a persistent Tier -2 report): this function
+    // used to call NUT_VMP_END() ONLY on the final success path at the
+    // bottom. Every one of its five early-exit returns above - pipe
+    // unavailable, pipe never freed up in time, either handshake ReadFile
+    // failing, and the signature verification failing - left the
+    // NUT_VMP_BEGIN_ULTRA marker above completely unclosed on that path.
+    // Unlike a missing noinline (which VMProtect catches at BUILD time
+    // with a clear "address already used" error - see the MachineId fix
+    // earlier this session), an unclosed marker is not something
+    // VMProtect's build-time scanner necessarily rejects outright; it can
+    // instead produce a genuinely malformed virtualized region whose
+    // behavior on those paths is simply undefined - exactly the kind of
+    // thing that could leave this function, or the calling thread's state,
+    // silently wrong after the very first transient pipe hiccup (the
+    // Coordinator still starting up, a single slow handshake read, etc.) -
+    // without ever producing a build error or an obvious crash. This is
+    // the ONE function in the whole project with this shape (every other
+    // marked function here - see IsKernelDebuggerActive's own comment on
+    // its "four linear exits, each covered by its own END" - already
+    // follows the correct pattern); it was simply missed. Every early
+    // return below now goes through NUT_VMP_END() first, same as
+    // everywhere else.
     NUT_VMP_BEGIN_ULTRA("NamedPipeIpc_ConnectAndVerify");
     HANDLE pipe = INVALID_HANDLE_VALUE;
     DWORD waited = 0;
@@ -320,10 +343,10 @@ inline HANDLE ConnectAndVerify(const unsigned char coordinatorPublicKeyXY[64], D
         pipe = CreateFileW(CoordinatorProtocol::PIPE_NAME, GENERIC_READ | GENERIC_WRITE,
             0, nullptr, OPEN_EXISTING, SECURITY_SQOS_PRESENT | SECURITY_IMPERSONATION, nullptr);
         if (pipe != INVALID_HANDLE_VALUE) break;
-        if (GetLastError() != ERROR_PIPE_BUSY) return INVALID_HANDLE_VALUE; // not running / not available at all
+        if (GetLastError() != ERROR_PIPE_BUSY) { NUT_VMP_END(); return INVALID_HANDLE_VALUE; } // not running / not available at all
         if (!WaitNamedPipeW(CoordinatorProtocol::PIPE_NAME, 1000)) { waited += 1000; continue; }
     }
-    if (pipe == INVALID_HANDLE_VALUE) return INVALID_HANDLE_VALUE;
+    if (pipe == INVALID_HANDLE_VALUE) { NUT_VMP_END(); return INVALID_HANDLE_VALUE; }
 
     DWORD mode = PIPE_READMODE_MESSAGE;
     SetNamedPipeHandleState(pipe, &mode, nullptr, nullptr);
@@ -335,6 +358,7 @@ inline HANDLE ConnectAndVerify(const unsigned char coordinatorPublicKeyXY[64], D
         challenge.protocolVersion != CoordinatorProtocol::PROTOCOL_VERSION)
     {
         CloseHandle(pipe);
+        NUT_VMP_END();
         return INVALID_HANDLE_VALUE;
     }
 
@@ -343,6 +367,7 @@ inline HANDLE ConnectAndVerify(const unsigned char coordinatorPublicKeyXY[64], D
         response.type != CoordinatorProtocol::MessageType::HandshakeResponse)
     {
         CloseHandle(pipe);
+        NUT_VMP_END();
         return INVALID_HANDLE_VALUE;
     }
 
@@ -353,6 +378,7 @@ inline HANDLE ConnectAndVerify(const unsigned char coordinatorPublicKeyXY[64], D
     if (!EcdsaHelpers::VerifyP256(coordinatorPublicKeyXY, challenge.nonce, sizeof(challenge.nonce), response.signature))
     {
         CloseHandle(pipe);
+        NUT_VMP_END();
         return INVALID_HANDLE_VALUE;
     }
 
