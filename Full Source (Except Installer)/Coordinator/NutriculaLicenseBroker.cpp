@@ -113,41 +113,92 @@ unsigned __stdcall ServeOneClient(void* param)
 // outright, and the DLL computes its own forward-only "now" rather than
 // trusting anything the Broker reports).
 //
-// Same technique as the DLL's own self-debug gate (NutriculaLicenseCheckThin.cpp,
-// Vela_Boot_84/NUT_SelfDebugLoopThreadProc) - see that function's long
-// comment for the full mechanics and the real, accepted risk (a bug in
-// this event loop can hang or crash this process; DebugSetProcessKillOnExit
-// (FALSE) is what stops a problem here from doing anything worse than
-// that to THIS process alone).
+// REMOVED (previously in this exact spot): a self-debug gate using the
+// same technique the DLL used to have (NutriculaLicenseCheckThin.cpp,
+// Vela_Boot_84/NUT_SelfDebugLoopThreadProc - see the comment left in its
+// place there for the full story). Removed for the identical reason:
+// DebugActiveProcess(GetCurrentProcessId()) can never succeed on any
+// version of Windows - NtDebugActiveProcess hard-codes a same-PID check
+// and unconditionally returns STATUS_ACCESS_DENIED whenever the target
+// PID equals the caller's own PID. This means the Broker's own
+// self-debug gate in main() (below) was, in effect, always refusing to
+// start from the moment it was added - printf() output that would have
+// shown this is a silent no-op in this -mwindows build with no console
+// attached, which is why it went unnoticed.
+//
+// IsDebuggerAttached() below replaces it with the same four-method
+// user-mode check the DLL already uses (IsDebuggerPresent,
+// CheckRemoteDebuggerPresent, the ProcessDebugPort query, and a coarse
+// timing check) - the Broker never had one of its own before; it relied
+// entirely on self-debug for user-mode coverage.
 //
 // THE TRADEOFF, stated as plainly here as it was to the project owner
-// before this was written: unlike the DLL (where a fail-closed self-debug
-// check only blocks the ONE EA that calls it), this Broker is a single
-// shared background service - EVERY EA/chart in this Windows user session
-// gets its licensing answers through it. If self-debugging fails here and
-// this function refuses to start the Broker, NO EA using it gets any
+// before the original self-debug gate was written, and equally true of
+// this check: unlike the DLL (where a fail-closed check only blocks the
+// ONE EA that calls it), this Broker is a single shared background
+// service - EVERY EA/chart in this Windows user session gets its
+// licensing answers through it. If this check finds a debugger already
+// attached and refuses to start the Broker, NO EA using it gets any
 // fresh license answer at all until the Broker is relaunched (each EA's
 // own DLL-side pipe-fail tolerance/90-second cap and cached lease still
 // apply as they always did - this does not change what happens on the EA
 // side, only that the Broker will not come up to serve them while in this
 // state). This is the project owner's deliberate, informed choice,
 // prioritizing "never run unprotected" over "always be available."
-std::atomic<bool> g_brokerSelfDebugActive{false};
-std::atomic<bool> g_brokerSelfDebugAttachDone{false};
+using NtQueryInformationProcessFn = LONG(WINAPI*)(HANDLE, ULONG, PVOID, ULONG, PULONG);
+
+// Mirrors NutriculaLicenseCheckThin.cpp's IsDebuggerAttached exactly - see
+// that function's own comment for the full rationale of each method.
+__attribute__((noinline)) bool IsDebuggerAttached()
+{
+    NUT_VMP_BEGIN_ULTRA("IsDebuggerAttached");
+    if (IsDebuggerPresent()) { NUT_VMP_END(); return true; }
+
+    BOOL remoteDebugger = FALSE;
+    if (CheckRemoteDebuggerPresent(GetCurrentProcess(), &remoteDebugger) && remoteDebugger) { NUT_VMP_END(); return true; }
+
+    HMODULE ntdllForDebugPort = GetModuleHandleA("ntdll.dll");
+    if (ntdllForDebugPort)
+    {
+        auto ntQueryInformationProcess = reinterpret_cast<NtQueryInformationProcessFn>(
+            GetProcAddress(ntdllForDebugPort, "NtQueryInformationProcess"));
+        if (ntQueryInformationProcess)
+        {
+            const ULONG ProcessDebugPort = 7;
+            DWORD_PTR debugPort = 0;
+            ULONG returned = 0;
+            if (ntQueryInformationProcess(GetCurrentProcess(), ProcessDebugPort,
+                &debugPort, sizeof(debugPort), &returned) == 0 && debugPort != 0)
+            {
+                NUT_VMP_END();
+                return true;
+            }
+        }
+    }
+
+    LARGE_INTEGER freq, start, end;
+    QueryPerformanceFrequency(&freq);
+    QueryPerformanceCounter(&start);
+    volatile int dummy = 0;
+    for (int i = 0; i < 1000; i++) dummy += i;
+    QueryPerformanceCounter(&end);
+    double elapsedMs = static_cast<double>(end.QuadPart - start.QuadPart) * 1000.0 / static_cast<double>(freq.QuadPart);
+    if (elapsedMs > 50.0) { NUT_VMP_END(); return true; }
+
+    NUT_VMP_END();
+    return false;
+}
 
 // =========================================================================
 // Kernel-mode debugger detection (2026 hardening, project owner's explicit
 // request, mirroring NutriculaLicenseCheckThin.cpp's IsKernelDebuggerActive
-// exactly - see that function's own comment for the full rationale). The
-// short version: self-debugging above only wins exclusivity over OTHER
-// USER-MODE debuggers; a kernel debugger (WinDbg attached via kernel
-// debugging) never goes through DebugActiveProcess at all, so it is
-// invisible to everything built so far for this process. VMProtect's own
-// built-in debugger detection was deliberately left OFF for this build
-// (project owner's decision after confirming it cannot be configured as
-// "kernel-mode only" - the user-mode half of it would misread this
-// process's own self-debug session as an attacker), so kernel-mode
-// coverage is implemented here instead, independently of self-debug.
+// exactly - see that function's own comment for the full rationale).
+// VMProtect's own built-in debugger detection was deliberately left OFF
+// for this build while the Broker's self-debug gate above was still
+// active (it would have conflicted with it); now that self-debug has
+// been removed, VMProtect's built-in detection (user-mode + kernel-mode
+// together) can safely be enabled, and this function stays regardless as
+// an independent, non-VMProtect-dependent layer.
 //
 // SystemKernelDebuggerInformation (class 35) is the standard, long-stable
 // NtQuerySystemInformation class for this - identical to the DLL's own
@@ -209,73 +260,20 @@ __attribute__((noinline)) bool IsKernelDebuggerActive()
     return __nut_vmp_r;
 }
 
-unsigned __stdcall BrokerSelfDebugLoopThreadProc(void*)
-{
-    // Marked (2026 hardening, project owner's explicit request): this is
-    // the attach decision itself, mirroring the DLL's own
-    // NUT_SelfDebugLoopThreadProc_Attach marker exactly - the highest-
-    // value STATIC patch target (nopping out DebugActiveProcess or the
-    // store(true) below in the shipped exe, offline, with no live
-    // debugger ever attached). Deliberately scoped to just this decision,
-    // not the WaitForDebugEvent loop below, for the same reason given at
-    // the DLL's own marker: that loop is required boilerplate with no
-    // decision worth protecting, and is unbounded/blocking.
-    //
-    // Must happen before DebugActiveProcess - see this block's own
-    // comment above for exactly why.
-    NUT_VMP_BEGIN_ULTRA("BrokerSelfDebugLoopThreadProc_Attach");
-    DebugSetProcessKillOnExit(FALSE);
+// REMOVED (previously in this exact spot): BrokerSelfDebugLoopThreadProc,
+// the Broker's own copy of the same self-debug mechanism the DLL used to
+// have - see the comment left in NutriculaLicenseCheckThin.cpp where
+// NUT_SelfDebugLoopThreadProc used to be for the full story. Because
+// DebugActiveProcess(GetCurrentProcessId()) can never succeed, this
+// function's attach always failed, which in turn means main()'s
+// self-debug gate below was always refusing to start the Broker - see
+// that gate's own comment for why this went unnoticed.
 
-    if (!DebugActiveProcess(GetCurrentProcessId()))
-    {
-        g_brokerSelfDebugAttachDone.store(true); // decided: failed
-        NUT_VMP_END();
-        return 0;
-    }
-    g_brokerSelfDebugActive.store(true);
-    g_brokerSelfDebugAttachDone.store(true); // decided: succeeded
-    NUT_VMP_END();
-
-    for (;;)
-    {
-        DEBUG_EVENT ev{};
-        if (!WaitForDebugEvent(&ev, INFINITE))
-        {
-            break; // should not happen while actively self-debugging; stop cleanly rather than spin
-        }
-
-        DWORD continueStatus = DBG_CONTINUE;
-        if (ev.dwDebugEventCode == EXCEPTION_DEBUG_EVENT)
-        {
-            // Never claim to have handled an exception - pass it through
-            // exactly as it would behave with no debugger present, so
-            // none of this process's own exception handling is ever
-            // silently altered by this self-debug session existing.
-            continueStatus = DBG_EXCEPTION_NOT_HANDLED;
-        }
-
-        ContinueDebugEvent(ev.dwProcessId, ev.dwThreadId, continueStatus);
-
-        if (ev.dwDebugEventCode == EXIT_PROCESS_DEBUG_EVENT)
-        {
-            break; // this process (itself) is exiting normally
-        }
-    }
-
-    g_brokerSelfDebugActive.store(false);
-    return 0;
-}
-
-// Runtime watchdog (defense-in-depth for AFTER the boot-time gate below
-// has already confirmed self-debugging is active): if that self-debug
-// session ever ends on its own later for any reason, external attachment
-// becomes possible again - this notices that specific condition
-// (g_brokerSelfDebugActive having gone back to false after genuinely
-// having been true) and ends the process rather than silently continuing
-// to run unprotected.
+// Runtime watchdog (defense-in-depth for AFTER the boot-time gates below
+// have already passed): polls for a debugger attaching later and ends the
+// process rather than silently continuing to run unprotected.
 unsigned __stdcall BrokerDebugWatchdogThreadProc(void*)
 {
-    bool wasActive = false;
     for (;;)
     {
         Sleep(1000);
@@ -284,20 +282,18 @@ unsigned __stdcall BrokerDebugWatchdogThreadProc(void*)
         // once a second - never hot-path - so ULTRA costs nothing
         // meaningful here.
         NUT_VMP_BEGIN_ULTRA("BrokerDebugWatchdogThreadProc_Check");
-        const bool isActive = g_brokerSelfDebugActive.load();
-        const bool selfDebugEnded = wasActive && !isActive;
-        // Independent of self-debug state entirely - see
+        const bool userModeHit = IsDebuggerAttached();
+        // Independent of the user-mode check entirely - see
         // IsKernelDebuggerActive's own comment for why.
-        const bool kernelDebuggerNow = IsKernelDebuggerActive();
-        if (selfDebugEnded || kernelDebuggerNow)
+        const bool kernelModeHit = !userModeHit && IsKernelDebuggerActive();
+        if (userModeHit || kernelModeHit)
         {
             printf("%s - exiting rather than running unprotected.\n",
-                kernelDebuggerNow ? "Kernel-mode debugger detected" : "Self-debug session ended unexpectedly");
+                kernelModeHit ? "Kernel-mode debugger detected" : "User-mode debugger detected");
             NUT_VMP_END();
             TerminateProcess(GetCurrentProcess(), 0xDEADBEEF);
         }
         NUT_VMP_END();
-        wasActive = isActive;
     }
 }
 
@@ -315,26 +311,20 @@ int main()
         return 1;
     }
 
-    // 2026 hardening: fail closed if this process cannot become its own
-    // debugger - see the long comment above BrokerSelfDebugLoopThreadProc
-    // for the full mechanics and the explicit availability tradeoff this
-    // accepts. DebugActiveProcess itself resolves almost immediately; this
-    // bounded ~1 second spin only covers ordinary thread-scheduling delay.
+    // 2026 hardening: fail closed if a user-mode debugger is already
+    // attached at startup. This used to be enforced via a self-debug gate
+    // (BrokerSelfDebugLoopThreadProc, removed - see its own comment
+    // above for why: DebugActiveProcess(GetCurrentProcessId()) can never
+    // succeed, which meant this gate was always refusing to start the
+    // Broker, silently, since -mwindows gives this exe no console for
+    // the printf below to actually reach anyone). This gate now reuses
+    // IsDebuggerAttached() directly instead.
     {
-        // Marked (2026 hardening): the fail-closed check itself, mirroring
-        // Vela_Boot_84_SelfDebugGate in the DLL - forcing
-        // g_brokerSelfDebugActive to read true here, or deleting this
-        // block, silently reverts to fail-open.
-        NUT_VMP_BEGIN_ULTRA("BrokerMain_SelfDebugGate");
-        HANDLE selfDebugThread = (HANDLE)_beginthreadex(nullptr, 0, BrokerSelfDebugLoopThreadProc, nullptr, 0, nullptr);
-        if (selfDebugThread) CloseHandle(selfDebugThread);
-
-        for (int i = 0; i < 100 && !g_brokerSelfDebugAttachDone.load(); ++i)
-        {
-            Sleep(10);
-        }
-
-        if (!g_brokerSelfDebugActive.load())
+        // Marked (2026 hardening): the fail-closed check itself - forcing
+        // this condition to always read false, or deleting this block,
+        // silently reverts to fail-open.
+        NUT_VMP_BEGIN_ULTRA("BrokerMain_DebuggerGate");
+        if (IsDebuggerAttached())
         {
             printf("Could not establish exclusive debug access to this process (a debugger may already be attached) - refusing to start.\n");
             NUT_VMP_END();
