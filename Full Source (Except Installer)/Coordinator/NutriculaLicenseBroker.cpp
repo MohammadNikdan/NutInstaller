@@ -175,7 +175,16 @@ __attribute__((noinline)) bool IsDebuggerAttached()
             }
         }
     }
+    NUT_VMP_END();
 
+    // FIX (2026 hardening): this timing check used to sit inside the
+    // NUT_VMP_BEGIN_ULTRA/_END block above - see the identical fix and its
+    // full explanation in NutriculaLicenseCheckThin.cpp's own copy of this
+    // function. VM-interpreted code is inherently much slower than native
+    // code, so this loop routinely exceeded the 50ms threshold on its own
+    // once actually run through real Ultra virtualization, with no
+    // debugger involved. Left outside any marker now, so it measures
+    // genuine native wall-clock time.
     LARGE_INTEGER freq, start, end;
     QueryPerformanceFrequency(&freq);
     QueryPerformanceCounter(&start);
@@ -183,9 +192,8 @@ __attribute__((noinline)) bool IsDebuggerAttached()
     for (int i = 0; i < 1000; i++) dummy += i;
     QueryPerformanceCounter(&end);
     double elapsedMs = static_cast<double>(end.QuadPart - start.QuadPart) * 1000.0 / static_cast<double>(freq.QuadPart);
-    if (elapsedMs > 50.0) { NUT_VMP_END(); return true; }
+    if (elapsedMs > 50.0) return true;
 
-    NUT_VMP_END();
     return false;
 }
 
