@@ -139,6 +139,15 @@ bool ServerSignatureVerify::LoadServerPublicKey(const std::wstring& dllDirectory
 {
     // Only reached once per process, from Vela_Boot_84/EnsurePublicKeyLoaded
     // at EA init (then cached) - never on a hot path.
+    //
+    // FIX (2026, root-causing a persistent Tier -2 report - same mistake,
+    // same fix, as NamedPipeIpc::ConnectAndVerify and EcdsaHelpers::
+    // VerifyP256's own 2026 fixes): every early-exit below used to skip
+    // NUT_VMP_END(), leaving the marker unclosed on every path except the
+    // final one. This function decides whether the server's public key -
+    // the thing every later signature check depends on - loads at all, so
+    // an unclosed marker here is squarely upstream of Tier -2. Every
+    // return now goes through NUT_VMP_END() first.
     NUT_VMP_BEGIN_ULTRA("ServerSignatureVerify_LoadServerPublicKey");
     // Prefer the compiled-in key (architecture point 78) - only falls
     // through to the loose file if the compiled-in constant is still the
@@ -150,6 +159,7 @@ bool ServerSignatureVerify::LoadServerPublicKey(const std::wstring& dllDirectory
     bool isPlaceholder = embedded.find("REPLACE_WITH_REAL_PRODUCTION") != std::string::npos;
     if (!isPlaceholder && ImportPemPublicKey(embedded))
     {
+        NUT_VMP_END();
         return true;
     }
 
@@ -158,9 +168,9 @@ bool ServerSignatureVerify::LoadServerPublicKey(const std::wstring& dllDirectory
     path += L"license-signing-public.pem";
 
     std::ifstream file(path.c_str(), std::ios::binary);
-    if (!file) return false;
+    if (!file) { NUT_VMP_END(); return false; }
     std::string pem((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
-    if (pem.empty()) return false;
+    if (pem.empty()) { NUT_VMP_END(); return false; }
     bool imported = ImportPemPublicKey(pem);
     NUT_VMP_END();
     return imported;
@@ -170,14 +180,24 @@ bool ServerSignatureVerify::Verify(const std::string& canonicalMessage, const st
 {
     // Only called from AntiTamperCheckedTier's rate-limited slow path and
     // from the Poll-response handler - both periodic, never per-tick.
+    //
+    // FIX (2026, root-causing a persistent Tier -2 report - same mistake,
+    // same fix, as the three other 2026 marker fixes this session):
+    // every early-exit below used to skip NUT_VMP_END(), leaving the
+    // marker unclosed on every path except the final one. This is the
+    // function that actually verifies a server-signed Tier 2 claim, so
+    // an unclosed marker here is squarely in the path that decides Tier
+    // 2 vs -2 - and the very first line below (no key loaded yet) is the
+    // path a fresh install hits before the first successful poll. Every
+    // return now goes through NUT_VMP_END() first.
     NUT_VMP_BEGIN_ULTRA("ServerSignatureVerify_Verify");
-    if (!g_rsaPublicKey) return false; // key was never loaded - never treat as valid by default
+    if (!g_rsaPublicKey) { NUT_VMP_END(); return false; } // key was never loaded - never treat as valid by default
 
     std::vector<unsigned char> signature;
-    if (!Base64Decode(signatureB64, signature) || signature.empty()) return false;
+    if (!Base64Decode(signatureB64, signature) || signature.empty()) { NUT_VMP_END(); return false; }
 
     BCRYPT_ALG_HANDLE hashAlg = nullptr;
-    if (BCryptOpenAlgorithmProvider(&hashAlg, BCRYPT_SHA256_ALGORITHM, nullptr, 0) < 0) return false;
+    if (BCryptOpenAlgorithmProvider(&hashAlg, BCRYPT_SHA256_ALGORITHM, nullptr, 0) < 0) { NUT_VMP_END(); return false; }
     BCRYPT_HASH_HANDLE hash = nullptr;
     unsigned char digest[32];
     bool hashOk = false;
@@ -188,7 +208,7 @@ bool ServerSignatureVerify::Verify(const std::string& canonicalMessage, const st
         BCryptDestroyHash(hash);
     }
     BCryptCloseAlgorithmProvider(hashAlg, 0);
-    if (!hashOk) return false;
+    if (!hashOk) { NUT_VMP_END(); return false; }
 
     BCRYPT_PKCS1_PADDING_INFO padInfo;
     padInfo.pszAlgId = BCRYPT_SHA256_ALGORITHM;

@@ -43,6 +43,7 @@
 #include <string>
 #include <cmath>
 #include <cstring>
+#include <cstdio>
 
 #pragma comment(lib, "bcrypt.lib")
 
@@ -9159,11 +9160,22 @@ DWORD WINAPI NUT_WatchdogThreadProc(LPVOID)
         // and have we not already reacted" - exactly the branch a static
         // patch would want to defeat (e.g. forcing the condition to always
         // read false). Rate-limited to once a second, never hot-path, so
-        // ULTRA carries no meaningful performance cost. The END calls below
-        // are placed before every exit this block actually has (the
-        // TerminateProcess path and the fall-through path), matching the
-        // single-pass, non-hot-path precedent already used for
-        // AntiTamperCheckedTier's own reverify block.
+        // ULTRA carries no meaningful performance cost.
+        //
+        // FIX (2026, while root-causing the VMProtect Ultra false-positive
+        // reported after enabling Debugger Detection): the REACTION below
+        // (cache wipe, the 5-second grace Sleep, TerminateProcess) used to
+        // sit INSIDE this same marker, all the way through both exits. That
+        // is exactly the class of risk this project already ruled out
+        // elsewhere (see IsDebuggerAttached's Method 4 fix, and the
+        // original self-debug removal): blocking/timing-sensitive code and
+        // VM virtualization do not mix. The only thing that actually needs
+        // Ultra's protection is the boolean decision itself (a static patch
+        // targeting THIS comparison is what the marker defends against) -
+        // the reaction that follows doesn't benefit from virtualization and
+        // a 5-second Sleep inside one is a real liability. NUT_VMP_END() is
+        // therefore now called immediately after the decision, before any
+        // of the reaction runs natively below.
         NUT_VMP_BEGIN_ULTRA("NUT_WatchdogThreadProc_Check");
         bool expected = false;
         bool expectedKernel = false;
@@ -9175,6 +9187,8 @@ DWORD WINAPI NUT_WatchdogThreadProc(LPVOID)
         // IsKernelDebuggerActive's own comment).
         const bool kernelModeHit = !userModeHit && IsKernelDebuggerActive() &&
             g_watchdogKernelDebuggerLatched.compare_exchange_strong(expectedKernel, true);
+        NUT_VMP_END();
+
         if (userModeHit || kernelModeHit)
         {
             // Immediate, harmless half of the reaction - wipe the cached
@@ -9200,13 +9214,12 @@ DWORD WINAPI NUT_WatchdogThreadProc(LPVOID)
             // The actual defense against a live return-value patch: a
             // fixed grace delay (the decision is already made - this is
             // not a re-check), then an unconditional, independent kill
-            // that no tier-comparison patch can influence.
+            // that no tier-comparison patch can influence. Now native,
+            // outside any marker (see the fix comment above).
             Sleep(static_cast<DWORD>(NUT_WATCHDOG_KILL_DELAY_MS));
-            NUT_VMP_END();
             TerminateProcess(GetCurrentProcess(), 0xDEADBEEF);
             return 0; // unreachable in practice
         }
-        NUT_VMP_END();
         Sleep(static_cast<DWORD>(NUT_WATCHDOG_INTERVAL_MS));
     }
 }
@@ -9215,13 +9228,55 @@ DWORD WINAPI NUT_WatchdogThreadProc(LPVOID)
 // how many charts/EAs in this terminal call Vela_Boot_84 - one DLL
 // instance (and therefore one watchdog) is shared by the whole terminal.exe
 // process.
+//
+// ROOT CAUSE FIX (2026) for a recurring terminal64.exe / terminal.exe
+// crash (Access Violation, 0xC0000005, Windows Event Viewer naming the
+// faulting module "NutriculaLicenseCheck...dll_unloaded" at a small
+// offset): the watchdog thread above was started with the stated
+// assumption that it "runs for the process's lifetime," but that was
+// never actually enforced. MetaTrader CAN and DOES call FreeLibrary on
+// this DLL while the terminal keeps running - most plausibly right here:
+// the EA's own MQL code, seeing Tier == -2 (not yet licensed - e.g. the
+// handshake with the Coordinator simply hasn't completed yet), calls
+// ExpertRemove(), and MetaTrader unloads every DLL linked by that EA as
+// part of removing it. The watchdog thread, still alive and looping
+// (Sleep/IsDebuggerAttached/IsKernelDebuggerActive), is at that instant
+// executing code that no longer exists in the process's address space -
+// its very next instruction fetch is a guaranteed access violation, and a
+// fault in ANY thread kills the WHOLE host process, not just this DLL.
+// This exactly matches the crash signature reported (the module is
+// "_unloaded" by the time Windows Error Reporting looks it up) and why it
+// was never seen before the Vela_Boot_84 fix above: previously the
+// debugger gate failed first and this thread was never even started.
+//
+// FIX: pin this DLL's own module in memory, right where the
+// process-lifetime thread is created, so the claim in the comment above
+// becomes actually true. GetModuleHandleExA with
+// GET_MODULE_HANDLE_EX_FLAG_PIN increments the module's reference count
+// in a way the Windows loader will never release until the process
+// itself terminates - every later FreeLibrary call from MetaTrader
+// becomes a no-op for unmapping purposes, so the watchdog thread (and any
+// other code in this DLL still reachable from MQL) keeps living in valid
+// memory for as long as terminal.exe/terminal64.exe itself runs. This is
+// the standard, documented Windows technique for exactly this situation -
+// see GET_MODULE_HANDLE_EX_FLAG_PIN in the Win32 docs for GetModuleHandleEx.
 void EnsureDebuggerWatchdogStarted()
 {
     bool expected = false;
     if (g_watchdogStarted.compare_exchange_strong(expected, true))
     {
+        HMODULE selfPin = nullptr;
+        GetModuleHandleExA(
+            GET_MODULE_HANDLE_EX_FLAG_PIN | GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS,
+            reinterpret_cast<LPCSTR>(&EnsureDebuggerWatchdogStarted),
+            &selfPin);
+        // selfPin itself is not used further - the pin effect is
+        // permanent and global to the module the instant the call above
+        // succeeds; there is nothing to release (that is the point).
+        (void)selfPin;
+
         HANDLE h = CreateThread(nullptr, 0, NUT_WatchdogThreadProc, nullptr, 0, nullptr);
-        if (h) CloseHandle(h); // intentionally not joined - runs for the process's lifetime
+        if (h) CloseHandle(h); // intentionally not joined - runs for the process's lifetime, now actually guaranteed by the pin above
     }
 }
 
