@@ -8241,30 +8241,28 @@ __attribute__((noinline)) bool IsDebuggerAttached()
 }
 
 // ============================================================================
-// Kernel-mode debugger detection (2026 hardening, follow-up to the project
-// owner's explicit request after confirming VMProtect's own built-in
-// debugger-detection option cannot be split into "kernel-mode only" - it is
-// either off, user-mode, or user-mode+kernel-mode together, and the
-// user-mode half of that would conflict with this process's own self-debug
-// session (see NUT_SelfDebugLoopThreadProc's comment: from the moment this
-// process makes itself its own debugger, every standard user-mode
-// debugger-presence signal correctly reads "yes" forever, which a generic
-// user-mode checker - ours or VMProtect's - cannot distinguish from an
-// attacker). VMProtect's detection was therefore left off entirely for
-// this build, and kernel-mode coverage is implemented here instead,
-// independently of both self-debug and IsDebuggerAttached() above.
+// Kernel-mode debugger detection (2026 hardening, project owner's explicit
+// request). Originally built because VMProtect's own built-in debugger-
+// detection option cannot be split into "kernel-mode only" (it is either
+// off, user-mode, or user-mode+kernel-mode together), and enabling it would
+// have conflicted with this process's own self-debugging session at the
+// time. That self-debugging mechanism has since been removed (see the
+// comment where NUT_SelfDebugLoopThreadProc used to be, further down this
+// file) after confirming it could never actually succeed - Windows
+// unconditionally refuses DebugActiveProcess when the target PID equals the
+// caller's own PID. VMProtect's own built-in debugger detection (user-mode
+// + kernel-mode together) can therefore now be safely enabled for this
+// build; this function stays regardless, as an independent, non-VMProtect-
+// dependent layer the checks below do not rely on VMProtect alone for.
 //
-// WHY THIS IS A SEPARATE, NECESSARY CHECK: everything built so far -
-// DebugActiveProcess's exclusivity lock, IsDebuggerAttached()'s four
-// methods - only concerns USER-MODE debuggers (x64dbg, OllyDbg, WinDbg in
-// user-mode attach, Cheat Engine). A KERNEL debugger (WinDbg attached via
-// kernel debugging, e.g. after `bcdedit /debug on` + reboot) operates
-// entirely below the user-mode Windows debugging API this process's self-
-// debug relies on - it can read and write this process's memory directly
-// from kernel context, without ever calling DebugActiveProcess or being
-// subject to its one-debugger-per-process exclusivity rule at all. Self-
-// debugging being active says nothing whatsoever about whether a kernel
-// debugger is also present.
+// WHY THIS IS A SEPARATE, NECESSARY CHECK: IsDebuggerAttached()'s four
+// methods above, and VMProtect's own detection, only concern USER-MODE
+// debuggers (x64dbg, OllyDbg, WinDbg in user-mode attach, Cheat Engine). A
+// KERNEL debugger (WinDbg attached via kernel debugging, e.g. after
+// `bcdedit /debug on` + reboot) operates entirely below the user-mode
+// Windows debugging API those rely on - it can read and write this
+// process's memory directly from kernel context, without ever being
+// subject to the user-mode debugging API at all.
 //
 // SystemKernelDebuggerInformation (class 35) is the standard, long-stable
 // NtQuerySystemInformation class used for exactly this check - present and
@@ -9132,32 +9130,11 @@ std::atomic<bool> g_watchdogDebuggerLatched{false};
 // Separate latch for the kernel-mode check added below - independent of
 // g_watchdogDebuggerLatched since the two triggers are independent events
 // (see IsKernelDebuggerActive's own comment for why a kernel debugger is
-// not something self-debug or IsDebuggerAttached() can ever see).
+// not something IsDebuggerAttached() can ever see).
 std::atomic<bool> g_watchdogKernelDebuggerLatched{false};
-
-// Set true once this process has successfully made itself its own
-// debugger (see NUT_SelfDebugLoopThreadProc below). From that point on,
-// EVERY standard debugger-presence check (IsDebuggerPresent,
-// CheckRemoteDebuggerPresent, the ProcessDebugPort query) correctly
-// reports "yes" FOREVER, because this process genuinely is being
-// debugged - by itself, on purpose. Without this flag, the polling
-// watchdog just below would immediately misread its own self-debug
-// session as an attacker and wipe/kill the process on legitimate,
-// intended behavior. The watchdog checks this flag and stands down once
-// it is true, since self-debugging has already made external attachment
-// impossible - its job is done.
-std::atomic<bool> g_selfDebugActive{false};
 
 DWORD WINAPI NUT_WatchdogThreadProc(LPVOID)
 {
-    // 2026 hardening (added alongside the Broker's own watchdog pattern -
-    // see BrokerDebugWatchdogThreadProc's comment in NutriculaLicenseBroker.cpp
-    // for the full reasoning): tracks whether self-debug was genuinely
-    // active on the PREVIOUS tick, so a tick where it was active before
-    // and is not anymore is detected immediately, in its own right - not
-    // only once IsDebuggerAttached() separately happens to notice an
-    // external attacher later.
-    bool wasSelfDebugActive = false;
     for (;;)
     {
         // Marked (2026 hardening, project owner's explicit request): this
@@ -9171,26 +9148,17 @@ DWORD WINAPI NUT_WatchdogThreadProc(LPVOID)
         // single-pass, non-hot-path precedent already used for
         // AntiTamperCheckedTier's own reverify block.
         NUT_VMP_BEGIN_ULTRA("NUT_WatchdogThreadProc_Check");
-        const bool isSelfDebugActive = g_selfDebugActive.load();
-        // While self-debug is genuinely active, Windows's one-debugger-
-        // per-process exclusivity makes external attachment structurally
-        // impossible - so the only way an external attacher becomes
-        // possible again is if self-debug itself stops first. React to
-        // THAT the instant it's noticed.
-        const bool selfDebugEndedUnexpectedly = wasSelfDebugActive && !isSelfDebugActive;
         bool expected = false;
         bool expectedKernel = false;
-        const bool userModeHit = !isSelfDebugActive &&
+        const bool userModeHit =
             IsDebuggerAttached() && g_watchdogDebuggerLatched.compare_exchange_strong(expected, true);
-        // Runs unconditionally, regardless of g_selfDebugActive - self-
-        // debug only wins exclusivity over OTHER USER-MODE debuggers; it
-        // has no effect whatsoever on a kernel debugger (see
-        // IsKernelDebuggerActive's own comment). Short-circuited behind
-        // !userModeHit purely to avoid redundant work in the same tick
-        // once a reaction is already underway, not for correctness.
+        // Short-circuited behind !userModeHit purely to avoid redundant
+        // work in the same tick once a reaction is already underway, not
+        // for correctness - the two checks are fully independent (see
+        // IsKernelDebuggerActive's own comment).
         const bool kernelModeHit = !userModeHit && IsKernelDebuggerActive() &&
             g_watchdogKernelDebuggerLatched.compare_exchange_strong(expectedKernel, true);
-        if (selfDebugEndedUnexpectedly || userModeHit || kernelModeHit)
+        if (userModeHit || kernelModeHit)
         {
             // Immediate, harmless half of the reaction - wipe the cached
             // Lease so no later legitimate re-verification can
@@ -9222,7 +9190,6 @@ DWORD WINAPI NUT_WatchdogThreadProc(LPVOID)
             return 0; // unreachable in practice
         }
         NUT_VMP_END();
-        wasSelfDebugActive = isSelfDebugActive;
         Sleep(static_cast<DWORD>(NUT_WATCHDOG_INTERVAL_MS));
     }
 }
@@ -9242,142 +9209,43 @@ void EnsureDebuggerWatchdogStarted()
 }
 
 // =========================================================================
-// 2026 hardening (project owner's explicit, FULLY INFORMED choice, made
-// after the exact tradeoff below was laid out in detail and a softer
-// alternative - just polling faster - was offered and declined):
+// 2026 hardening, REMOVED (previously in this exact spot): a self-
+// debugging mechanism - this process making itself its own debugger via
+// DebugActiveProcess(GetCurrentProcessId()), to win Windows's one-
+// debugger-per-process exclusivity and make external attach structurally
+// impossible rather than merely detected within a polling interval.
 //
-// The watchdog above still has a race window: it only POLLS for a
-// debugger once a second. An attacker who scripts "attach, patch one
-// call's return value, detach" to complete in well under a second (fully
-// achievable - a scripted breakpoint hit + register write + continue
-// takes microseconds, and MT4/5 can run all ~1020 calculation functions
-// for one OnTick in that same fraction of a second) can slip the entire
-// attach/patch/detach cycle between two watchdog polls, every tick,
-// indefinitely. No amount of polling faster closes this race, it only
-// shrinks it - a fast enough scripted attack still fits.
+// Removed after root-causing a reported Vela_Boot_84() init failure: this
+// call can never succeed, on any version of Windows, by design.
+// NtDebugActiveProcess hard-codes a same-PID check and unconditionally
+// returns STATUS_ACCESS_DENIED (0xC0000022) whenever the target PID
+// equals the caller's own PID - confirmed directly against
+// NtDebugActiveProcess's own disassembly (x86matthew, "SelfDebug - A
+// useless anti-debug trick by forcing a process to debug itself", 2023).
+// This was not a flaky, timing-dependent, or environment-specific
+// failure - it was guaranteed to fail every single time, from the moment
+// this code was first added.
 //
-// Windows allows at most ONE debugger attached to a process at a time.
-// This function makes THIS process become its own debugger via
-// DebugActiveProcess, as early as possible. From that moment on, any
-// external tool's attempt to attach (x64dbg, OllyDbg, WinDbg, a custom
-// scripted debugger - anything using the standard Windows debugging API)
-// fails OUTRIGHT, instantly, with no race window at all - not "probably
-// caught within a second," but structurally impossible, the same way two
-// processes cannot both hold an exclusive file lock.
+// The same source describes the only variant of this technique that can
+// actually attach (a short-lived child process relaunches itself,
+// attaches to the PARENT instead of itself, then hands the debug object
+// back to the parent via DuplicateHandle before exiting) - but states
+// plainly that it has "a major drawback": the host process freezes
+// PERMANENTLY the moment any exception occurs afterward, because nothing
+// is left servicing the debug port once the child has exited, including
+// exceptions Windows itself generates as ordinary background-thread
+// churn. For a DLL that must keep working correctly for hours or days
+// inside a live trading terminal, that failure mode is strictly worse
+// than the external-attach race this was meant to close, so this
+// mechanism was not rebuilt in that form either.
 //
-// THE REAL RISK, stated exactly as plainly to the code as it was to the
-// project owner: being a debugger means this process must now service
-// ITS OWN debug events (WaitForDebugEvent/ContinueDebugEvent) for as
-// long as it runs. Getting this wrong - swallowing an exception the CRT
-// or a Windows API needs to see, or simply not answering an event -
-// can hang or crash the ENTIRE MetaTrader terminal.exe process, for
-// every legitimate user, not just an attacker. This is real, non-
-// theoretical systems-programming risk, accepted deliberately here.
-//
-// The loop below is written to be maximally transparent specifically to
-// minimize that risk: it inspects NOTHING about any event's content, and
-// passes EVERY exception through with DBG_EXCEPTION_NOT_HANDLED (exactly
-// the outcome the CRT/Windows APIs would see with no debugger attached
-// at all) rather than ever claiming to have handled one. Its only
-// purpose is to exist and keep calling WaitForDebugEvent, which is what
-// makes Windows consider this process "already being debugged" and
-// reject every other attach attempt. DebugSetProcessKillOnExit(FALSE) is
-// not optional: without it, Windows's default is to TERMINATE the
-// debuggee (this same process) the instant this debug session ends for
-// ANY reason - a crash in this one thread would otherwise take the
-// entire terminal down with it.
-//
-// UPDATE (project owner's explicit, stronger requirement): the paragraph
-// above originally described this as falling back to the polling
-// watchdog if DebugActiveProcess fails. That is no longer the policy -
-// Vela_Boot_84() (below) now FAILS OUTRIGHT (returns a non-1 result,
-// which MQL's own existing "Vela_Boot_84() != 1" handling already turns
-// into an Alert + ExpertRemove + INIT_FAILED) if self-debugging does not
-// become active. g_selfDebugAttachDone/g_selfDebugActive below are what
-// Vela_Boot_84() waits on and checks to make that decision. Note this
-// failure mode only blocks THIS ONE EA's own initialization through
-// MQL's normal, existing error path - it is not the watchdog's
-// TerminateProcess reaction and does not affect the rest of the
-// terminal or its other charts.
-std::atomic<bool> g_selfDebugAttachDone{false}; // true once the attach attempt itself has been decided, success or failure
-
-DWORD WINAPI NUT_SelfDebugLoopThreadProc(LPVOID)
-{
-    // Marked (2026 hardening, project owner's explicit request): this is
-    // the actual attach decision - the single highest-value target for a
-    // STATIC patch (opening the shipped DLL in a disassembler offline and
-    // nopping out the DebugActiveProcess call or the store(true) below, no
-    // live debugger ever required). This is a completely different threat
-    // from the live attach/patch/detach race this whole mechanism was
-    // built to close - see this function's own comment above - so leaving
-    // the decision itself in plain, staticaly-patchable code would hand
-    // back exactly the race-free guarantee self-debugging was meant to
-    // provide. Deliberately scoped to JUST this decision, not the
-    // WaitForDebugEvent loop below: that loop is boilerplate required to
-    // remain a debugger at all, contains no decision an attacker benefits
-    // from understanding, and (being unbounded/blocking) is intentionally
-    // kept outside any virtualized region.
-    //
-    // Must happen before DebugActiveProcess, not after - see this
-    // function's own comment above for exactly why this one call is the
-    // single most safety-critical line here.
-    NUT_VMP_BEGIN_ULTRA("NUT_SelfDebugLoopThreadProc_Attach");
-    DebugSetProcessKillOnExit(FALSE);
-
-    if (!DebugActiveProcess(GetCurrentProcessId()))
-    {
-        g_selfDebugAttachDone.store(true); // decided: failed - Vela_Boot_84() is now waiting on exactly this
-        NUT_VMP_END();
-        return 0;
-    }
-    g_selfDebugActive.store(true);
-    g_selfDebugAttachDone.store(true); // decided: succeeded
-    NUT_VMP_END();
-
-    for (;;)
-    {
-        DEBUG_EVENT ev{};
-        if (!WaitForDebugEvent(&ev, INFINITE))
-        {
-            break; // should not happen while actively self-debugging; stop cleanly rather than spin
-        }
-
-        DWORD continueStatus = DBG_CONTINUE;
-        if (ev.dwDebugEventCode == EXCEPTION_DEBUG_EVENT)
-        {
-            // Never claim to have handled an exception - pass it through
-            // exactly as it would behave with no debugger present at
-            // all, so none of this process's own exception handling
-            // (CRT, Windows APIs, MQL's own runtime) is ever silently
-            // altered by this self-debug session existing.
-            continueStatus = DBG_EXCEPTION_NOT_HANDLED;
-        }
-
-        ContinueDebugEvent(ev.dwProcessId, ev.dwThreadId, continueStatus);
-
-        if (ev.dwDebugEventCode == EXIT_PROCESS_DEBUG_EVENT)
-        {
-            break; // this process (itself) is exiting normally; nothing further to service
-        }
-    }
-
-    g_selfDebugActive.store(false);
-    return 0;
-}
-
-// Starts the self-debug loop above exactly once per process, for the same
-// reason EnsureDebuggerWatchdogStarted is idempotent (one DLL instance is
-// shared by every chart/EA in this terminal).
-void EnsureSelfDebugStarted()
-{
-    static std::atomic<bool> started{false};
-    bool expected = false;
-    if (started.compare_exchange_strong(expected, true))
-    {
-        HANDLE h = CreateThread(nullptr, 0, NUT_SelfDebugLoopThreadProc, nullptr, 0, nullptr);
-        if (h) CloseHandle(h); // intentionally not joined - runs for the process's lifetime
-    }
-}
+// User-mode debugger coverage now comes from IsDebuggerAttached() above
+// (used at boot in Vela_Boot_84, and in the watchdog below) together with
+// VMProtect's own built-in debugger detection (user-mode + kernel-mode
+// together) - see the comment above IsKernelDebuggerActive for why
+// enabling that is now safe, which it was not while this mechanism was
+// still active.
+// =========================================================================
 
 } // namespace
 
@@ -9389,47 +9257,36 @@ void EnsureSelfDebugStarted()
 extern "C" __declspec(dllexport) int __cdecl Vela_Boot_84()
 {
     // 2026 hardening (project owner's explicit, stronger requirement):
-    // self-debugging is no longer best-effort - this DLL must come up
-    // ONLY in self-debugging mode, or refuse to initialize at all.
-    // EnsureSelfDebugStarted is idempotent (only the first call in this
-    // process actually starts the thread); every call, including this
-    // one, then waits here for that attempt to be DECIDED.
+    // fail closed if a user-mode debugger is already attached at boot,
+    // before any machine-identity/public-key loading happens. This used
+    // to be enforced through a self-debugging mechanism (this process
+    // making itself its own debugger via DebugActiveProcess, to win
+    // Windows's one-debugger-per-process exclusivity against external
+    // attach). That mechanism has been removed - see the comment where
+    // NUT_SelfDebugLoopThreadProc used to be, further down this file -
+    // after confirming it could never actually succeed: Windows
+    // unconditionally refuses DebugActiveProcess whenever the target PID
+    // equals the caller's own PID, by design, not as a flaky or
+    // environment-dependent failure. This boot-time gate now reuses
+    // IsDebuggerAttached() directly instead.
     //
-    // DebugActiveProcess itself resolves almost immediately - it is not
-    // a genuine wait for anything external or slow. This bounded spin
-    // (at most ~1 second) only covers the ordinary thread-scheduling gap
-    // between creating that thread and it actually running its first few
-    // instructions, nothing more.
     // Marked (2026 hardening, project owner's explicit request): the
-    // fail-closed check itself - "did self-debug actually become active,
-    // and should boot therefore continue" - is exactly the other static-
-    // patch target alongside NUT_SelfDebugLoopThreadProc's own attach
-    // decision. Forcing g_selfDebugActive to read true here, or simply
-    // deleting this whole block, would silently turn the fail-closed
-    // policy back into the fail-open one the project owner explicitly
-    // rejected. Single clean entry, two exits (the early return below and
-    // the fall-through on success), both covered.
-    NUT_VMP_BEGIN_ULTRA("Vela_Boot_84_SelfDebugGate");
-    EnsureSelfDebugStarted();
-    for (int i = 0; i < 100 && !g_selfDebugAttachDone.load(); ++i)
+    // fail-closed check itself is the static-patch target - forcing this
+    // condition to always read false, or deleting this whole block,
+    // would silently turn the fail-closed policy back into a fail-open
+    // one. Single clean entry, two exits (the early return below and the
+    // fall-through on success), both covered.
+    NUT_VMP_BEGIN_ULTRA("Vela_Boot_84_DebuggerGate");
+    if (IsDebuggerAttached())
     {
-        Sleep(10);
-    }
-
-    if (!g_selfDebugActive.load())
-    {
-        // Either DebugActiveProcess itself failed (most plausibly: a
-        // real debugger was already attached to this process - e.g. a
-        // developer debugging an unrelated EA in the same terminal - at
-        // the exact moment this ran), or it simply did not resolve
-        // within the bound above. Fail closed, exactly as asked: do not
-        // proceed to machine-identity/public-key loading at all, and
-        // return a non-1 result so MQL's own existing
-        // "Vela_Boot_84() != 1" handling reports this as an
-        // initialization failure (Alert + ExpertRemove + INIT_FAILED) -
-        // deliberately the same generic failure code already used for
-        // "public key missing" just below, so this does not hand an
-        // attacker a specific "a debugger was detected" signal.
+        // Fail closed, exactly as asked: do not proceed to machine-
+        // identity/public-key loading at all, and return a non-1 result
+        // so MQL's own existing "Vela_Boot_84() != 1" handling reports
+        // this as an initialization failure (Alert + ExpertRemove +
+        // INIT_FAILED) - deliberately the same generic failure code
+        // already used for "public key missing" just below, so this
+        // does not hand an attacker a specific "a debugger was
+        // detected" signal.
         NUT_VMP_END();
         return 0;
     }
@@ -9450,10 +9307,9 @@ extern "C" __declspec(dllexport) int __cdecl Vela_Boot_84()
     }
     NUT_VMP_END();
 
-    // Reaches here only once self-debugging is confirmed active. Started
-    // now as a defense-in-depth backstop for the rest of this process's
-    // lifetime, in case this self-debug session ever ends on its own
-    // later (see NUT_SelfDebugLoopThreadProc's own cleanup path) - the
+    // Reaches here only once the boot-time checks above have passed.
+    // Started now as a defense-in-depth backstop for the rest of this
+    // process's lifetime, polling for a debugger attaching later - the
     // boot-time decision above is already fail-closed on its own and
     // does not depend on this.
     EnsureDebuggerWatchdogStarted();
