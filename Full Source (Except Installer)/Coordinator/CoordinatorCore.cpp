@@ -17,6 +17,29 @@ namespace Coordinator {
 
 namespace {
 
+// ---- TEMPORARY DIAGNOSTIC (2026) ------------------------------------------
+// Pinpointing exactly where an otherwise-unexplained ~100 second stall
+// before Tier -2 goes, now that the earlier artifact_check_failed false
+// positive (MAX_MODULE_BYTES) is fixed and a plain timeout bump did not
+// convincingly explain it either. Logs elapsed milliseconds for each major
+// stage of one refresh cycle to %TEMP%\NutDiag_Timing.log, appended, so one
+// test run shows the whole timeline in order. Same remove-after-use pattern
+// as the earlier NutDiag_Watchdog.log diagnostic this session already used
+// and removed - delete this whole block and every NUT_DiagTiming(...) call
+// site once the slow stage is identified; this is not meant to ship.
+void NUT_DiagTiming(const char* stage, unsigned long long elapsedMs)
+{
+    char tempPath[MAX_PATH];
+    DWORD n = GetTempPathA(MAX_PATH, tempPath);
+    if (n == 0 || n >= MAX_PATH) return;
+    std::string full = std::string(tempPath) + "NutDiag_Timing.log";
+    FILE* f = fopen(full.c_str(), "a");
+    if (!f) return;
+    fprintf(f, "[+%llu ms] %s\n", elapsedMs, stage);
+    fclose(f);
+}
+// ---------------------------------------------------------------------------
+
 constexpr int MAX_ATTEMPTS = 10;
 // Rotating refresh-token model (replaces the old fixed 53:00/54:00
 // interval): after every successful lease, the NEXT request time is
@@ -1494,8 +1517,10 @@ void CoordinatorCore::WorkerLoop()
                 m_expectations = expectations;
             }
 
+            unsigned long long nutDiagT0 = GetTickCount64();
             RuntimeMeasure::HostEvidence hostEvidence =
                 RuntimeMeasure::MeasureHost(expectedBrokerHash, expectedHostMachineIdHash);
+            NUT_DiagTiming("MeasureHost", GetTickCount64() - nutDiagT0);
             if (!hostEvidence.ok)
             {
                 publishFailedTier();
@@ -1564,14 +1589,17 @@ void CoordinatorCore::WorkerLoop()
             RuntimeMeasure::SessionEvidence reportedEvidence;
             const RuntimeMeasure::TerminalSession* reportedSession = nullptr;
             std::string sessionFailureDetail;
+            unsigned long long nutDiagT1 = GetTickCount64();
             for (const RuntimeMeasure::TerminalSession& session : sessions)
             {
                 // MeasureSession resolves WHICH expectation applies itself -
                 // which module is really our DLL (by hash), and from its own
                 // loaded path whether this is an MQL4 or MQL5 terminal - so
                 // it gets the whole set rather than a pre-selected hash.
+                unsigned long long nutDiagT2 = GetTickCount64();
                 RuntimeMeasure::SessionEvidence evidence =
                     RuntimeMeasure::MeasureSession(session, expectations);
+                NUT_DiagTiming("MeasureSession (one terminal)", GetTickCount64() - nutDiagT2);
 
                 // sessions is ordered most-recently-seen first, so the first
                 // entry is the one whose evidence is reported to the server.
@@ -1582,6 +1610,7 @@ void CoordinatorCore::WorkerLoop()
                 }
                 if (!evidence.ok && sessionFailureDetail.empty()) sessionFailureDetail = evidence.detail;
             }
+            NUT_DiagTiming("MeasureSession loop (all terminals)", GetTickCount64() - nutDiagT1);
             if (!sessionFailureDetail.empty() || reportedSession == nullptr || !reportedEvidence.ok)
             {
                 publishFailedTier();
@@ -1880,8 +1909,12 @@ void CoordinatorCore::WorkerLoop()
 
                 std::string lastIssue = "no attempt made";
                 bool verdict = false;
+                unsigned long long nutDiagRoundT0 = GetTickCount64();
                 for (int attempt = 1; attempt <= FREE_ATTEMPTS_PER_ROUND && !verdict; attempt++)
                 {
+                    char nutDiagStageBuf[64];
+                    sprintf(nutDiagStageBuf, "free_checkin attempt %d start", attempt);
+                    NUT_DiagTiming(nutDiagStageBuf, GetTickCount64() - nutDiagRoundT0);
                     if (attempt > 1) Sleep(2000);
                     const std::string nonce = RandomNonceHex32();
                     std::map<std::string, std::string> checkinFields;
@@ -1917,7 +1950,28 @@ void CoordinatorCore::WorkerLoop()
                         continue;
                     }
 
-                    TransportResponse resp = Transport::PostEnvelope(freeHost, freePath, checkinEnvelope, 15000);
+                    // FIX (2026): this used to be 15000ms, half the 30000ms
+                    // this same file uses for the equivalent licensed-path
+                    // challenge/verify POSTs (Transport::PostEnvelope calls
+                    // further down) against the same kind of PHP backend -
+                    // no reason for the free path to get half the patience.
+                    // A real server round-trip that lands anywhere between
+                    // 15s and 30s used to make the client give up and mark
+                    // the attempt "transport failed" even when the server
+                    // went on to process and log it correctly (explains a
+                    // genuine nutricula_unlicensed_checkins row appearing
+                    // even though every attempt here read as a failure) -
+                    // and because this specific failure path stores
+                    // TIER_FAILED directly without ever calling
+                    // reportLocalFailure, it produces exactly a -2 with
+                    // nothing recorded in nutricula_minus2_log at all.
+                    unsigned long long nutDiagPostT0 = GetTickCount64();
+                    TransportResponse resp = Transport::PostEnvelope(freeHost, freePath, checkinEnvelope, 30000);
+                    {
+                        char nutDiagPostBuf[64];
+                        sprintf(nutDiagPostBuf, "free_checkin attempt %d PostEnvelope", attempt);
+                        NUT_DiagTiming(nutDiagPostBuf, GetTickCount64() - nutDiagPostT0);
+                    }
                     if (resp.result != TransportResult::Ok)
                     {
                         lastIssue = "transport failed (no response / HTTP error)";
@@ -1969,6 +2023,8 @@ void CoordinatorCore::WorkerLoop()
                         m_state.lastSignatureB64 = out.signatureB64;
                     }
                 }
+                NUT_DiagTiming(verdict ? "free_checkin round total (verdict reached)" : "free_checkin round total (no verdict, all attempts exhausted)",
+                    GetTickCount64() - nutDiagRoundT0);
 
                 if (!verdict)
                 {
