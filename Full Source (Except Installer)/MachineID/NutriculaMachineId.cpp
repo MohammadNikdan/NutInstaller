@@ -1784,7 +1784,110 @@ NUTRICULA_API int __cdecl Nutricula_GetLicensePath(char* output, int outputCapac
     return 1;
 }
 
+// Debugger checks (2026 hardening) - added specifically here, not to every
+// export in this file. Nutricula_SignChallenge is the one place in this
+// DLL where the device's actual PRIVATE key is loaded into a live
+// BCRYPT_KEY_HANDLE and used (CreateOrLoadDeviceKey below, then
+// BCryptSignHash) - the highest-value target in this file for a debugger
+// to sit on and intercept. The other exports here (GenerateMachineId,
+// GetDevicePublicKey, GetLastStatus, etc.) either handle no live secret at
+// all or only ever touch public-key material, so gating them the same way
+// would add fail-closed risk (a false positive here denies a paying
+// customer their machine_id/free install) without protecting anything a
+// debugger could not already get from static analysis of the shipped,
+// VMProtect-virtualized binary alone.
+//
+// Mirrors NutriculaLicenseCheckThin.cpp's IsDebuggerAttached/
+// IsKernelDebuggerActive exactly (see those functions' own comments in
+// that file for the full rationale of each method) - this is a one-shot
+// gate at the start of a short, synchronous call, not a persistent
+// watchdog thread: unlike the License Check DLL or the Broker, every
+// export in this file runs briefly and returns, so there is no long-lived
+// session here for a background poll to watch over.
+using NtQueryInformationProcessFnMid = LONG(WINAPI*)(HANDLE, ULONG, PVOID, ULONG, PULONG);
+
+static bool MidIsDebuggerAttached()
+{
+    NUT_VMP_BEGIN_ULTRA("MidIsDebuggerAttached");
+    if (IsDebuggerPresent()) { NUT_VMP_END(); return true; }
+
+    BOOL remoteDebugger = FALSE;
+    if (CheckRemoteDebuggerPresent(GetCurrentProcess(), &remoteDebugger) && remoteDebugger) { NUT_VMP_END(); return true; }
+
+    HMODULE ntdllForDebugPort = GetModuleHandleA("ntdll.dll");
+    if (ntdllForDebugPort)
+    {
+        auto ntQueryInformationProcess = reinterpret_cast<NtQueryInformationProcessFnMid>(
+            GetProcAddress(ntdllForDebugPort, "NtQueryInformationProcess"));
+        if (ntQueryInformationProcess)
+        {
+            const ULONG ProcessDebugPort = 7;
+            DWORD_PTR debugPort = 0;
+            ULONG returned = 0;
+            if (ntQueryInformationProcess(GetCurrentProcess(), ProcessDebugPort,
+                &debugPort, sizeof(debugPort), &returned) == 0 && debugPort != 0)
+            {
+                NUT_VMP_END();
+                return true;
+            }
+        }
+    }
+
+    LARGE_INTEGER freq, start, end;
+    QueryPerformanceFrequency(&freq);
+    QueryPerformanceCounter(&start);
+    volatile int dummy = 0;
+    for (int i = 0; i < 1000; i++) dummy += i;
+    QueryPerformanceCounter(&end);
+    double elapsedMs = static_cast<double>(end.QuadPart - start.QuadPart) * 1000.0 / static_cast<double>(freq.QuadPart);
+    if (elapsedMs > 50.0) { NUT_VMP_END(); return true; }
+
+    NUT_VMP_END();
+    return false;
+}
+
+using NtQuerySystemInformationFnMid = LONG(WINAPI*)(ULONG, PVOID, ULONG, PULONG);
+
+struct NutMidSystemKernelDebuggerInformation
+{
+    BOOLEAN KernelDebuggerEnabled;
+    BOOLEAN KernelDebuggerNotPresent;
+};
+
+static bool MidIsKernelDebuggerActive()
+{
+    NUT_VMP_BEGIN_ULTRA("MidIsKernelDebuggerActive");
+    HMODULE ntdll = GetModuleHandleA("ntdll.dll");
+    if (!ntdll) { NUT_VMP_END(); return false; }
+
+    auto ntQuerySystemInformation = reinterpret_cast<NtQuerySystemInformationFnMid>(
+        GetProcAddress(ntdll, "NtQuerySystemInformation"));
+    if (!ntQuerySystemInformation) { NUT_VMP_END(); return false; }
+
+    const ULONG SystemKernelDebuggerInformation = 35;
+    NutMidSystemKernelDebuggerInformation info{};
+    ULONG returned = 0;
+    if (ntQuerySystemInformation(SystemKernelDebuggerInformation, &info, sizeof(info), &returned) != 0)
+    {
+        // Fail open on the QUERY only, not on a detected debugger - same
+        // policy as the License Check DLL's own copy of this function.
+        NUT_VMP_END();
+        return false;
+    }
+
+    auto result = info.KernelDebuggerEnabled && !info.KernelDebuggerNotPresent;
+    NUT_VMP_END();
+    return result;
+}
+
 NUTRICULA_API int __cdecl Nutricula_SignChallenge(const char* message, int messageLength, char* signatureOutput, int signatureCapacity) {
+    // Fail closed, same generic "operation failed" return (0) already used
+    // by every other failure path in this function below, so this does not
+    // hand an attacker a specific "a debugger was detected" signal.
+    NUT_VMP_BEGIN_ULTRA("Nutricula_SignChallenge_DebuggerGate");
+    if (MidIsDebuggerAttached() || MidIsKernelDebuggerActive()) { NUT_VMP_END(); return 0; }
+    NUT_VMP_END();
+
     if (!message || messageLength < 0 || !signatureOutput || signatureCapacity < 64) return -1;
     std::vector<unsigned char> data(message, message + messageLength), digest;
     if (!Sha256Bytes(data, digest)) return 0;
