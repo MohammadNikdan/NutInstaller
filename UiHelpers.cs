@@ -419,7 +419,7 @@ namespace NutriculaInstaller
             float cx = box.X + box.Width / 2f;
             float cy = box.Y + box.Height / 2f;
             float s = Math.Min(box.Width, box.Height) * 0.30f;
-            using (Pen p = new Pen(color, Math.Max(1.6f, box.Width * 0.11f)) { StartCap = LineCap.Round, EndCap = LineCap.Round, LineJoin = LineJoin.Round })
+            using (Pen p = new Pen(color, Math.Max(1.4f, box.Width * 0.052f)) { StartCap = LineCap.Round, EndCap = LineCap.Round, LineJoin = LineJoin.Round })
             {
                 g.DrawLine(p, cx + s, cy, cx - s, cy);
                 g.DrawLine(p, cx - s * 0.30f, cy - s * 0.70f, cx - s, cy);
@@ -434,7 +434,7 @@ namespace NutriculaInstaller
             float cx = box.X + box.Width / 2f;
             float cy = box.Y + box.Height / 2f;
             float s = Math.Min(box.Width, box.Height) * 0.30f;
-            using (Pen p = new Pen(color, Math.Max(1.6f, box.Width * 0.11f)) { StartCap = LineCap.Round, EndCap = LineCap.Round, LineJoin = LineJoin.Round })
+            using (Pen p = new Pen(color, Math.Max(1.4f, box.Width * 0.052f)) { StartCap = LineCap.Round, EndCap = LineCap.Round, LineJoin = LineJoin.Round })
             {
                 g.DrawLine(p, cx, cy - s, cx, cy + s * 0.25f);
                 g.DrawLine(p, cx - s * 0.55f, cy - s * 0.30f, cx, cy + s * 0.25f);
@@ -450,7 +450,7 @@ namespace NutriculaInstaller
             float cx = box.X + box.Width / 2f;
             float cy = box.Y + box.Height / 2f;
             float s = Math.Min(box.Width, box.Height) * 0.32f;
-            using (Pen p = new Pen(color, Math.Max(1.8f, box.Width * 0.13f)) { StartCap = LineCap.Round, EndCap = LineCap.Round, LineJoin = LineJoin.Round })
+            using (Pen p = new Pen(color, Math.Max(1.5f, box.Width * 0.056f)) { StartCap = LineCap.Round, EndCap = LineCap.Round, LineJoin = LineJoin.Round })
             {
                 g.DrawLines(p, new PointF[]
                 {
@@ -468,7 +468,7 @@ namespace NutriculaInstaller
             float cx = box.X + box.Width / 2f;
             float cy = box.Y + box.Height / 2f;
             float s = Math.Min(box.Width, box.Height) * 0.26f;
-            using (Pen p = new Pen(color, Math.Max(1.6f, box.Width * 0.12f)) { StartCap = LineCap.Round, EndCap = LineCap.Round })
+            using (Pen p = new Pen(color, Math.Max(1.4f, box.Width * 0.053f)) { StartCap = LineCap.Round, EndCap = LineCap.Round })
             {
                 g.DrawLine(p, cx - s, cy - s, cx + s, cy + s);
                 g.DrawLine(p, cx - s, cy + s, cx + s, cy - s);
@@ -482,7 +482,7 @@ namespace NutriculaInstaller
             float cx = box.X + box.Width / 2f;
             float cy = box.Y + box.Height / 2f;
             float s = Math.Min(box.Width, box.Height) * 0.22f;
-            using (Pen p = new Pen(color, Math.Max(1.6f, box.Width * 0.12f)) { StartCap = LineCap.Round, EndCap = LineCap.Round, LineJoin = LineJoin.Round })
+            using (Pen p = new Pen(color, Math.Max(1.4f, box.Width * 0.053f)) { StartCap = LineCap.Round, EndCap = LineCap.Round, LineJoin = LineJoin.Round })
             {
                 g.DrawLines(p, new PointF[]
                 {
@@ -500,7 +500,7 @@ namespace NutriculaInstaller
             float cx = box.X + box.Width / 2f;
             float cy = box.Y + box.Height / 2f;
             float r = Math.Min(box.Width, box.Height) * 0.30f;
-            float penWidth = Math.Max(1.6f, box.Width * 0.11f);
+            float penWidth = Math.Max(1.4f, box.Width * 0.052f);
             const float startAngle = -30f;
             const float sweepAngle = 260f;
             const float endAngle = startAngle + sweepAngle; // 230 degrees
@@ -519,7 +519,7 @@ namespace NutriculaInstaller
             float dirY = (float)Math.Cos(endRad);
             float perpX = -dirY;
             float perpY = dirX;
-            float headLen = r * 0.65f;
+            float headLen = r * 0.70f;
             PointF tip = new PointF(ex + dirX * headLen * 0.55f, ey + dirY * headLen * 0.55f);
             PointF baseA = new PointF(ex - dirX * headLen * 0.45f + perpX * headLen * 0.55f, ey - dirY * headLen * 0.45f + perpY * headLen * 0.55f);
             PointF baseB = new PointF(ex - dirX * headLen * 0.45f - perpX * headLen * 0.55f, ey - dirY * headLen * 0.45f - perpY * headLen * 0.55f);
@@ -537,7 +537,7 @@ namespace NutriculaInstaller
             float cy = box.Y + box.Height / 2f;
             float s = Math.Min(box.Width, box.Height) * 0.34f;
             RectangleF rect = new RectangleF(cx - s, cy - s * 0.68f, s * 2f, s * 1.36f);
-            float penWidth = Math.Max(1.4f, box.Width * 0.08f);
+            float penWidth = Math.Max(1.2f, box.Width * 0.041f);
             using (Pen p = new Pen(color, penWidth) { LineJoin = LineJoin.Round })
             {
                 g.DrawRectangle(p, rect.X, rect.Y, rect.Width, rect.Height);
@@ -555,11 +555,14 @@ namespace NutriculaInstaller
             float s = Math.Min(box.Width, box.Height) * 0.34f;
             float headR = s * 0.42f;
             float headCx = cx - s * 0.50f;
-            float penWidth = Math.Max(1.4f, box.Width * 0.09f);
+            float penWidth = Math.Max(1.2f, box.Width * 0.042f);
             using (Pen p = new Pen(color, penWidth) { StartCap = LineCap.Round, EndCap = LineCap.Round })
             {
                 g.DrawEllipse(p, headCx - headR, cy - headR, headR * 2f, headR * 2f);
-                float shaftStartX = headCx + headR * 0.60f;
+                // Starts exactly on the ring's outer edge (not inside it, as a
+                // partial-radius offset used to do) so the shaft visibly meets
+                // the ring instead of appearing to cut into its hole.
+                float shaftStartX = headCx + headR;
                 float shaftEndX = cx + s * 0.95f;
                 g.DrawLine(p, shaftStartX, cy, shaftEndX, cy);
                 g.DrawLine(p, shaftEndX, cy, shaftEndX, cy + s * 0.45f);
@@ -574,7 +577,7 @@ namespace NutriculaInstaller
             float cx = box.X + box.Width / 2f;
             float cy = box.Y + box.Height / 2f;
             float r = Math.Min(box.Width, box.Height) * 0.36f;
-            float penWidth = Math.Max(1.3f, box.Width * 0.07f);
+            float penWidth = Math.Max(1.1f, box.Width * 0.0375f);
             using (Pen p = new Pen(color, penWidth))
             {
                 g.DrawEllipse(p, cx - r, cy - r, r * 2f, r * 2f);
@@ -589,7 +592,7 @@ namespace NutriculaInstaller
             g.SmoothingMode = SmoothingMode.AntiAlias;
             float cx = box.X + box.Width / 2f;
             float cy = box.Y + box.Height / 2f;
-            float s = Math.Min(box.Width, box.Height) * 0.34f;
+            float s = Math.Min(box.Width, box.Height) * 0.305f;
 
             PointF nose = new PointF(cx + s * 1.05f, cy);
             PointF topBack = new PointF(cx - s * 0.85f, cy - s * 0.78f);
@@ -600,7 +603,7 @@ namespace NutriculaInstaller
             {
                 g.FillPolygon(b, new PointF[] { nose, topBack, notch, bottomBack });
             }
-            using (Pen p = new Pen(color, Math.Max(1f, box.Width * 0.05f)) { StartCap = LineCap.Round, EndCap = LineCap.Round })
+            using (Pen p = new Pen(color, Math.Max(1.1f, box.Width * 0.034f)) { StartCap = LineCap.Round, EndCap = LineCap.Round })
             {
                 g.DrawLine(p, notch, nose);
             }
