@@ -90,8 +90,8 @@ struct PublishedState
     // 2026 fix (project owner's explicit instruction) - see
     // StatusReplyMsg::everCompletedFreeCheckin's own comment in
     // CoordinatorProtocol.h for the full reasoning. One-way latch: set true
-    // exactly once, right where runFreeCheckin() reaches a genuine verdict
-    // (NUT_DiagCode("FREE_07"...)), never reset afterward.
+    // exactly once, right where runFreeCheckin() reaches a genuine verdict,
+    // never reset afterward.
     std::atomic<bool> everCompletedFreeCheckin{false};
 };
 

@@ -164,8 +164,8 @@ struct StatusReplyMsg {
     // to -2 (NUT_WAIT_MAX_MS) even though the Coordinator had already
     // confirmed TIER_FREE with the server. This flag is 1 only once the
     // Coordinator's OWN free_checkin round has genuinely completed at least
-    // once (set right where NUT_DiagCode("FREE_07"...) fires, a one-way
-    // latch for the Broker process's lifetime) - 0 before that. It changes
+    // once (set right where a genuine free_checkin verdict is first reached,
+    // a one-way latch for the Broker process's lifetime) - 0 before that. It changes
     // nothing about trust for any tier that DOES require a signature
     // (LICENSED/UPDATE_REQUIRED/BLOCKED all still need canonicalLen/
     // signatureLen > 0 and a verified signature, unconditionally); it only
