@@ -8884,6 +8884,21 @@ std::wstring GetEnvVarW(const wchar_t* name)
 std::atomic<unsigned long long> g_lastCoordinatorLaunchMs{0};
 constexpr unsigned long long COORDINATOR_LAUNCH_THROTTLE_MS = 15000; // ~once / 15s at most
 
+// 2026 fix (project owner's explicit instruction): how long after WE
+// OURSELVES tell EnsureCoordinatorRunning() to launch the Broker a
+// subsequent pipe-connect failure is still treated as the Broker's own
+// normal, expected start-up gap rather than a real problem - see its use
+// at the DLL_22/DLL_26 branch below for the full reasoning. Measured
+// directly in a real log: a freshly-launched Broker took ~2.6s (41
+// consecutive CreateFileW/GetLastError=2 failures) before its named pipe
+// accepted a connection. This constant is set well above that with
+// margin for a slower machine, while staying far short of
+// COORDINATOR_LAUNCH_THROTTLE_MS above (so it can't itself delay a retry)
+// and far short of STALE_COORDINATOR_DEGRADE_SECONDS (so it never
+// substitutes for that backstop, only avoids counting the first couple of
+// seconds of an entirely normal cold start).
+constexpr unsigned long long COORDINATOR_LAUNCH_GRACE_MS = 8000;
+
 void EnsureCoordinatorRunning()
 {
     unsigned long long nowMs = GetTickCount64();
@@ -9578,6 +9593,7 @@ extern "C" __declspec(dllexport) void __cdecl Pavo_Sync_85()
         // shorter, bounded timescale (a handful of consecutive attempts,
         // not minutes).
         unsigned long long lastVerifiedTick = g_lastVerifiedTierTickMs.load();
+        bool countsTowardPipeFailStreak = true;
         if (lastVerifiedTick != 0 && (GetTickCount64() - lastVerifiedTick) > static_cast<unsigned long long>(STALE_COORDINATOR_DEGRADE_SECONDS) * 1000ULL)
         {
             NUT_PipeDiag("DLL_21", "Pavo_Sync_85: QueryCoordinatorStatus failed AND stale-coordinator degrade window exceeded - forcing TIER_FAILED");
@@ -9585,10 +9601,50 @@ extern "C" __declspec(dllexport) void __cdecl Pavo_Sync_85()
         }
         else
         {
-            char detail[96];
-            sprintf(detail, "Pavo_Sync_85: QueryCoordinatorStatus failed, pipeFailStreak will become %d, took %llu ms",
-                g_pipeFailStreak.load() + 1, GetTickCount64() - nutDiagPollT0);
-            NUT_PipeDiag("DLL_22", detail);
+            // 2026 fix (project owner's explicit instruction, option "الف" -
+            // same "exempt it" treatment already given to PENDING_WARMING_UP
+            // above): a connect failure this soon after WE OURSELVES just
+            // told EnsureCoordinatorRunning() to launch the Broker is not a
+            // sign of trouble - it is the ordinary, expected gap between
+            // CreateProcessW returning and the fresh process's named pipe
+            // actually being ready to accept a connection (confirmed in a
+            // real log: ~2.6s, 41 consecutive CreateFileW/GetLastError=2
+            // failures, immediately after a launch). Counting that window
+            // toward g_pipeFailStreak was exceeding NUT_PIPE_FAIL_TOLERANCE
+            // before the Broker ever got a chance to answer, producing a
+            // spurious -2 purely from its own start-up race - never from a
+            // real, sustained pipe outage.
+            //
+            // g_lastCoordinatorLaunchMs is set ONLY by EnsureCoordinatorRunning()
+            // actually making a (non-throttled) launch attempt, so this check
+            // is specifically "did WE just try to start it" - not "is the
+            // Broker merely slow to answer for some unrelated reason", which
+            // still counts normally below. A genuinely persistent, unrelated
+            // outage is also not masked by this: once COORDINATOR_LAUNCH_GRACE_MS
+            // passes without a successful connection, failures count again
+            // exactly as before, and the independent stale-coordinator
+            // degrade check above (DLL_21) remains the real backstop that
+            // still forces TIER_FAILED if no verified answer arrives for an
+            // extended time, regardless of how many individual polls this
+            // short window exempts.
+            const unsigned long long lastLaunchMs = g_lastCoordinatorLaunchMs.load();
+            const bool justLaunchedBroker = (lastLaunchMs != 0) &&
+                (GetTickCount64() - lastLaunchMs) < COORDINATOR_LAUNCH_GRACE_MS;
+            if (justLaunchedBroker)
+            {
+                countsTowardPipeFailStreak = false;
+                char detail[128];
+                sprintf(detail, "Pavo_Sync_85: QueryCoordinatorStatus failed %llu ms after we launched the Broker - within grace window, uncounted",
+                    GetTickCount64() - lastLaunchMs);
+                NUT_PipeDiag("DLL_37", detail);
+            }
+            else
+            {
+                char detail[96];
+                sprintf(detail, "Pavo_Sync_85: QueryCoordinatorStatus failed, pipeFailStreak will become %d, took %llu ms",
+                    g_pipeFailStreak.load() + 1, GetTickCount64() - nutDiagPollT0);
+                NUT_PipeDiag("DLL_22", detail);
+            }
         }
         g_pending.store(PENDING_COMM_FAIL);
         g_pollEverCompleted.store(true);
@@ -9601,7 +9657,7 @@ extern "C" __declspec(dllexport) void __cdecl Pavo_Sync_85()
         // genuinely sustained pipe outage still reaches -2 once the streak
         // below crosses NUT_PIPE_FAIL_TOLERANCE.
         g_lastPollOutcomeOk.store(true);
-        g_pipeFailStreak.fetch_add(1);
+        if (countsTowardPipeFailStreak) g_pipeFailStreak.fetch_add(1);
         g_pollInFlight.store(false);
         return;
     }
@@ -9859,15 +9915,43 @@ extern "C" __declspec(dllexport) void __cdecl Pavo_Sync_85()
         g_everGotRealAnswer.store(true);
         g_lastPollOutcomeOk.store(true);
     }
+    else if (status.tier == TIER_FREE && status.everCompletedFreeCheckin != 0)
+    {
+        // 2026 fix (project owner's explicit instruction): TIER_FREE is the
+        // Coordinator's unauthenticated default by design, so canonicalLen/
+        // signatureLen are always 0 for it - identical, from here, to the
+        // Coordinator's own startup placeholder before any real check has
+        // ever run. Without this branch, a genuinely free-tier install
+        // could never satisfy g_everGotRealAnswer and would always hit the
+        // NUT_WAIT_MAX_MS (90s) timeout below and report -2, even though
+        // the Coordinator had already, correctly, confirmed TIER_FREE with
+        // the server within seconds (confirmed directly in a real log).
+        // status.everCompletedFreeCheckin is a one-way latch the Coordinator
+        // sets ONLY once its own free_checkin round has genuinely completed
+        // (see StatusReplyMsg's own comment) - that is what tells "confirmed
+        // free" apart from "nothing has happened yet", which raw
+        // status.tier==TIER_FREE alone cannot. This changes nothing for any
+        // tier that DOES require proof: LICENSED/UPDATE_REQUIRED/BLOCKED all
+        // still fall through to the signature-checked branches above (or to
+        // DLL_35 below, untrusted, if ever claimed without one) - only this
+        // specific, harmless "confirmed free" case is unblocked.
+        SetTier(TIER_FREE);
+        g_everGotRealAnswer.store(true);
+        NUT_PipeDiag("DLL_38", "Pavo_Sync_85: unsigned TIER_FREE confirmed genuine (Coordinator completed a real free_checkin round) - accepted without signature, by design");
+        g_lastPollOutcomeOk.store(true);
+    }
     else
     {
-        // Neither branch matched: canonicalLen/signatureLen were 0 and the
-        // tier isn't TIER_FAILED either - i.e. "no verified response
-        // available yet" per StatusReplyMsg's own doc comment (e.g. no
-        // license ever requested on this machine, still legitimately Idle).
-        // Not a failure of anything - g_tier is correctly left at its
+        // No branch above matched: canonicalLen/signatureLen were 0, tier
+        // isn't TIER_FAILED/TIER_FILE_LOCKED, and (2026) it also isn't a
+        // CONFIRMED TIER_FREE (status.everCompletedFreeCheckin==0) - i.e.
+        // "no verified response available yet" per StatusReplyMsg's own doc
+        // comment: either no check has ever completed on this machine yet
+        // (still legitimately Idle, e.g. right after boot), or the raw tier
+        // claims something that would need a signature and doesn't have
+        // one. Not a failure of anything - g_tier is correctly left at its
         // current value (TIER_FREE by default).
-        NUT_PipeDiag("DLL_35", "Pavo_Sync_85: no verified response available yet (canonicalLen/signatureLen==0, tier not FAILED/FILE_LOCKED) - idle, g_tier left untouched");
+        NUT_PipeDiag("DLL_35", "Pavo_Sync_85: no verified response available yet (canonicalLen/signatureLen==0, tier not FAILED/FILE_LOCKED/confirmed-FREE) - idle, g_tier left untouched");
         g_lastPollOutcomeOk.store(true);
     }
 
