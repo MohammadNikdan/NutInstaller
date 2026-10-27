@@ -38,6 +38,28 @@ void NUT_DiagTiming(const char* stage, unsigned long long elapsedMs)
     fprintf(f, "[+%llu ms] %s\n", elapsedMs, stage);
     fclose(f);
 }
+
+// EXPANSION (2026): the user asked for this diagnostic pass to be made
+// comprehensive - a distinct CODE at every meaningful branch/decision point
+// across the whole flow, not just timing at the three spots above, since a
+// later pipeline stage may be where the real problem (or the NEXT problem)
+// turns out to live. NUT_DiagCode writes to the SAME %TEMP%\NutDiag_Timing.log
+// file as NUT_DiagTiming above (so one file stays the single chronological
+// source of truth) but tags each line with a stable CODE (COORD_## - see the
+// delivery note for the full table) instead of/in addition to a stage name,
+// so a specific branch can be grepped for directly instead of matched by
+// wording. Same temporary, remove-after-use status as NUT_DiagTiming.
+void NUT_DiagCode(const char* code, const std::string& detail)
+{
+    char tempPath[MAX_PATH];
+    DWORD n = GetTempPathA(MAX_PATH, tempPath);
+    if (n == 0 || n >= MAX_PATH) return;
+    std::string full = std::string(tempPath) + "NutDiag_Timing.log";
+    FILE* f = fopen(full.c_str(), "a");
+    if (!f) return;
+    fprintf(f, "[tick=%llu] %s: %s\n", (unsigned long long)GetTickCount64(), code, detail.c_str());
+    fclose(f);
+}
 // ---------------------------------------------------------------------------
 
 constexpr int MAX_ATTEMPTS = 10;
@@ -1098,6 +1120,10 @@ void CoordinatorCore::NoteEaActivity(HANDLE clientPipe)
     {
         ULONG pid = 0;
         const bool gotPid = GetNamedPipeClientProcessId(clientPipe, &pid) != 0 && pid != 0;
+        if (!gotPid)
+        {
+            NUT_DiagCode("COORD_10", "NoteEaActivity: GetNamedPipeClientProcessId failed on the server-side handle - cannot even attempt discovery this call");
+        }
         const unsigned long long nowMs = GetTickCount64();
 
         bool needDiscovery = true;
@@ -1111,6 +1137,9 @@ void CoordinatorCore::NoteEaActivity(HANDLE clientPipe)
                 {
                     s.noticedTickMs = nowMs; // still the same process, still fresh
                     needDiscovery = false;
+                    NUT_DiagCode("COORD_09", "NoteEaActivity: pid=" + std::to_string(pid) +
+                        " found fresh in m_sessions cache (age<" + std::to_string(SESSION_REDISCOVER_INTERVAL_MS) +
+                        "ms) - SKIPPING rediscovery, noticedTickMs refreshed");
                 }
                 break;
             }
@@ -1187,18 +1216,26 @@ std::vector<RuntimeMeasure::TerminalSession> CoordinatorCore::SnapshotLiveSessio
 {
     const unsigned long long nowMs = GetTickCount64();
     std::vector<RuntimeMeasure::TerminalSession> live;
+    size_t nutDiagBefore = 0, nutDiagAgedOut = 0, nutDiagNotAlive = 0;
     {
         std::lock_guard<std::mutex> lock(m_sessionsMutex);
+        nutDiagBefore = m_sessions.size();
         std::vector<RuntimeMeasure::TerminalSession> kept;
         kept.reserve(m_sessions.size());
         for (const RuntimeMeasure::TerminalSession& s : m_sessions)
         {
-            if (nowMs - s.noticedTickMs > SESSION_MAX_AGE_MS) continue;
-            if (!RuntimeMeasure::IsSessionProcessAlive(s)) continue;
+            if (nowMs - s.noticedTickMs > SESSION_MAX_AGE_MS) { nutDiagAgedOut++; continue; }
+            if (!RuntimeMeasure::IsSessionProcessAlive(s)) { nutDiagNotAlive++; continue; }
             kept.push_back(s);
         }
         m_sessions = kept;
         live = kept;
+    }
+    if (nutDiagBefore > 0 || !live.empty())
+    {
+        NUT_DiagCode("COORD_08", "SnapshotLiveSessions: before=" + std::to_string(nutDiagBefore) +
+            ", agedOut=" + std::to_string(nutDiagAgedOut) + ", notAlive=" + std::to_string(nutDiagNotAlive) +
+            ", kept=" + std::to_string(live.size()));
     }
     std::sort(live.begin(), live.end(),
         [](const RuntimeMeasure::TerminalSession& a, const RuntimeMeasure::TerminalSession& b)
@@ -1487,6 +1524,7 @@ void CoordinatorCore::WorkerLoop()
             };
             if (!manifest.valid)
             {
+                NUT_DiagCode("COORD_01", "gate failed: !manifest.valid - manifest.txt missing/malformed/signature invalid");
                 publishFailedTier();
                 reportLocalFailure("artifact_check_failed",
                     "manifest.txt is missing, malformed or its signature does not verify");
@@ -1523,6 +1561,7 @@ void CoordinatorCore::WorkerLoop()
             NUT_DiagTiming("MeasureHost", GetTickCount64() - nutDiagT0);
             if (!hostEvidence.ok)
             {
+                NUT_DiagCode("COORD_02", "gate failed: !hostEvidence.ok - detail: " + hostEvidence.detail);
                 publishFailedTier();
                 reportLocalFailure("artifact_check_failed", hostEvidence.detail);
                 Sleep(5000);
@@ -1533,6 +1572,7 @@ void CoordinatorCore::WorkerLoop()
             std::vector<RuntimeMeasure::TerminalSession> sessions = SnapshotLiveSessions();
             if (sessions.empty())
             {
+                NUT_DiagCode("COORD_03", "gate: sessions.empty() - no live terminal session found this cycle");
                 // An EA was heard from within the activity window above, but
                 // no terminal process is alive and identifiable right now -
                 // it closed in between, or this host would not let us read
@@ -1552,6 +1592,8 @@ void CoordinatorCore::WorkerLoop()
                 if (m_noMeasurableSessionSince == 0) m_noMeasurableSessionSince = nowNoSession;
                 if (nowNoSession - m_noMeasurableSessionSince >= NO_SESSION_GRACE_SEC)
                 {
+                    NUT_DiagCode("COORD_04", "gate failed: NO_SESSION_GRACE_SEC exhausted (" +
+                        std::to_string(nowNoSession - m_noMeasurableSessionSince) + "s with no measurable session)");
                     publishFailedTier();
                     // Quote the SPECIFIC reason the last connection attempt
                     // could not become a measurable session (see
@@ -1600,6 +1642,10 @@ void CoordinatorCore::WorkerLoop()
                 RuntimeMeasure::SessionEvidence evidence =
                     RuntimeMeasure::MeasureSession(session, expectations);
                 NUT_DiagTiming("MeasureSession (one terminal)", GetTickCount64() - nutDiagT2);
+                if (!evidence.ok)
+                {
+                    NUT_DiagCode("COORD_05", "MeasureSession evidence.ok=false for one terminal - detail: " + evidence.detail);
+                }
 
                 // sessions is ordered most-recently-seen first, so the first
                 // entry is the one whose evidence is reported to the server.
@@ -1613,6 +1659,10 @@ void CoordinatorCore::WorkerLoop()
             NUT_DiagTiming("MeasureSession loop (all terminals)", GetTickCount64() - nutDiagT1);
             if (!sessionFailureDetail.empty() || reportedSession == nullptr || !reportedEvidence.ok)
             {
+                NUT_DiagCode("COORD_06", "gate failed: session integrity - sessionFailureDetail empty=" +
+                    std::string(sessionFailureDetail.empty() ? "yes" : "no") +
+                    ", reportedSession=" + (reportedSession == nullptr ? "null" : "set") +
+                    ", reportedEvidence.ok=" + (reportedEvidence.ok ? "true" : "false"));
                 publishFailedTier();
                 reportLocalFailure("artifact_check_failed",
                     !sessionFailureDetail.empty() ? sessionFailureDetail
@@ -1620,6 +1670,7 @@ void CoordinatorCore::WorkerLoop()
                 Sleep(5000);
                 continue;
             }
+            NUT_DiagCode("COORD_07", "all integrity gates passed (manifest/hostEvidence/sessions/MeasureSession) - proceeding to network stage");
 
             // The exact values just measured, normalized once so that the
             // request, the free-tier bind digest and the device-signed
@@ -1947,6 +1998,7 @@ void CoordinatorCore::WorkerLoop()
                     if (checkinEnvelope.empty() || expectedBind.empty())
                     {
                         lastIssue = "failed to build the check-in request locally";
+                        NUT_DiagCode("FREE_01", "attempt " + std::to_string(attempt) + ": " + lastIssue);
                         continue;
                     }
 
@@ -1975,30 +2027,38 @@ void CoordinatorCore::WorkerLoop()
                     if (resp.result != TransportResult::Ok)
                     {
                         lastIssue = "transport failed (no response / HTTP error)";
+                        NUT_DiagCode("FREE_02", "attempt " + std::to_string(attempt) + ": " + lastIssue +
+                            " (TransportResult=" + std::to_string((int)resp.result) + ")");
                         continue;
                     }
                     ParsedResponse parsed = LicenseProtocol::DecryptAndVerify(resp.body);
                     if (parsed.kind == ResponseKind::LegacyNo)
                     {
                         lastIssue = "server answered 'no' (server-side error)";
+                        NUT_DiagCode("FREE_03", "attempt " + std::to_string(attempt) + ": " + lastIssue);
                         continue;
                     }
                     if (parsed.kind != ResponseKind::Rejected)
                     {
                         lastIssue = "answer could not be decrypted/verified, or was not a signed free_checkin answer";
+                        NUT_DiagCode("FREE_04", "attempt " + std::to_string(attempt) + ": " + lastIssue +
+                            " (ResponseKind=" + std::to_string((int)parsed.kind) + ")");
                         continue;
                     }
                     if (parsed.bind != expectedBind)
                     {
                         lastIssue = "signed answer is not bound to this request (replayed, forged or mismatched)";
+                        NUT_DiagCode("FREE_05", "attempt " + std::to_string(attempt) + ": " + lastIssue);
                         continue;
                     }
                     int verdictTier = FreeVerdictTier(parsed.rejectReason);
                     if (verdictTier < 0)
                     {
                         lastIssue = "unexpected answer reason for free_checkin: " + parsed.rejectReason;
+                        NUT_DiagCode("FREE_06", "attempt " + std::to_string(attempt) + ": " + lastIssue);
                         continue;
                     }
+                    NUT_DiagCode("FREE_07", "attempt " + std::to_string(attempt) + ": genuine verdict reached, tier=" + std::to_string(verdictTier));
 
                     // Genuine verdict.
                     verdict = true;
@@ -2025,6 +2085,11 @@ void CoordinatorCore::WorkerLoop()
                 }
                 NUT_DiagTiming(verdict ? "free_checkin round total (verdict reached)" : "free_checkin round total (no verdict, all attempts exhausted)",
                     GetTickCount64() - nutDiagRoundT0);
+                if (!verdict)
+                {
+                    NUT_DiagCode("FREE_08", "round exhausted, no verdict after " + std::to_string(FREE_ATTEMPTS_PER_ROUND) +
+                        " attempts; last issue: " + lastIssue);
+                }
 
                 if (!verdict)
                 {
@@ -2244,8 +2309,11 @@ void CoordinatorCore::WorkerLoop()
                 }
             }
 
+            unsigned long long nutDiagLicT0 = GetTickCount64();
             for (int attempt = 1; attempt <= MAX_ATTEMPTS && !licenseIdForRequest.empty() && !skipOwnAttempt; attempt++)
             {
+                NUT_DiagCode("LIC_00", "challenge/verify attempt " + std::to_string(attempt) + "/" +
+                    std::to_string(MAX_ATTEMPTS) + " start, +" + std::to_string(GetTickCount64() - nutDiagLicT0) + "ms since loop entry");
                 std::map<std::string, std::string> challengeFields;
                 challengeFields["v"] = "3";
                 challengeFields["stage"] = "challenge";
@@ -2256,23 +2324,45 @@ void CoordinatorCore::WorkerLoop()
                 std::string challengeEnvelope = LicenseProtocol::BuildRequestEnvelope(challengeFields);
 
                 bool advance = !challengeEnvelope.empty();
-                if (!advance) lastAttemptIssue = "failed to build the challenge request locally (envelope build failed)";
+                if (!advance)
+                {
+                    lastAttemptIssue = "failed to build the challenge request locally (envelope build failed)";
+                    NUT_DiagCode("LIC_01", "attempt " + std::to_string(attempt) + ": " + lastAttemptIssue);
+                }
                 ParsedResponse challengeParsed;
                 if (advance)
                 {
+                    unsigned long long nutDiagLicPostT0 = GetTickCount64();
                     TransportResponse r = Transport::PostEnvelope(host, urlPath, challengeEnvelope, 30000);
+                    NUT_DiagCode("LIC_TIMING_CHALLENGE_POST", "attempt " + std::to_string(attempt) + ": PostEnvelope(challenge) took " +
+                        std::to_string(GetTickCount64() - nutDiagLicPostT0) + "ms, result=" + std::to_string((int)r.result));
                     advance = (r.result == TransportResult::Ok);
-                    if (!advance) lastAttemptIssue = "challenge request: transport failed (no response from server)";
+                    if (!advance)
+                    {
+                        lastAttemptIssue = "challenge request: transport failed (no response from server)";
+                        NUT_DiagCode("LIC_02", "attempt " + std::to_string(attempt) + ": " + lastAttemptIssue);
+                    }
                     if (advance)
                     {
                         challengeParsed = LicenseProtocol::DecryptAndVerify(r.body);
                         advance = (challengeParsed.kind != ResponseKind::Invalid && challengeParsed.kind != ResponseKind::LegacyNo);
-                        if (!advance) lastAttemptIssue = "challenge response: could not decrypt/verify";
+                        if (!advance)
+                        {
+                            lastAttemptIssue = "challenge response: could not decrypt/verify";
+                            NUT_DiagCode("LIC_03", "attempt " + std::to_string(attempt) + ": " + lastAttemptIssue +
+                                " (ResponseKind=" + std::to_string((int)challengeParsed.kind) + ")");
+                        }
                     }
                 }
-                if (advance && trySoftReject(challengeParsed)) break;
+                if (advance && trySoftReject(challengeParsed))
+                {
+                    NUT_DiagCode("LIC_04", "attempt " + std::to_string(attempt) + ": soft reject absorbed at challenge stage, breaking loop");
+                    break;
+                }
                 if (advance && challengeParsed.kind == ResponseKind::Rejected)
                 {
+                    NUT_DiagCode("LIC_05", "attempt " + std::to_string(attempt) + ": challenge stage REJECTED, reason=" +
+                        challengeParsed.rejectReason);
                     m_softRejectStreak = 0;
                     m_softRetryNotBefore = 0;
                     // "update_required" (architecture extension - see
@@ -2310,6 +2400,8 @@ void CoordinatorCore::WorkerLoop()
                 {
                     advance = false;
                     lastAttemptIssue = "challenge response: unexpected response kind";
+                    NUT_DiagCode("LIC_06", "attempt " + std::to_string(attempt) + ": " + lastAttemptIssue +
+                        " (ResponseKind=" + std::to_string((int)challengeParsed.kind) + ")");
                 }
                 if (!advance) { if (attempt < MAX_ATTEMPTS) Sleep(2000); continue; }
 
@@ -2336,6 +2428,7 @@ void CoordinatorCore::WorkerLoop()
                 if (!MachineIdBridge::SignChallenge(message, signatureB64))
                 {
                     lastAttemptIssue = "failed to sign Artifact Evidence locally";
+                    NUT_DiagCode("LIC_07", "attempt " + std::to_string(attempt) + ": " + lastAttemptIssue);
                     if (attempt < MAX_ATTEMPTS) Sleep(2000);
                     continue;
                 }
@@ -2366,10 +2459,14 @@ void CoordinatorCore::WorkerLoop()
                 verifyFields["refresh_token"] = local.hasLease ? local.lease.refreshToken : std::string();
                 std::string verifyEnvelope = LicenseProtocol::BuildRequestEnvelope(verifyFields);
 
+                unsigned long long nutDiagLicVerifyPostT0 = GetTickCount64();
                 TransportResponse verifyResp = Transport::PostEnvelope(host, urlPath, verifyEnvelope, 30000);
+                NUT_DiagCode("LIC_TIMING_VERIFY_POST", "attempt " + std::to_string(attempt) + ": PostEnvelope(verify) took " +
+                    std::to_string(GetTickCount64() - nutDiagLicVerifyPostT0) + "ms, result=" + std::to_string((int)verifyResp.result));
                 if (verifyResp.result != TransportResult::Ok)
                 {
                     lastAttemptIssue = "verify request: transport failed (no response from server)";
+                    NUT_DiagCode("LIC_08", "attempt " + std::to_string(attempt) + ": " + lastAttemptIssue);
                     if (attempt < MAX_ATTEMPTS) Sleep(2000);
                     continue;
                 }
@@ -2378,12 +2475,20 @@ void CoordinatorCore::WorkerLoop()
                 if (verifyParsed.kind == ResponseKind::Invalid || verifyParsed.kind == ResponseKind::LegacyNo)
                 {
                     lastAttemptIssue = "verify response: could not decrypt/verify";
+                    NUT_DiagCode("LIC_09", "attempt " + std::to_string(attempt) + ": " + lastAttemptIssue +
+                        " (ResponseKind=" + std::to_string((int)verifyParsed.kind) + ")");
                     if (attempt < MAX_ATTEMPTS) Sleep(2000);
                     continue;
                 }
-                if (trySoftReject(verifyParsed)) break;
+                if (trySoftReject(verifyParsed))
+                {
+                    NUT_DiagCode("LIC_10", "attempt " + std::to_string(attempt) + ": soft reject absorbed at verify stage, breaking loop");
+                    break;
+                }
                 if (verifyParsed.kind == ResponseKind::Rejected)
                 {
+                    NUT_DiagCode("LIC_11", "attempt " + std::to_string(attempt) + ": verify stage REJECTED, reason=" +
+                        verifyParsed.rejectReason);
                     // Any other answer ends the soft too_early streak.
                     m_softRejectStreak = 0;
                     m_softRetryNotBefore = 0;
@@ -2407,6 +2512,8 @@ void CoordinatorCore::WorkerLoop()
                 if (verifyParsed.kind != ResponseKind::Lease)
                 {
                     lastAttemptIssue = "verify response: unexpected response kind";
+                    NUT_DiagCode("LIC_12", "attempt " + std::to_string(attempt) + ": " + lastAttemptIssue +
+                        " (ResponseKind=" + std::to_string((int)verifyParsed.kind) + ")");
                     if (attempt < MAX_ATTEMPTS) Sleep(2000);
                     continue;
                 }
@@ -2414,6 +2521,7 @@ void CoordinatorCore::WorkerLoop()
                 if (!WriteLicenseFileAtomic(GetLicenseFilePathW(), verifyResp.body))
                 {
                     lastAttemptIssue = "received a Lease but failed to write it to the local license file";
+                    NUT_DiagCode("LIC_13", "attempt " + std::to_string(attempt) + ": " + lastAttemptIssue);
                     if (attempt < MAX_ATTEMPTS) Sleep(2000);
                     continue;
                 }
@@ -2421,10 +2529,13 @@ void CoordinatorCore::WorkerLoop()
                 if (!reReadCheck.hasLease)
                 {
                     lastAttemptIssue = "wrote the Lease locally but it failed to re-verify on read-back";
+                    NUT_DiagCode("LIC_14", "attempt " + std::to_string(attempt) + ": " + lastAttemptIssue);
                     if (attempt < MAX_ATTEMPTS) Sleep(2000);
                     continue;
                 }
 
+                NUT_DiagCode("LIC_15", "attempt " + std::to_string(attempt) + ": licensed refresh SUCCEEDED, total +" +
+                    std::to_string(GetTickCount64() - nutDiagLicT0) + "ms since loop entry");
                 finalStable = TIER_LICENSED;
                 finalCanonical = reReadCheck.canonical;
                 finalSignatureB64 = reReadCheck.signatureB64;
@@ -2437,6 +2548,11 @@ void CoordinatorCore::WorkerLoop()
                 UpdateClockAnchor(reReadCheck.requestedAt);
                 gotServerDecision = true;
                 break;
+            }
+            if (!gotServerDecision && !licenseIdForRequest.empty() && !skipOwnAttempt)
+            {
+                NUT_DiagCode("LIC_16", "licensed attempt loop exhausted all " + std::to_string(MAX_ATTEMPTS) +
+                    " attempts with no server decision; last issue: " + lastAttemptIssue);
             }
 
             // Stale-lease cleanup for a SERVER-decided (not just locally

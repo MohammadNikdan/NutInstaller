@@ -8,10 +8,43 @@
 #include <bcrypt.h>
 #include <algorithm>
 #include <cstring>
+#include <cstdio>
+#include <string>
 
 namespace RuntimeMeasure {
 
 namespace {
+
+// ---- TEMPORARY DIAGNOSTIC (2026) ------------------------------------------
+// New lead (project owner, 2026): a -2 report appeared in nutricula_minus2_log
+// carrying the GENERIC fallback detail text from CoordinatorCore.cpp's
+// sessions.empty() branch ("an EA is active but the MetaTrader process ...
+// could not be identified or its loaded modules could not be read"), which
+// only happens when m_lastDiscoveryFailureDetail is EMPTY or older than
+// NO_SESSION_GRACE_SEC*2 - i.e. SnapshotLiveSessions() came back empty on
+// every WorkerLoop cycle for the whole grace window, while NoteEaActivity's
+// OWN discovery attempts (DiscoverSessionFromPipe) were NOT failing (a real
+// failure there would have left a SPECIFIC detail string instead). That
+// points squarely at THIS file - either DiscoverSessionFromPipe silently
+// failing without a detail, or (more likely, given NoteEaActivity's 20s
+// freshness cache skips rediscovery entirely while "fresh") IsSessionProcessAlive
+// pruning a session that SnapshotLiveSessions() itself just measured, even
+// though the terminal never actually went away. Same %TEMP%\NutDiag_Timing.log
+// file as CoordinatorCore.cpp/NamedPipeIpc.h (RM_* codes) - remove this
+// whole block plus every NUT_RtDiag(...) call site in this file once the
+// exact failing check is identified.
+void NUT_RtDiag(const char* code, const std::string& detail)
+{
+    char tempPath[MAX_PATH];
+    DWORD n = GetTempPathA(MAX_PATH, tempPath);
+    if (n == 0 || n >= MAX_PATH) return;
+    std::string full = std::string(tempPath) + "NutDiag_Timing.log";
+    FILE* f = fopen(full.c_str(), "a");
+    if (!f) return;
+    fprintf(f, "[tick=%llu] %s: %s\n", (unsigned long long)GetTickCount64(), code, detail.c_str());
+    fclose(f);
+}
+// ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
 // Bounds. A real Experts tree is a few dozen files and a few megabytes, and a
@@ -208,6 +241,49 @@ std::string ToHexLower(const unsigned char digest[32])
 //
 // Returns false if the file could not be read at all - never a silent "no
 // match, empty hash" pass; every caller handles that case explicitly.
+// PERF (2026, chasing the ~16s-per-cycle MeasureSession stall): this used to
+// call BCryptOpenAlgorithmProvider/BCryptCloseAlgorithmProvider on every
+// single file - and MeasureSession can call HashAndScanFile (directly or via
+// CollectDllAliasNames/ScanDirectory) for dozens to low hundreds of files in
+// one pass. Opening a fresh CNG algorithm provider per file is needless
+// syscall/initialisation overhead: Microsoft's own documented pattern is to
+// open ONE algorithm provider handle and reuse it to create many independent
+// hash objects from it (BCryptCreateHash), which is exactly what every call
+// site here already does per-file anyway. Opened once, lazily, on first use;
+// deliberately never closed - it is a single lightweight handle for the
+// whole process lifetime, reclaimed automatically on exit, and closing/
+// reopening it per file was the actual cost, not the handle existing.
+// This is a pure performance change: it hashes exactly the same bytes of
+// exactly the same files, every cycle, as before - nothing about WHAT gets
+// verified or how often changes.
+BCRYPT_ALG_HANDLE GetShaAlgHandle()
+{
+    static BCRYPT_ALG_HANDLE alg = []() -> BCRYPT_ALG_HANDLE {
+        BCRYPT_ALG_HANDLE h = nullptr;
+        if (BCryptOpenAlgorithmProvider(&h, BCRYPT_SHA256_ALGORITHM, nullptr, 0) < 0) return nullptr;
+        return h;
+    }();
+    return alg;
+}
+
+// TEMPORARY DIAGNOSTIC (2026, round 4 - splitting RM_20/22's time further):
+// the previous round proved RM_20 (candidate native modules) and RM_22
+// (program-tree scan) are far slower per byte than RM_21 (Libraries folder,
+// hash-only, no pattern list) - the one clean structural difference being
+// that RM_20/RM_22 both pass a real pattern list while RM_21 passes an empty
+// one. These three globals split EVERY HashAndScanFile call's time into disk
+// read, BCrypt hashing, and pattern fold+scan, so the next test says exactly
+// which of the three is actually responsible, instead of guessing from the
+// pattern-list correlation alone. Reset to 0 right before each of RM_20/21/22
+// in MeasureSession below, read and logged right after - safe to remove
+// (along with that reset/log code and this comment) once the real cost is
+// pinpointed; accumulating into them costs one extra GetTickCount64() call
+// per read/hash/scan step, negligible next to the multi-second times being
+// chased.
+unsigned long long g_nutDiagReadMs = 0;
+unsigned long long g_nutDiagHashMs = 0;
+unsigned long long g_nutDiagPatternMs = 0;
+
 bool HashAndScanFile(const std::wstring& path,
     const std::vector<std::vector<unsigned char>>& patterns,
     std::string& outHash, bool& outMatched, unsigned long long& outSize)
@@ -229,8 +305,8 @@ bool HashAndScanFile(const std::wstring& path,
     }
     outSize = static_cast<unsigned long long>(size.QuadPart);
 
-    BCRYPT_ALG_HANDLE alg = nullptr;
-    if (BCryptOpenAlgorithmProvider(&alg, BCRYPT_SHA256_ALGORITHM, nullptr, 0) < 0)
+    BCRYPT_ALG_HANDLE alg = GetShaAlgHandle();
+    if (!alg)
     {
         CloseHandle(h);
         return false;
@@ -245,13 +321,22 @@ bool HashAndScanFile(const std::wstring& path,
     size_t carryHeld = 0;
 
     DWORD read = 0;
-    while (ok && ReadFile(h, raw.data(), static_cast<DWORD>(raw.size()), &read, nullptr) && read > 0)
+    for (;;)
     {
+        if (!ok) break;
+        const unsigned long long nutRtReadT0 = GetTickCount64();
+        const BOOL readOk = ReadFile(h, raw.data(), static_cast<DWORD>(raw.size()), &read, nullptr);
+        g_nutDiagReadMs += GetTickCount64() - nutRtReadT0;
+        if (!readOk || read == 0) break;
+
+        const unsigned long long nutRtHashT0 = GetTickCount64();
         ok = BCryptHashData(hash, raw.data(), read, 0) >= 0;
+        g_nutDiagHashMs += GetTickCount64() - nutRtHashT0;
         if (!ok) break;
 
         if (!patterns.empty() && !outMatched)
         {
+            const unsigned long long nutRtPatT0 = GetTickCount64();
             for (DWORD i = 0; i < read; i++) folded[carryHeld + i] = FoldByte(raw[i]);
             const size_t total = carryHeld + read;
             for (const std::vector<unsigned char>& p : patterns)
@@ -261,6 +346,7 @@ bool HashAndScanFile(const std::wstring& path,
             const size_t keep = (total < carryLen) ? total : carryLen;
             if (keep > 0) std::memmove(folded.data(), folded.data() + (total - keep), keep);
             carryHeld = keep;
+            g_nutDiagPatternMs += GetTickCount64() - nutRtPatT0;
         }
     }
 
@@ -268,7 +354,6 @@ bool HashAndScanFile(const std::wstring& path,
     if (ok) ok = BCryptFinishHash(hash, digest, sizeof(digest), 0) >= 0;
 
     if (hash) BCryptDestroyHash(hash);
-    BCryptCloseAlgorithmProvider(alg, 0);
     CloseHandle(h);
     if (!ok) return false;
 
@@ -434,7 +519,7 @@ HANDLE OpenClientProcess(DWORD pid)
 // ---------------------------------------------------------------------------
 void CollectDllAliasNames(const std::wstring& dir, int depth,
     const std::string& expectedDll32, const std::string& expectedDll64,
-    int& filesSeen, std::vector<std::string>& outNames)
+    int& filesSeen, unsigned long long& bytesSeen, std::vector<std::string>& outNames)
 {
     if (depth > MAX_LIB_DEPTH || filesSeen >= MAX_LIB_FILES) return;
 
@@ -459,6 +544,7 @@ void CollectDllAliasNames(const std::wstring& dir, int depth,
             (static_cast<unsigned long long>(find.nFileSizeHigh) << 32) | find.nFileSizeLow;
         if (fileSize > MAX_LIB_FILE_BYTES) continue;
         filesSeen++;
+        bytesSeen += fileSize;
 
         const std::string hash = HashOnly(dir + L"\\" + name);
         if (hash.empty()) continue;
@@ -484,7 +570,7 @@ void CollectDllAliasNames(const std::wstring& dir, int depth,
 
     for (const std::wstring& sub : subdirs)
     {
-        CollectDllAliasNames(sub, depth + 1, expectedDll32, expectedDll64, filesSeen, outNames);
+        CollectDllAliasNames(sub, depth + 1, expectedDll32, expectedDll64, filesSeen, bytesSeen, outNames);
     }
 }
 
@@ -513,6 +599,7 @@ struct TreeScanResult
     int filesExamined = 0;
     int unreadableFiles = 0;
     bool truncated = false;      // a cap above was reached
+    unsigned long long totalBytes = 0; // RM_22 diagnostic only - see MeasureSession
 };
 
 void ScanDirectory(const std::wstring& dir, const std::wstring& extension,
@@ -612,6 +699,7 @@ TreeScanResult ScanProgramTrees(const std::wstring& dataDir, int mqlMajor,
     // Only "none of the three folders exists at all" counts as unreadable - a
     // terminal with no Scripts folder is perfectly normal.
     if (rootsFound == 0) result.readable = false;
+    result.totalBytes = totalBytes;
     return result;
 }
 
@@ -634,13 +722,18 @@ bool DiscoverSessionFromPipe(HANDLE pipe, const ManifestExpectations& expected,
     if (!GetNamedPipeClientProcessId(pipe, &pid) || pid == 0)
     {
         outDetail = "could not identify the process on the other end of the Coordinator pipe";
+        NUT_RtDiag("RM_01", outDetail);
         return false;
     }
 
     HANDLE process = OpenClientProcess(static_cast<DWORD>(pid));
     if (!process)
     {
-        outDetail = "could not open the connecting process to read its loaded modules";
+        char detail[96];
+        sprintf(detail, "could not open the connecting process (pid=%lu) to read its loaded modules, GetLastError=%lu",
+            (unsigned long)pid, GetLastError());
+        outDetail = detail;
+        NUT_RtDiag("RM_02", outDetail);
         return false;
     }
 
@@ -662,8 +755,12 @@ bool DiscoverSessionFromPipe(HANDLE pipe, const ManifestExpectations& expected,
     }
     if (!enumerated)
     {
+        char detail[96];
+        sprintf(detail, "could not read the module list of the connecting process (pid=%lu), GetLastError=%lu",
+            (unsigned long)pid, GetLastError());
+        outDetail = detail;
+        NUT_RtDiag("RM_03", outDetail);
         CloseHandle(process);
-        outDetail = "could not read the module list of the connecting process";
         return false;
     }
 
@@ -722,27 +819,63 @@ bool DiscoverSessionFromPipe(HANDLE pipe, const ManifestExpectations& expected,
         // in it - a diagnostic tool, for instance. Not tracked at all, rather
         // than tracked as a terminal that then fails every measurement, so
         // one stray connection cannot put the whole machine at -2.
-        outDetail = "the connecting process contains no Nutricula module";
+        char detail[128];
+        sprintf(detail, "the connecting process (pid=%lu) contains no Nutricula module - candidateModules=%zu, nameMatchedModules=%zu, expectationsUsable=%s",
+            (unsigned long)pid, out.candidateModules.size(), out.nameMatchedModules.size(), ExpectationsUsable(expected) ? "yes" : "no");
+        outDetail = detail;
+        NUT_RtDiag("RM_04", outDetail);
         return false;
     }
 
     out.noticedTickMs = GetTickCount64();
+    {
+        char detail[80];
+        sprintf(detail, "session discovered OK, pid=%lu, nameMatchedModules=%zu", (unsigned long)pid, out.nameMatchedModules.size());
+        NUT_RtDiag("RM_05", detail);
+    }
     return true;
 }
 
 bool IsSessionProcessAlive(const TerminalSession& session)
 {
-    if (session.pid == 0) return false;
+    if (session.pid == 0)
+    {
+        NUT_RtDiag("RM_10", "IsSessionProcessAlive: session.pid == 0");
+        return false;
+    }
     HANDLE process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, session.pid);
     if (!process) process = OpenProcess(PROCESS_QUERY_INFORMATION, FALSE, session.pid);
-    if (!process) return false;
+    if (!process)
+    {
+        char detail[96];
+        sprintf(detail, "IsSessionProcessAlive: OpenProcess FAILED for pid=%lu (both access masks), GetLastError=%lu",
+            (unsigned long)session.pid, GetLastError());
+        NUT_RtDiag("RM_11", detail);
+        return false;
+    }
 
     DWORD exitCode = 0;
-    const bool running = GetExitCodeProcess(process, &exitCode) && exitCode == STILL_ACTIVE;
+    const bool gotExitCode = GetExitCodeProcess(process, &exitCode) != 0;
+    const bool running = gotExitCode && exitCode == STILL_ACTIVE;
+    if (!running)
+    {
+        char detail[96];
+        sprintf(detail, "IsSessionProcessAlive: pid=%lu NOT running (gotExitCode=%s, exitCode=%lu)",
+            (unsigned long)session.pid, gotExitCode ? "yes" : "no", (unsigned long)exitCode);
+        NUT_RtDiag("RM_12", detail);
+    }
     // Same PID, different process: Windows reused the number after the real
     // terminal exited, so this is NOT the session we measured.
+    const unsigned long long recheckedCreation = ProcessCreationTime(process);
     const bool sameProcess = (session.createdAt100ns == 0) ||
-        (ProcessCreationTime(process) == session.createdAt100ns);
+        (recheckedCreation == session.createdAt100ns);
+    if (running && !sameProcess)
+    {
+        char detail[128];
+        sprintf(detail, "IsSessionProcessAlive: pid=%lu IS running but creation-time MISMATCH (cached=%llu, recheck=%llu) - treating as a different/reused process",
+            (unsigned long)session.pid, session.createdAt100ns, recheckedCreation);
+        NUT_RtDiag("RM_13", detail);
+    }
     CloseHandle(process);
     return running && sameProcess;
 }
@@ -769,6 +902,19 @@ SessionEvidence MeasureSession(const TerminalSession& session, const ManifestExp
     int machineIdBits = 0;
     // A loaded module that carries our exported entry-point names but matches
     // no expected hash. One read pass per candidate does both jobs.
+    //
+    // TEMPORARY DIAGNOSTIC (2026, RM_20/21/22 - see RM_RtDiag's own comment
+    // above): splits MeasureSession's total time into its three independent
+    // full-file-read passes - this loop (native modules actually loaded in
+    // the MetaTrader process, capped at MAX_CANDIDATE_MODULES/MAX_MODULE_
+    // BYTES), the Libraries-folder alias scan further down (CollectDllAlias
+    // Names), and the Experts/Indicators/Scripts program-tree scan
+    // (ScanProgramTrees) - so a slow cycle can be attributed to the right one
+    // instead of guessed at. Remove this whole timing block (and RM_21/RM_22
+    // below) once the real bottleneck is identified and fixed.
+    const unsigned long long nutRtT0 = GetTickCount64();
+    unsigned long long nutRtCandidateBytes = 0;
+    g_nutDiagReadMs = 0; g_nutDiagHashMs = 0; g_nutDiagPatternMs = 0;
     std::wstring modifiedModulePath;
     for (const std::wstring& modulePath : session.candidateModules)
     {
@@ -776,6 +922,7 @@ SessionEvidence MeasureSession(const TerminalSession& session, const ManifestExp
         bool hasEntryPoints = false;
         unsigned long long size = 0;
         if (!HashAndScanFile(modulePath, EntryPointPatterns(), hash, hasEntryPoints, size)) continue;
+        nutRtCandidateBytes += size;
 
         if (resolvedDllPath.empty() && (hash == wantDll32 || hash == wantDll64))
         {
@@ -792,6 +939,13 @@ SessionEvidence MeasureSession(const TerminalSession& session, const ManifestExp
             continue;
         }
         if (hasEntryPoints && modifiedModulePath.empty()) modifiedModulePath = modulePath;
+    }
+    {
+        char detail[256];
+        sprintf(detail, "candidateModules loop: count=%zu bytesRead=%llu tookMs=%llu (readMs=%llu hashMs=%llu patternMs=%llu)",
+            session.candidateModules.size(), nutRtCandidateBytes, GetTickCount64() - nutRtT0,
+            g_nutDiagReadMs, g_nutDiagHashMs, g_nutDiagPatternMs);
+        NUT_RtDiag("RM_20", detail);
     }
 
     // Checked before anything else, including before "no DLL was identified":
@@ -910,9 +1064,17 @@ SessionEvidence MeasureSession(const TerminalSession& session, const ManifestExp
     recognitionLiterals.push_back(EA_BUILD_MARKER);
     for (const char* name : LICENSE_DLL_ENTRY_POINTS) recognitionLiterals.push_back(name);
     {
+        const unsigned long long nutRtT1 = GetTickCount64();
+        g_nutDiagReadMs = 0; g_nutDiagHashMs = 0; g_nutDiagPatternMs = 0;
         int libFilesSeen = 0;
+        unsigned long long libBytesSeen = 0;
         CollectDllAliasNames(dataDir + ((mqlMajor == 4) ? L"\\MQL4\\Libraries" : L"\\MQL5\\Libraries"),
-            0, wantDll32, wantDll64, libFilesSeen, recognitionLiterals);
+            0, wantDll32, wantDll64, libFilesSeen, libBytesSeen, recognitionLiterals);
+        char detail[256];
+        sprintf(detail, "CollectDllAliasNames (Libraries folder) scan: filesSeen=%d bytesRead=%llu tookMs=%llu (readMs=%llu hashMs=%llu patternMs=%llu)",
+            libFilesSeen, libBytesSeen, GetTickCount64() - nutRtT1,
+            g_nutDiagReadMs, g_nutDiagHashMs, g_nutDiagPatternMs);
+        NUT_RtDiag("RM_21", detail);
     }
     // The resolved module's own name, in case it was loaded from outside the
     // Libraries tree and the walk above therefore never saw it.
@@ -947,7 +1109,16 @@ SessionEvidence MeasureSession(const TerminalSession& session, const ManifestExp
     //      whose markers had been scrubbed would leave nothing for rule 1 to
     //      catch; with it, the genuine file's absence is itself the failure.
     const std::string wantEa = ToLowerHex((mqlMajor == 4) ? expected.ex4Sha256 : expected.ex5Sha256);
+    const unsigned long long nutRtT2 = GetTickCount64();
+    g_nutDiagReadMs = 0; g_nutDiagHashMs = 0; g_nutDiagPatternMs = 0;
     const TreeScanResult scan = ScanProgramTrees(dataDir, mqlMajor, wantEa, patterns);
+    {
+        char detail[288];
+        sprintf(detail, "ScanProgramTrees (Experts/Indicators/Scripts) scan: filesExamined=%d bytesRead=%llu unreadable=%d truncated=%s tookMs=%llu (readMs=%llu hashMs=%llu patternMs=%llu)",
+            scan.filesExamined, scan.totalBytes, scan.unreadableFiles, scan.truncated ? "yes" : "no",
+            GetTickCount64() - nutRtT2, g_nutDiagReadMs, g_nutDiagHashMs, g_nutDiagPatternMs);
+        NUT_RtDiag("RM_22", detail);
+    }
     if (!scan.readable)
     {
         ev.detail = "this terminal has no readable MQL" + std::to_string(mqlMajor) +

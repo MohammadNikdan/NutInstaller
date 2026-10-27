@@ -32,6 +32,40 @@
 // one-off diagnostic build.
 // #define NUT_PIPE_DIAG 1
 
+// ============================================================================
+// TEMPORARY DIAGNOSTIC LOGGING (2026) - part of the same comprehensive pass
+// as CoordinatorCore.cpp's NUT_DiagTiming (see that file's comment for the
+// NutDiag_Watchdog.log precedent this follows). This header has no .cpp of
+// its own and is compiled into BOTH the Broker process (server side,
+// AcceptAndHandshake) and the thin DLL (client side, ConnectAndVerify), so
+// the logger is defined here, inline, rather than reused from
+// CoordinatorCore.cpp. Both sides append to the SAME %TEMP%\NutDiag_Timing.log
+// file (that folder is per-Windows-user, and the Broker/EA normally run as
+// the same user), so a single file shows both halves of the handshake in
+// chronological order - useful for exactly the kind of "client sent
+// something, did the server even see it" question a one-sided log can't
+// answer.
+//
+// Every call below is tagged with a stable CODE (PIPE_S## = server/
+// AcceptAndHandshake side, PIPE_C## = client/ConnectAndVerify side) so a
+// failure can be pinpointed to one exact line without reading context.
+// REMOVE: this whole block, plus every NUT_PipeDiag(...) call in
+// AcceptAndHandshake and ConnectAndVerify below, once the pipe layer is
+// confirmed healthy. (10 call sites added in this file - see the delivery
+// note for the full list.)
+inline void NUT_PipeDiag(const char* code, const char* detail)
+{
+    char tempPath[MAX_PATH];
+    DWORD n = GetTempPathA(MAX_PATH, tempPath);
+    if (n == 0 || n >= MAX_PATH) return;
+    std::string full = std::string(tempPath) + "NutDiag_Timing.log";
+    FILE* f = fopen(full.c_str(), "a");
+    if (!f) return;
+    fprintf(f, "[tick=%llu] %s: %s\n", (unsigned long long)GetTickCount64(), code, detail);
+    fclose(f);
+}
+// ============================================================================
+
 namespace NamedPipeIpc {
 
 // Builds the security descriptor described above. Caller must LocalFree()
@@ -218,7 +252,11 @@ inline HANDLE AcceptAndHandshake(
 {
     SECURITY_ATTRIBUTES sa;
     PSECURITY_DESCRIPTOR sd = nullptr;
-    if (!BuildPipeSecurityAttributes(sa, sd)) return INVALID_HANDLE_VALUE;
+    if (!BuildPipeSecurityAttributes(sa, sd))
+    {
+        NUT_PipeDiag("PIPE_S01", "BuildPipeSecurityAttributes failed");
+        return INVALID_HANDLE_VALUE;
+    }
 
     HANDLE pipe = CreateNamedPipeW(
         CoordinatorProtocol::PIPE_NAME,
@@ -230,12 +268,21 @@ inline HANDLE AcceptAndHandshake(
         &sa);
 
     if (sd) LocalFree(sd);
-    if (pipe == INVALID_HANDLE_VALUE) return INVALID_HANDLE_VALUE;
+    if (pipe == INVALID_HANDLE_VALUE)
+    {
+        char detail[96];
+        sprintf(detail, "CreateNamedPipeW failed, GetLastError=%lu", GetLastError());
+        NUT_PipeDiag("PIPE_S02", detail);
+        return INVALID_HANDLE_VALUE;
+    }
 
     BOOL connected = ConnectNamedPipe(pipe, nullptr) ?
         TRUE : (GetLastError() == ERROR_PIPE_CONNECTED);
     if (!connected)
     {
+        char detail[96];
+        sprintf(detail, "ConnectNamedPipe failed, GetLastError=%lu", GetLastError());
+        NUT_PipeDiag("PIPE_S03", detail);
         CloseHandle(pipe);
         return INVALID_HANDLE_VALUE;
     }
@@ -250,6 +297,8 @@ inline HANDLE AcceptAndHandshake(
         PSID ownSid = GetOwnUserSid(ownSidStorage);
         if (!ownSid || !VerifyConnectedClientIdentity(pipe, ownSid))
         {
+            NUT_PipeDiag("PIPE_S04", ownSid ? "client identity verification rejected (see NUT_PIPE_DIAG for detail)"
+                                             : "GetOwnUserSid failed");
             DisconnectNamedPipe(pipe);
             CloseHandle(pipe);
             return INVALID_HANDLE_VALUE;
@@ -262,11 +311,18 @@ inline HANDLE AcceptAndHandshake(
     bool rngOk = BCryptOpenAlgorithmProvider(&rngAlg, BCRYPT_RNG_ALGORITHM, nullptr, 0) >= 0;
     if (rngOk) rngOk = BCryptGenRandom(rngAlg, challenge.nonce, sizeof(challenge.nonce), 0) >= 0;
     if (rngAlg) BCryptCloseAlgorithmProvider(rngAlg, 0);
-    if (!rngOk) { DisconnectNamedPipe(pipe); CloseHandle(pipe); return INVALID_HANDLE_VALUE; }
+    if (!rngOk)
+    {
+        NUT_PipeDiag("PIPE_S05", "BCrypt RNG open/gen failed for challenge nonce");
+        DisconnectNamedPipe(pipe); CloseHandle(pipe); return INVALID_HANDLE_VALUE;
+    }
 
     DWORD written = 0;
     if (!WriteFile(pipe, &challenge, sizeof(challenge), &written, nullptr) || written != sizeof(challenge))
     {
+        char detail[96];
+        sprintf(detail, "WriteFile(challenge) failed/short, GetLastError=%lu, written=%lu", GetLastError(), written);
+        NUT_PipeDiag("PIPE_S06", detail);
         DisconnectNamedPipe(pipe); CloseHandle(pipe); return INVALID_HANDLE_VALUE;
     }
     FlushFileBuffers(pipe);
@@ -275,14 +331,19 @@ inline HANDLE AcceptAndHandshake(
     response.type = CoordinatorProtocol::MessageType::HandshakeResponse;
     if (!signFn(challenge.nonce, response.signature))
     {
+        NUT_PipeDiag("PIPE_S07", "signFn (Coordinator identity signature) failed");
         DisconnectNamedPipe(pipe); CloseHandle(pipe); return INVALID_HANDLE_VALUE;
     }
     if (!WriteFile(pipe, &response, sizeof(response), &written, nullptr) || written != sizeof(response))
     {
+        char detail[96];
+        sprintf(detail, "WriteFile(response) failed/short, GetLastError=%lu, written=%lu", GetLastError(), written);
+        NUT_PipeDiag("PIPE_S08", detail);
         DisconnectNamedPipe(pipe); CloseHandle(pipe); return INVALID_HANDLE_VALUE;
     }
     FlushFileBuffers(pipe);
 
+    NUT_PipeDiag("PIPE_S09", "handshake completed OK, pipe handed to caller");
     return pipe;
 }
 
@@ -323,6 +384,7 @@ inline HANDLE ConnectAndVerify(const unsigned char coordinatorPublicKeyXY[64], D
     // return below now goes through NUT_VMP_END() first, same as
     // everywhere else.
     NUT_VMP_BEGIN_ULTRA("NamedPipeIpc_ConnectAndVerify");
+    unsigned long long nutDiagPipeT0 = GetTickCount64();
     HANDLE pipe = INVALID_HANDLE_VALUE;
     DWORD waited = 0;
     while (waited < timeoutMs)
@@ -343,10 +405,29 @@ inline HANDLE ConnectAndVerify(const unsigned char coordinatorPublicKeyXY[64], D
         pipe = CreateFileW(CoordinatorProtocol::PIPE_NAME, GENERIC_READ | GENERIC_WRITE,
             0, nullptr, OPEN_EXISTING, SECURITY_SQOS_PRESENT | SECURITY_IMPERSONATION, nullptr);
         if (pipe != INVALID_HANDLE_VALUE) break;
-        if (GetLastError() != ERROR_PIPE_BUSY) { NUT_VMP_END(); return INVALID_HANDLE_VALUE; } // not running / not available at all
+        if (GetLastError() != ERROR_PIPE_BUSY)
+        {
+            // not running / not available at all
+            char detail[112];
+            sprintf(detail, "CreateFileW failed (not ERROR_PIPE_BUSY), GetLastError=%lu, waited=%lums",
+                GetLastError(), waited);
+            NUT_PipeDiag("PIPE_C01", detail);
+            NUT_VMP_END(); return INVALID_HANDLE_VALUE;
+        }
         if (!WaitNamedPipeW(CoordinatorProtocol::PIPE_NAME, 1000)) { waited += 1000; continue; }
     }
-    if (pipe == INVALID_HANDLE_VALUE) { NUT_VMP_END(); return INVALID_HANDLE_VALUE; }
+    if (pipe == INVALID_HANDLE_VALUE)
+    {
+        char detail[96];
+        sprintf(detail, "timed out waiting for pipe (ERROR_PIPE_BUSY), timeoutMs=%lu", timeoutMs);
+        NUT_PipeDiag("PIPE_C02", detail);
+        NUT_VMP_END(); return INVALID_HANDLE_VALUE;
+    }
+    {
+        char detail[64];
+        sprintf(detail, "pipe opened OK after %llu ms", GetTickCount64() - nutDiagPipeT0);
+        NUT_PipeDiag("PIPE_C03", detail);
+    }
 
     DWORD mode = PIPE_READMODE_MESSAGE;
     SetNamedPipeHandleState(pipe, &mode, nullptr, nullptr);
@@ -357,6 +438,10 @@ inline HANDLE ConnectAndVerify(const unsigned char coordinatorPublicKeyXY[64], D
         challenge.type != CoordinatorProtocol::MessageType::HandshakeChallenge ||
         challenge.protocolVersion != CoordinatorProtocol::PROTOCOL_VERSION)
     {
+        char detail[160];
+        sprintf(detail, "ReadFile(challenge) failed/invalid, GetLastError=%lu, read=%lu, type=%d, protocolVersion=%d (expected %d)",
+            GetLastError(), read, (int)challenge.type, (int)challenge.protocolVersion, (int)CoordinatorProtocol::PROTOCOL_VERSION);
+        NUT_PipeDiag("PIPE_C04", detail);
         CloseHandle(pipe);
         NUT_VMP_END();
         return INVALID_HANDLE_VALUE;
@@ -366,6 +451,10 @@ inline HANDLE ConnectAndVerify(const unsigned char coordinatorPublicKeyXY[64], D
     if (!ReadFile(pipe, &response, sizeof(response), &read, nullptr) || read != sizeof(response) ||
         response.type != CoordinatorProtocol::MessageType::HandshakeResponse)
     {
+        char detail[128];
+        sprintf(detail, "ReadFile(response) failed/invalid, GetLastError=%lu, read=%lu, type=%d",
+            GetLastError(), read, (int)response.type);
+        NUT_PipeDiag("PIPE_C05", detail);
         CloseHandle(pipe);
         NUT_VMP_END();
         return INVALID_HANDLE_VALUE;
@@ -377,11 +466,17 @@ inline HANDLE ConnectAndVerify(const unsigned char coordinatorPublicKeyXY[64], D
     // private key that never leaves the real Coordinator build.
     if (!EcdsaHelpers::VerifyP256(coordinatorPublicKeyXY, challenge.nonce, sizeof(challenge.nonce), response.signature))
     {
+        NUT_PipeDiag("PIPE_C06", "Coordinator identity signature verification FAILED (VerifyP256 returned false)");
         CloseHandle(pipe);
         NUT_VMP_END();
         return INVALID_HANDLE_VALUE;
     }
 
+    {
+        char detail[64];
+        sprintf(detail, "handshake verified OK, total %llu ms", GetTickCount64() - nutDiagPipeT0);
+        NUT_PipeDiag("PIPE_C07", detail);
+    }
     NUT_VMP_END();
     return pipe;
 }
