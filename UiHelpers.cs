@@ -1026,7 +1026,7 @@ namespace NutriculaInstaller
 
         public void SetSuccess(bool success)
         {
-            iconDrawer = success ? UiHelpers.DrawCheckGlyph : UiHelpers.DrawCancelGlyph;
+            iconDrawer = success ? (Action<Graphics, RectangleF, Color>)UiHelpers.DrawCheckGlyph : UiHelpers.DrawCancelGlyph;
             badgeColor = success ? UiHelpers.Success : UiHelpers.Error;
             softColor = success ? UiHelpers.SuccessSoft : UiHelpers.ErrorSoft;
             Invalidate();
