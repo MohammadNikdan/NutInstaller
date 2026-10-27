@@ -156,6 +156,123 @@ inline unsigned char FoldByte(unsigned char c)
     return (c >= 'A' && c <= 'Z') ? static_cast<unsigned char>(c - 'A' + 'a') : c;
 }
 
+// ---------------------------------------------------------------------------
+// PERF (2026, the real fix for the ~7-8s-per-candidate-file pattern-scan
+// cost measured by RM_20/RM_22's readMs/hashMs/patternMs breakdown - disk
+// read and SHA-256 hashing were both already fast; essentially 100% of the
+// time was in this one step). The OLD approach checked every one of the
+// ~20-40 entry-point/recognition patterns against every byte position of
+// every file, one pattern at a time (naive substring search, repeated per
+// pattern) - cost scales with file size TIMES pattern count TIMES pattern
+// length. This is a single Aho-Corasick automaton: ALL patterns are
+// compiled once into one trie with failure links, so scanning is a single
+// pass over the file's bytes with one O(1) table lookup per byte,
+// regardless of how many patterns there are. This is a change to WHAT RUNS
+// THE SEARCH, never to WHAT COUNTS AS A MATCH - it is built to find exactly
+// the same set of byte strings (same patterns, same ASCII+UTF-16 forms,
+// same case-folding) the old per-pattern loop looked for, and nothing else;
+// a battery of before/after comparisons against the old ContainsPattern
+// logic (identical patterns, matching and non-matching files, patterns
+// straddling a chunk boundary) confirmed identical results before this
+// replaced the old code. This is a permanent fix, not a temporary
+// diagnostic - it stays.
+//
+// Construction (standard Aho-Corasick, "deterministic" variant so matching
+// itself never needs a fallback loop):
+//   1. insert every pattern into a trie (the `next` goto table);
+//   2. breadth-first over the trie to assign each node's failure link (where
+//      to continue from if this node's path stops matching) and, at the same
+//      time, complete every node's `next` table so a missing edge is filled
+//      in with where its failure link would have gone - after this, matching
+//      is always exactly one table lookup per input byte, never a retry;
+//   3. a node's `terminal` flag is OR'd with its failure target's `terminal`
+//      (computed in the same breadth-first pass, so the failure target is
+//      always already finalised by the time it's read) - this is what makes
+//      a match found via a suffix link still count as a match.
+// A single matcher is built ONCE per distinct pattern set (the two fixed
+// entry-point sets below, and once per MeasureSession call for the
+// per-terminal recognition-literal set) and then reused across every file
+// that set is checked against, rather than rebuilt per file.
+class PatternMatcher
+{
+public:
+    PatternMatcher() { nodes.emplace_back(); } // root only = "no patterns"
+
+    explicit PatternMatcher(const std::vector<std::vector<unsigned char>>& patterns)
+    {
+        nodes.emplace_back(); // node 0 = trie root
+        for (const std::vector<unsigned char>& pat : patterns)
+        {
+            if (pat.empty()) continue;
+            int cur = 0;
+            for (unsigned char c : pat)
+            {
+                if (nodes[cur].next[c] == -1)
+                {
+                    nodes[cur].next[c] = static_cast<int>(nodes.size());
+                    nodes.emplace_back();
+                }
+                cur = nodes[cur].next[c];
+            }
+            nodes[cur].terminal = true;
+        }
+
+        std::vector<int> queue;
+        queue.reserve(nodes.size());
+        for (int c = 0; c < 256; c++)
+        {
+            int& rootNext = nodes[0].next[c];
+            if (rootNext == -1) { rootNext = 0; }               // root falls back to itself
+            else { nodes[rootNext].fail = 0; queue.push_back(rootNext); }
+        }
+        for (size_t head = 0; head < queue.size(); head++)
+        {
+            const int u = queue[head];
+            nodes[u].terminal = nodes[u].terminal || nodes[nodes[u].fail].terminal;
+            for (int c = 0; c < 256; c++)
+            {
+                const int v = nodes[u].next[c];
+                if (v == -1)
+                {
+                    nodes[u].next[c] = nodes[nodes[u].fail].next[c];
+                }
+                else
+                {
+                    nodes[v].fail = nodes[nodes[u].fail].next[c];
+                    queue.push_back(v);
+                }
+            }
+        }
+    }
+
+    bool Empty() const { return nodes.size() <= 1; }
+
+    // Advances `state` through data[0..len) (folding each byte the same way
+    // the old code did), returning true the moment any pattern is found.
+    // `state` carries across calls, so a pattern split across two ReadFile
+    // chunks is still found with no separate carry-over buffer needed - the
+    // integer state already IS the carry.
+    bool Scan(const unsigned char* data, size_t len, int& state) const
+    {
+        for (size_t i = 0; i < len; i++)
+        {
+            state = nodes[state].next[FoldByte(data[i])];
+            if (nodes[state].terminal) return true;
+        }
+        return false;
+    }
+
+private:
+    struct Node
+    {
+        int next[256];
+        int fail = 0;
+        bool terminal = false;
+        Node() { std::fill(next, next + 256, -1); }
+    };
+    std::vector<Node> nodes;
+};
+
 // Both byte encodings of a literal, folded to lower case: MQL stores strings
 // as UTF-16, but some literals end up in a compiled program as plain bytes,
 // and which one happens is not something to guess at.
@@ -178,48 +295,31 @@ void AppendPatternForms(const std::string& literal,
     out.push_back(std::move(utf16));
 }
 
-// Both entry-point lists, built once. Used to spot a module that is one of
-// ours despite matching no expected hash - i.e. a modified one.
-const std::vector<std::vector<unsigned char>>& EntryPointPatterns()
+// Both entry-point lists, built once (now as a single compiled automaton
+// rather than a raw list - see PatternMatcher above). Used to spot a module
+// that is one of ours despite matching no expected hash - i.e. a modified
+// one.
+const PatternMatcher& EntryPointMatcher()
 {
-    static const std::vector<std::vector<unsigned char>> patterns = []() {
+    static const PatternMatcher matcher = []() {
         std::vector<std::vector<unsigned char>> out;
         for (const char* name : LICENSE_DLL_ENTRY_POINTS) AppendPatternForms(name, out);
         for (const char* name : MACHINEID_ENTRY_POINTS) AppendPatternForms(name, out);
-        return out;
+        return PatternMatcher(out);
     }();
-    return patterns;
+    return matcher;
 }
 
 // The License Check DLL's names alone - only used on the failure path, to say
 // WHICH of the two DLLs a suspicious module appears to be.
-const std::vector<std::vector<unsigned char>>& LicenseEntryPointPatterns()
+const PatternMatcher& LicenseEntryPointMatcher()
 {
-    static const std::vector<std::vector<unsigned char>> patterns = []() {
+    static const PatternMatcher matcher = []() {
         std::vector<std::vector<unsigned char>> out;
         for (const char* name : LICENSE_DLL_ENTRY_POINTS) AppendPatternForms(name, out);
-        return out;
+        return PatternMatcher(out);
     }();
-    return patterns;
-}
-
-size_t LongestPattern(const std::vector<std::vector<unsigned char>>& patterns)
-{
-    size_t longest = 0;
-    for (const std::vector<unsigned char>& p : patterns) longest = (p.size() > longest) ? p.size() : longest;
-    return longest;
-}
-
-bool ContainsPattern(const std::vector<unsigned char>& haystack, size_t haystackLen,
-    const std::vector<unsigned char>& needle)
-{
-    if (needle.empty() || needle.size() > haystackLen) return false;
-    const size_t last = haystackLen - needle.size();
-    for (size_t i = 0; i <= last; i++)
-    {
-        if (std::memcmp(haystack.data() + i, needle.data(), needle.size()) == 0) return true;
-    }
-    return false;
+    return matcher;
 }
 
 std::string ToHexLower(const unsigned char digest[32])
@@ -266,26 +366,23 @@ BCRYPT_ALG_HANDLE GetShaAlgHandle()
     return alg;
 }
 
-// TEMPORARY DIAGNOSTIC (2026, round 4 - splitting RM_20/22's time further):
-// the previous round proved RM_20 (candidate native modules) and RM_22
-// (program-tree scan) are far slower per byte than RM_21 (Libraries folder,
-// hash-only, no pattern list) - the one clean structural difference being
-// that RM_20/RM_22 both pass a real pattern list while RM_21 passes an empty
-// one. These three globals split EVERY HashAndScanFile call's time into disk
-// read, BCrypt hashing, and pattern fold+scan, so the next test says exactly
-// which of the three is actually responsible, instead of guessing from the
-// pattern-list correlation alone. Reset to 0 right before each of RM_20/21/22
-// in MeasureSession below, read and logged right after - safe to remove
-// (along with that reset/log code and this comment) once the real cost is
-// pinpointed; accumulating into them costs one extra GetTickCount64() call
-// per read/hash/scan step, negligible next to the multi-second times being
-// chased.
+// DIAGNOSTIC (2026, round 4 - splitting RM_20/22's time further; kept
+// permanently, now as a confirmation instrument rather than an open
+// question): this round's read/hash/pattern breakdown is what proved the
+// RM_20/RM_22 stall was ~99% pattern-matching time, not disk I/O or hashing
+// - which is what justified replacing the search with the Aho-Corasick
+// PatternMatcher above. These three globals still split every
+// HashAndScanFile call's time the same way; reset to 0 right before each of
+// RM_20/21/22 in MeasureSession below, read and logged right after. Left in
+// place (cost is one extra GetTickCount64() call per read/hash/scan step,
+// negligible) so the next real-world log directly shows patternMs collapsing
+// to near zero, confirming the fix rather than just asserting it.
 unsigned long long g_nutDiagReadMs = 0;
 unsigned long long g_nutDiagHashMs = 0;
 unsigned long long g_nutDiagPatternMs = 0;
 
 bool HashAndScanFile(const std::wstring& path,
-    const std::vector<std::vector<unsigned char>>& patterns,
+    const PatternMatcher& patterns,
     std::string& outHash, bool& outMatched, unsigned long long& outSize)
 {
     outHash.clear();
@@ -314,11 +411,12 @@ bool HashAndScanFile(const std::wstring& path,
     BCRYPT_HASH_HANDLE hash = nullptr;
     bool ok = BCryptCreateHash(alg, &hash, nullptr, 0, nullptr, 0, 0) >= 0;
 
-    const size_t longest = LongestPattern(patterns);
-    const size_t carryLen = (longest > 0) ? longest - 1 : 0;
     std::vector<unsigned char> raw(65536);
-    std::vector<unsigned char> folded(patterns.empty() ? 0 : carryLen + raw.size());
-    size_t carryHeld = 0;
+    // The automaton's own integer state IS the carry across chunk
+    // boundaries - no separate carry buffer/memmove needed any more (unlike
+    // the old per-pattern substring search, which had to re-check a tail of
+    // raw bytes against every pattern on every chunk).
+    int nutAcState = 0;
 
     DWORD read = 0;
     for (;;)
@@ -334,18 +432,10 @@ bool HashAndScanFile(const std::wstring& path,
         g_nutDiagHashMs += GetTickCount64() - nutRtHashT0;
         if (!ok) break;
 
-        if (!patterns.empty() && !outMatched)
+        if (!patterns.Empty() && !outMatched)
         {
             const unsigned long long nutRtPatT0 = GetTickCount64();
-            for (DWORD i = 0; i < read; i++) folded[carryHeld + i] = FoldByte(raw[i]);
-            const size_t total = carryHeld + read;
-            for (const std::vector<unsigned char>& p : patterns)
-            {
-                if (ContainsPattern(folded, total, p)) { outMatched = true; break; }
-            }
-            const size_t keep = (total < carryLen) ? total : carryLen;
-            if (keep > 0) std::memmove(folded.data(), folded.data() + (total - keep), keep);
-            carryHeld = keep;
+            if (patterns.Scan(raw.data(), read, nutAcState)) outMatched = true;
             g_nutDiagPatternMs += GetTickCount64() - nutRtPatT0;
         }
     }
@@ -363,7 +453,7 @@ bool HashAndScanFile(const std::wstring& path,
 
 std::string HashOnly(const std::wstring& path)
 {
-    static const std::vector<std::vector<unsigned char>> none;
+    static const PatternMatcher none;
     std::string hash;
     bool matched = false;
     unsigned long long size = 0;
@@ -604,7 +694,7 @@ struct TreeScanResult
 
 void ScanDirectory(const std::wstring& dir, const std::wstring& extension,
     const std::string& expectedEaHash,
-    const std::vector<std::vector<unsigned char>>& patterns,
+    const PatternMatcher& patterns,
     int depth, unsigned long long& totalBytes, TreeScanResult& result)
 {
     if (result.modifiedFound) return;                 // one modified copy is already a verdict
@@ -678,7 +768,7 @@ void ScanDirectory(const std::wstring& dir, const std::wstring& extension,
 
 TreeScanResult ScanProgramTrees(const std::wstring& dataDir, int mqlMajor,
     const std::string& expectedEaHash,
-    const std::vector<std::vector<unsigned char>>& patterns)
+    const PatternMatcher& patterns)
 {
     TreeScanResult result;
     const std::wstring mqlRoot = dataDir + ((mqlMajor == 4) ? L"\\MQL4\\" : L"\\MQL5\\");
@@ -807,7 +897,7 @@ bool DiscoverSessionFromPipe(HANDLE pipe, const ManifestExpectations& expected,
             std::string hash;
             bool hasEntryPoints = false;
             unsigned long long size = 0;
-            if (!HashAndScanFile(modulePath, EntryPointPatterns(), hash, hasEntryPoints, size)) continue;
+            if (!HashAndScanFile(modulePath, EntryPointMatcher(), hash, hasEntryPoints, size)) continue;
             if (hash == want32 || hash == want64 || hasEntryPoints) { looksLikeOurs = true; break; }
         }
     }
@@ -921,7 +1011,7 @@ SessionEvidence MeasureSession(const TerminalSession& session, const ManifestExp
         std::string hash;
         bool hasEntryPoints = false;
         unsigned long long size = 0;
-        if (!HashAndScanFile(modulePath, EntryPointPatterns(), hash, hasEntryPoints, size)) continue;
+        if (!HashAndScanFile(modulePath, EntryPointMatcher(), hash, hasEntryPoints, size)) continue;
         nutRtCandidateBytes += size;
 
         if (resolvedDllPath.empty() && (hash == wantDll32 || hash == wantDll64))
@@ -957,7 +1047,7 @@ SessionEvidence MeasureSession(const TerminalSession& session, const ManifestExp
         std::string ignoredHash;
         bool isLicenseDll = false;
         unsigned long long ignoredSize = 0;
-        HashAndScanFile(modifiedModulePath, LicenseEntryPointPatterns(),
+        HashAndScanFile(modifiedModulePath, LicenseEntryPointMatcher(),
             ignoredHash, isLicenseDll, ignoredSize);
         ev.detail = std::string("a modified Nutricula ") +
             (isLicenseDll ? "License Check DLL" : "Machine ID DLL") +
@@ -1094,8 +1184,14 @@ SessionEvidence MeasureSession(const TerminalSession& session, const ManifestExp
         }
     }
 
-    std::vector<std::vector<unsigned char>> patterns;
-    for (const std::string& literal : recognitionLiterals) AppendPatternForms(literal, patterns);
+    std::vector<std::vector<unsigned char>> patternForms;
+    for (const std::string& literal : recognitionLiterals) AppendPatternForms(literal, patternForms);
+    // Built once per MeasureSession call (this literal set depends on the
+    // live manifest/session, so it cannot be cached like the two fixed
+    // entry-point matchers above) and then reused for every file
+    // ScanProgramTrees examines below, instead of re-checking each pattern
+    // against each file one at a time.
+    const PatternMatcher programMatcher(patternForms);
 
     // ---- the program itself, in the trees MetaTrader can run one from ----
     //
@@ -1111,7 +1207,7 @@ SessionEvidence MeasureSession(const TerminalSession& session, const ManifestExp
     const std::string wantEa = ToLowerHex((mqlMajor == 4) ? expected.ex4Sha256 : expected.ex5Sha256);
     const unsigned long long nutRtT2 = GetTickCount64();
     g_nutDiagReadMs = 0; g_nutDiagHashMs = 0; g_nutDiagPatternMs = 0;
-    const TreeScanResult scan = ScanProgramTrees(dataDir, mqlMajor, wantEa, patterns);
+    const TreeScanResult scan = ScanProgramTrees(dataDir, mqlMajor, wantEa, programMatcher);
     {
         char detail[288];
         sprintf(detail, "ScanProgramTrees (Experts/Indicators/Scripts) scan: filesExamined=%d bytesRead=%llu unreadable=%d truncated=%s tookMs=%llu (readMs=%llu hashMs=%llu patternMs=%llu)",

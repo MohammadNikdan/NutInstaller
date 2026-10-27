@@ -72,7 +72,8 @@ unsigned __stdcall ServeOneClient(void* param)
         CoordinatorProtocol::StatusReplyMsg reply;
         int tier = 0, pending = -1;
         std::string canonical, signatureB64;
-        g_core.GetPublished(tier, pending, canonical, signatureB64);
+        bool everCompletedFreeCheckin = false;
+        g_core.GetPublished(tier, pending, canonical, signatureB64, everCompletedFreeCheckin);
 
         reply.tier = tier;
         reply.pending = pending;
@@ -82,6 +83,7 @@ unsigned __stdcall ServeOneClient(void* param)
         reply.signatureLen = static_cast<uint32_t>(signatureB64.size() < sizeof(reply.signatureB64) ? signatureB64.size() : sizeof(reply.signatureB64) - 1);
         memcpy(reply.signatureB64, signatureB64.data(), reply.signatureLen);
         reply.signatureB64[reply.signatureLen] = 0;
+        reply.everCompletedFreeCheckin = everCompletedFreeCheckin ? 1u : 0u;
 
         DWORD written = 0;
         WriteFile(pipe, &reply, sizeof(reply), &written, nullptr);

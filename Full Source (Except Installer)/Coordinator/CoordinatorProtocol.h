@@ -153,6 +153,30 @@ struct StatusReplyMsg {
     char canonical[4096];       // e.g. "v=3|reason=...|requested_at=..." or the lease canonical - NUL-padded
     uint32_t signatureLen = 0;
     char signatureB64[800];     // base64 RSA-SHA256 signature over `canonical` exactly as received from the server - NUL-padded. RSA-4096 (the key now in use) produces a 512-byte raw signature = 684 base64 chars; 800 leaves comfortable margin.
+    // 2026 fix (project owner's explicit instruction): TIER_FREE is
+    // deliberately published WITHOUT a signed canonical (see
+    // CoordinatorCore.cpp's runFreeCheckin - "FREE is the unauthenticated
+    // default"), so canonicalLen/signatureLen are always 0 for it, exactly
+    // like the Coordinator's own startup placeholder before any real
+    // check has ever run. Those two states used to be indistinguishable to
+    // the DLL, so a genuinely free-tier install could never satisfy its own
+    // "did we ever get a real answer" latch and would eventually time out
+    // to -2 (NUT_WAIT_MAX_MS) even though the Coordinator had already
+    // confirmed TIER_FREE with the server. This flag is 1 only once the
+    // Coordinator's OWN free_checkin round has genuinely completed at least
+    // once (set right where NUT_DiagCode("FREE_07"...) fires, a one-way
+    // latch for the Broker process's lifetime) - 0 before that. It changes
+    // nothing about trust for any tier that DOES require a signature
+    // (LICENSED/UPDATE_REQUIRED/BLOCKED all still need canonicalLen/
+    // signatureLen > 0 and a verified signature, unconditionally); it only
+    // lets the DLL tell "confirmed free" apart from "nothing has happened
+    // yet" for the one tier that was never meant to carry a signature at
+    // all. NOTE: this field changes StatusReplyMsg's size, so the Broker
+    // and every DLL it talks to must be rebuilt together from this header -
+    // a size mismatch is still handled safely (QueryCoordinatorStatus's own
+    // exact-size check in NutriculaLicenseCheckThin.cpp just fails the read,
+    // same as any other malformed reply), never a wire-format ambiguity.
+    uint32_t everCompletedFreeCheckin = 0;
 };
 
 struct RequestRefreshMsg {

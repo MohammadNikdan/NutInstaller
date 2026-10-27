@@ -87,6 +87,12 @@ struct PublishedState
     std::mutex resultMutex; // protects the two strings below only
     std::string lastCanonical;    // most recent verified response's canonical string (Lease or Rejected)
     std::string lastSignatureB64; // its RSA signature, so the DLL client can independently re-verify
+    // 2026 fix (project owner's explicit instruction) - see
+    // StatusReplyMsg::everCompletedFreeCheckin's own comment in
+    // CoordinatorProtocol.h for the full reasoning. One-way latch: set true
+    // exactly once, right where runFreeCheckin() reaches a genuine verdict
+    // (NUT_DiagCode("FREE_07"...)), never reset afterward.
+    std::atomic<bool> everCompletedFreeCheckin{false};
 };
 
 class CoordinatorCore
@@ -111,7 +117,8 @@ public:
     void RequestRefreshIfDue();
 
     // Snapshot read for IPC StatusReplyMsg construction.
-    void GetPublished(int& outTier, int& outPending, std::string& outCanonical, std::string& outSignatureB64);
+    void GetPublished(int& outTier, int& outPending, std::string& outCanonical, std::string& outSignatureB64,
+        bool& outEverCompletedFreeCheckin);
 
     // Called from ServeOneClient whenever the EA/DLL genuinely talks to us
     // over the pipe - GetStatus or RequestRefresh, either counts (see

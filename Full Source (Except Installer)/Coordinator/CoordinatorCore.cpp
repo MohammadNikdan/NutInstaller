@@ -1245,10 +1245,12 @@ std::vector<RuntimeMeasure::TerminalSession> CoordinatorCore::SnapshotLiveSessio
     return live;
 }
 
-void CoordinatorCore::GetPublished(int& outTier, int& outPending, std::string& outCanonical, std::string& outSignatureB64)
+void CoordinatorCore::GetPublished(int& outTier, int& outPending, std::string& outCanonical, std::string& outSignatureB64,
+    bool& outEverCompletedFreeCheckin)
 {
     outTier = m_state.tier.load();
     outPending = m_state.pending.load();
+    outEverCompletedFreeCheckin = m_state.everCompletedFreeCheckin.load();
     std::lock_guard<std::mutex> lock(m_state.resultMutex);
     outCanonical = m_state.lastCanonical;
     outSignatureB64 = m_state.lastSignatureB64;
@@ -2059,6 +2061,15 @@ void CoordinatorCore::WorkerLoop()
                         continue;
                     }
                     NUT_DiagCode("FREE_07", "attempt " + std::to_string(attempt) + ": genuine verdict reached, tier=" + std::to_string(verdictTier));
+
+                    // 2026 fix (project owner's explicit instruction) - see
+                    // StatusReplyMsg::everCompletedFreeCheckin's own comment
+                    // in CoordinatorProtocol.h. Set exactly here, the moment
+                    // a genuine free_checkin verdict is first reached - a
+                    // one-way latch, never cleared again for this Broker
+                    // process's lifetime, regardless of what a later round
+                    // finds.
+                    m_state.everCompletedFreeCheckin.store(true);
 
                     // Genuine verdict.
                     verdict = true;
