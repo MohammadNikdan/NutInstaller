@@ -39,6 +39,20 @@ namespace NutriculaInstaller
     {
         private const int PageWidth = 696; // ClientSize.Width (760) minus contentHost's left+right padding (32+32)
 
+        // The window's designed/full ClientSize.Height (2026 hardening: the actual
+        // ClientSize set in InitializeForm may be CLAMPED shorter than this on a
+        // screen too short to fit it - see InitializeForm's own comment). Every page's
+        // own fixed content height is still computed from this constant, never from the
+        // live (possibly clamped) ClientSize, so a page's controls keep their original
+        // designed positions and are reached via contentHost's scrollbar on a clamped
+        // window instead of ever being resized, overlapped or cut off.
+        private const int DesignClientHeight = 664;
+
+        /// <summary>The fixed height every page is built at - the space between the header and
+        /// footer, minus contentHost's own top/bottom padding, at the full DESIGN window height
+        /// (never the live, possibly-clamped ClientSize.Height - see DesignClientHeight above).</summary>
+        private int PageContentHeight => DesignClientHeight - header.Height - footer.Height - contentHost.Padding.Top - contentHost.Padding.Bottom;
+
         private readonly InstallerService installer = new InstallerService();
         private readonly CancellationTokenSource cts = new CancellationTokenSource();
 
@@ -409,8 +423,33 @@ namespace NutriculaInstaller
 
             Text = "Nutricula Expert Advisor Installer";
             StartPosition = FormStartPosition.CenterScreen;
-            ClientSize = new Size(760, 664);
-            MinimumSize = new Size(760, 664);
+
+            // Screen-aware height clamp (2026 hardening). On any normal-height screen
+            // this is a no-op: clampedClientHeight comes out exactly equal to
+            // DesignClientHeight (664), so ClientSize ends up 760x664 exactly as
+            // before - zero visible difference. It only ever does something on a
+            // screen too short to fit that (e.g. a 13" 1366x768 laptop, where the
+            // taskbar alone already eats a chunk of the 768px): there, we clamp to
+            // the WorkingArea (screen bounds minus the Windows taskbar) minus a fixed
+            // allowance for this window's own title bar + border chrome (neither of
+            // which is part of ClientSize) plus a little breathing room, so the whole
+            // window - chrome included - still fits on screen with the bottom
+            // buttons reachable. contentHost's own AutoScroll (see BuildUi) plus
+            // every page's unchanged, fixed DesignClientHeight-based layout (see
+            // PageContentHeight) are what make the shorter window still able to
+            // reach every control: the gap becomes a scrollbar instead of anything
+            // being pushed off-screen. FormBorderStyle stays FixedSingle below, and
+            // MinimumSize is kept equal to this same clamped ClientSize, so the user
+            // still cannot drag-resize the window at all - only this one-time,
+            // startup-computed size changes on a short screen.
+            const int DesignClientWidth = 760;
+            const int ChromeAndMarginAllowance = 90; // title bar + borders + breathing room
+            const int MinUsableClientHeight = 360; // never clamp below a height that would itself hide the footer
+            int workingAreaHeight = Screen.PrimaryScreen.WorkingArea.Height;
+            int clampedClientHeight = Math.Min(DesignClientHeight, Math.Max(MinUsableClientHeight, workingAreaHeight - ChromeAndMarginAllowance));
+
+            ClientSize = new Size(DesignClientWidth, clampedClientHeight);
+            MinimumSize = new Size(DesignClientWidth, clampedClientHeight);
             BackColor = UiHelpers.Background;
             Font = new Font("Segoe UI", 9f);
             FormBorderStyle = FormBorderStyle.FixedSingle;
@@ -470,7 +509,17 @@ namespace NutriculaInstaller
         {
             BuildHeader();
 
-            contentHost = new Panel { Dock = DockStyle.Fill, Padding = new Padding(32, 26, 32, 20), BackColor = UiHelpers.Background };
+            // AutoScroll (2026 hardening): a plain-vanilla no-op on every normal-height
+            // screen, since each page's own fixed height (PageContentHeight, computed from
+            // the full DESIGN window height) exactly fills contentHost's own height there,
+            // leaving nothing to scroll. It only ever does something on a screen too short
+            // to fit the window at its full designed height (InitializeForm clamps
+            // ClientSize.Height down for exactly that case) - then contentHost itself is
+            // shorter than the page it hosts, and this is what turns that gap into a
+            // reachable scrollbar instead of the page's bottom controls (Install, Back,
+            // Finish, Try Again) silently being pushed below the visible area with no way
+            // to reach them.
+            contentHost = new Panel { Dock = DockStyle.Fill, Padding = new Padding(32, 26, 32, 20), BackColor = UiHelpers.Background, AutoScroll = true };
             Controls.Add(contentHost);
             contentHost.BringToFront();
 
@@ -554,8 +603,8 @@ namespace NutriculaInstaller
                 int chatLeft = rowLeft + (int)Math.Round(gap);
                 int webLeft = chatLeft + buttonSize + (int)Math.Round(gap);
 
-                chatButton = new HeaderIconButton(UiHelpers.GlyphSendFill) { Location = new Point(chatLeft, 40) };
-                webButton = new HeaderIconButton(UiHelpers.GlyphGlobe) { Location = new Point(webLeft, 40) };
+                chatButton = new HeaderIconButton(UiHelpers.GlyphSendFill) { Location = new Point(chatLeft, 40), CustomIconDrawer = UiHelpers.DrawSendGlyph };
+                webButton = new HeaderIconButton(UiHelpers.GlyphGlobe) { Location = new Point(webLeft, 40), CustomIconDrawer = UiHelpers.DrawGlobeGlyph };
             }
 
             chatButton.Click += delegate { OpenUrl(AppConfig.SupportUrl); };
@@ -608,7 +657,8 @@ namespace NutriculaInstaller
                 Size = new Size(uninstallButtonWidth, 40),
                 UseCircularIcon = false,
                 TextColor = UiHelpers.TextMuted,
-                Visible = false
+                Visible = false,
+                CustomIconDrawer = UiHelpers.DrawCancelGlyph
             };
             uninstallButton.Click += delegate { OnUninstallTapped(); };
             footer.Controls.Add(uninstallButton);
@@ -616,7 +666,17 @@ namespace NutriculaInstaller
 
         private Panel BuildSelectPage()
         {
-            Panel page = new Panel { Dock = DockStyle.Fill, BackColor = UiHelpers.Background };
+            // Fixed design size (not Dock = Fill) so the page keeps its full designed
+            // height even when contentHost itself has been clamped shorter than that on
+            // a low-resolution screen - see InitializeForm's own comment. contentHost's
+            // AutoScroll then supplies a scrollbar for the difference instead of any
+            // control silently being pushed off-screen and unreachable.
+            Panel page = new Panel
+            {
+                Location = new Point(contentHost.Padding.Left, contentHost.Padding.Top),
+                Size = new Size(PageWidth, PageContentHeight),
+                BackColor = UiHelpers.Background
+            };
 
             Label sectionTitle = new Label
             {
@@ -661,7 +721,17 @@ namespace NutriculaInstaller
 
         private Panel BuildCredentialsPage()
         {
-            Panel page = new Panel { Dock = DockStyle.Fill, BackColor = UiHelpers.Background };
+            // Fixed design size (not Dock = Fill) so the page keeps its full designed
+            // height even when contentHost itself has been clamped shorter than that on
+            // a low-resolution screen - see InitializeForm's own comment. contentHost's
+            // AutoScroll then supplies a scrollbar for the difference instead of any
+            // control silently being pushed off-screen and unreachable.
+            Panel page = new Panel
+            {
+                Location = new Point(contentHost.Padding.Left, contentHost.Padding.Top),
+                Size = new Size(PageWidth, PageContentHeight),
+                BackColor = UiHelpers.Background
+            };
 
             credTitleLabel = new Label
             {
@@ -696,12 +766,12 @@ namespace NutriculaInstaller
 
             Label emailCaption = new Label { AutoSize = true, Text = "Email:", Font = UiHelpers.UiFont(9.5f, FontStyle.Bold), ForeColor = UiHelpers.TextDark, Location = new Point(18, 16), BackColor = Color.Transparent };
             credentialsCard.Controls.Add(emailCaption);
-            Panel emailWrap = BuildFieldWrap(UiHelpers.GlyphMail, new Point(18, 36), credentialsCard.Width - 36, out emailBox);
+            Panel emailWrap = BuildFieldWrap(UiHelpers.DrawMailGlyph, new Point(18, 36), credentialsCard.Width - 36, out emailBox);
             credentialsCard.Controls.Add(emailWrap);
 
             Label purchaseCaption = new Label { AutoSize = true, Text = "Purchase Key:", Font = UiHelpers.UiFont(9.5f, FontStyle.Bold), ForeColor = UiHelpers.TextDark, Location = new Point(18, 96), BackColor = Color.Transparent };
             credentialsCard.Controls.Add(purchaseCaption);
-            Panel purchaseWrap = BuildFieldWrap(UiHelpers.GlyphKey, new Point(18, 116), credentialsCard.Width - 36, out purchaseKeyBox);
+            Panel purchaseWrap = BuildFieldWrap(UiHelpers.DrawKeyGlyph, new Point(18, 116), credentialsCard.Width - 36, out purchaseKeyBox);
             credentialsCard.Controls.Add(purchaseWrap);
 
             // Transfer Key: only relevant (visible + required) in Transfer mode. Hidden by
@@ -709,7 +779,7 @@ namespace NutriculaInstaller
             // below it when the mode changes.
             transferCaption = new Label { AutoSize = true, Text = "Transfer Key:", Font = UiHelpers.UiFont(9.5f, FontStyle.Bold), ForeColor = UiHelpers.TextDark, Location = new Point(18, 176), BackColor = Color.Transparent, Visible = false };
             credentialsCard.Controls.Add(transferCaption);
-            transferFieldWrap = BuildFieldWrap(UiHelpers.GlyphKey, new Point(18, 196), credentialsCard.Width - 36, out transferKeyBox);
+            transferFieldWrap = BuildFieldWrap(UiHelpers.DrawKeyGlyph, new Point(18, 196), credentialsCard.Width - 36, out transferKeyBox);
             transferFieldWrap.Visible = false;
             credentialsCard.Controls.Add(transferFieldWrap);
 
@@ -725,7 +795,7 @@ namespace NutriculaInstaller
             };
             credentialsCard.Controls.Add(helperLabel);
 
-            backButton = new MaterialButton("Back", UiHelpers.GlyphBack, ButtonKind.Outline) { Location = new Point(0, 308), Size = new Size(140, 46) };
+            backButton = new MaterialButton("Back", UiHelpers.GlyphBack, ButtonKind.Outline) { Location = new Point(0, 308), Size = new Size(140, 46), CustomIconDrawer = UiHelpers.DrawBackArrowGlyph };
             backButton.Click += delegate { ShowPage(pageSelect); };
             page.Controls.Add(backButton);
 
@@ -733,7 +803,8 @@ namespace NutriculaInstaller
             {
                 Location = new Point(PageWidth - 170, 308),
                 Size = new Size(170, 46),
-                FillColor = UiHelpers.Success
+                FillColor = UiHelpers.Success,
+                CustomIconDrawer = UiHelpers.DrawDownloadGlyph
             };
             installButton.Click += async delegate { await OnInstallTappedAsync(); };
             page.Controls.Add(installButton);
@@ -771,7 +842,7 @@ namespace NutriculaInstaller
             installButton.Location = new Point(PageWidth - 170, buttonsY);
         }
 
-        private Panel BuildFieldWrap(string glyph, Point location, int width, out TextBox textBox)
+        private Panel BuildFieldWrap(Action<Graphics, RectangleF, Color> iconDrawer, Point location, int width, out TextBox textBox)
         {
             Panel wrap = new Panel { Location = location, Size = new Size(width, 46), BackColor = UiHelpers.Surface };
             wrap.Paint += delegate (object sender, PaintEventArgs e)
@@ -780,16 +851,20 @@ namespace NutriculaInstaller
                 UiHelpers.DrawRounded(e.Graphics, new Rectangle(0, 0, wrap.Width - 1, wrap.Height - 1), 10, UiHelpers.Surface, UiHelpers.Border);
             };
 
-            Label icon = new Label
+            // Drawn as a plain vector icon (not the "Segoe MDL2 Assets" icon font, which
+            // only ships starting with Windows 10 - see UiHelpers.DrawBackArrowGlyph's own
+            // comment) so this field icon renders correctly on every Windows version.
+            Panel icon = new Panel
             {
-                AutoSize = false,
                 Size = new Size(28, 46),
-                Text = glyph,
-                Font = UiHelpers.IconFont(11f),
-                ForeColor = UiHelpers.TextMuted,
-                TextAlign = ContentAlignment.MiddleCenter,
                 Location = new Point(10, 0),
                 BackColor = Color.Transparent
+            };
+            icon.Paint += delegate (object sender, PaintEventArgs e)
+            {
+                e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+                if (iconDrawer != null)
+                    iconDrawer(e.Graphics, new RectangleF(0, 0, icon.Width, icon.Height), UiHelpers.TextMuted);
             };
             wrap.Controls.Add(icon);
 
@@ -808,7 +883,17 @@ namespace NutriculaInstaller
 
         private Panel BuildProgressPage()
         {
-            Panel page = new Panel { Dock = DockStyle.Fill, BackColor = UiHelpers.Background };
+            // Fixed design size (not Dock = Fill) so the page keeps its full designed
+            // height even when contentHost itself has been clamped shorter than that on
+            // a low-resolution screen - see InitializeForm's own comment. contentHost's
+            // AutoScroll then supplies a scrollbar for the difference instead of any
+            // control silently being pushed off-screen and unreachable.
+            Panel page = new Panel
+            {
+                Location = new Point(contentHost.Padding.Left, contentHost.Padding.Top),
+                Size = new Size(PageWidth, PageContentHeight),
+                BackColor = UiHelpers.Background
+            };
 
             runningPanel = new Panel { Location = new Point(0, 110), Size = new Size(PageWidth, 120), BackColor = UiHelpers.Background };
             page.Controls.Add(runningPanel);
@@ -873,7 +958,8 @@ namespace NutriculaInstaller
             finishButton = new MaterialButton("Finish", UiHelpers.GlyphCheck, ButtonKind.Filled)
             {
                 Location = new Point((PageWidth - 180) / 2, 164),
-                Size = new Size(180, 46)
+                Size = new Size(180, 46),
+                CustomIconDrawer = UiHelpers.DrawCheckGlyph
             };
             finishButton.Click += delegate { Close(); };
             resultPanel.Controls.Add(finishButton);
@@ -881,7 +967,8 @@ namespace NutriculaInstaller
             tryAgainButton = new MaterialButton("Try Again", UiHelpers.GlyphSync, ButtonKind.Outline)
             {
                 Size = new Size(170, 46),
-                Visible = false
+                Visible = false,
+                CustomIconDrawer = UiHelpers.DrawSyncGlyph
             };
             tryAgainButton.Click += delegate { OnTryAgainTapped(); };
             resultPanel.Controls.Add(tryAgainButton);

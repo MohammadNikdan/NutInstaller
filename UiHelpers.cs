@@ -329,6 +329,20 @@ namespace NutriculaInstaller
             }
         }
 
+        /// <summary>
+        /// Draws a filled circular badge with a centered vector icon (see the
+        /// Windows 8/8.1 compatibility note above DrawBackArrowGlyph) instead
+        /// of an icon-font glyph.
+        /// </summary>
+        public static void DrawGlyphBadge(Graphics g, Rectangle rect, Action<Graphics, RectangleF, Color> iconDrawer, Color bg, Color fg)
+        {
+            g.SmoothingMode = SmoothingMode.AntiAlias;
+            using (Brush b = new SolidBrush(bg))
+                g.FillEllipse(b, rect);
+            if (iconDrawer == null) return;
+            iconDrawer(g, rect, fg);
+        }
+
         /// <summary>A simple right-pointing play triangle, its bounding box exactly centered in `circle`.</summary>
         public static void DrawPlayGlyph(Graphics g, RectangleF circle, Color color)
         {
@@ -377,6 +391,218 @@ namespace NutriculaInstaller
             using (Pen p = new Pen(color, Math.Max(1.5f, circle.Width * 0.07f)))
             {
                 g.DrawArc(p, handleRect, 180f, 180f);
+            }
+        }
+
+        // ==================================================================
+        // 2026 hardening (Windows 8/8.1 compatibility fix): the icons below
+        // replace the ones previously drawn with the "Segoe MDL2 Assets"
+        // icon font (see IconFontName's own comment - that font only ships
+        // starting with Windows 10, so every glyph drawn through it was
+        // rendering as blank space on Windows 7/8/8.1, where GDI+ silently
+        // substitutes a different font that has no mapping for those
+        // private-use-area codepoints). These are plain vector shapes drawn
+        // directly with GDI+ primitives (lines/arcs/polygons) instead of
+        // text, so they render identically on every Windows version and
+        // need no font, embedded or otherwise, to exist at all - the same
+        // approach already used above for DrawPlayGlyph/DrawShoppingBagGlyph.
+        // Each one follows that same signature convention: a bounding box
+        // and a single fill/stroke color, so they drop straight into
+        // MaterialButton.CustomIconDrawer, HeaderIconButton, DrawGlyphBadge
+        // and the plain field-icon panels with no other change needed.
+        // ==================================================================
+
+        /// <summary>A left-pointing back arrow, centered in `box`.</summary>
+        public static void DrawBackArrowGlyph(Graphics g, RectangleF box, Color color)
+        {
+            g.SmoothingMode = SmoothingMode.AntiAlias;
+            float cx = box.X + box.Width / 2f;
+            float cy = box.Y + box.Height / 2f;
+            float s = Math.Min(box.Width, box.Height) * 0.30f;
+            using (Pen p = new Pen(color, Math.Max(1.6f, box.Width * 0.11f)) { StartCap = LineCap.Round, EndCap = LineCap.Round, LineJoin = LineJoin.Round })
+            {
+                g.DrawLine(p, cx + s, cy, cx - s, cy);
+                g.DrawLine(p, cx - s * 0.30f, cy - s * 0.70f, cx - s, cy);
+                g.DrawLine(p, cx - s * 0.30f, cy + s * 0.70f, cx - s, cy);
+            }
+        }
+
+        /// <summary>A downward "download" arrow with a tray line beneath it, centered in `box`.</summary>
+        public static void DrawDownloadGlyph(Graphics g, RectangleF box, Color color)
+        {
+            g.SmoothingMode = SmoothingMode.AntiAlias;
+            float cx = box.X + box.Width / 2f;
+            float cy = box.Y + box.Height / 2f;
+            float s = Math.Min(box.Width, box.Height) * 0.30f;
+            using (Pen p = new Pen(color, Math.Max(1.6f, box.Width * 0.11f)) { StartCap = LineCap.Round, EndCap = LineCap.Round, LineJoin = LineJoin.Round })
+            {
+                g.DrawLine(p, cx, cy - s, cx, cy + s * 0.25f);
+                g.DrawLine(p, cx - s * 0.55f, cy - s * 0.30f, cx, cy + s * 0.25f);
+                g.DrawLine(p, cx + s * 0.55f, cy - s * 0.30f, cx, cy + s * 0.25f);
+                g.DrawLine(p, cx - s, cy + s, cx + s, cy + s);
+            }
+        }
+
+        /// <summary>A simple checkmark, centered in `box`.</summary>
+        public static void DrawCheckGlyph(Graphics g, RectangleF box, Color color)
+        {
+            g.SmoothingMode = SmoothingMode.AntiAlias;
+            float cx = box.X + box.Width / 2f;
+            float cy = box.Y + box.Height / 2f;
+            float s = Math.Min(box.Width, box.Height) * 0.32f;
+            using (Pen p = new Pen(color, Math.Max(1.8f, box.Width * 0.13f)) { StartCap = LineCap.Round, EndCap = LineCap.Round, LineJoin = LineJoin.Round })
+            {
+                g.DrawLines(p, new PointF[]
+                {
+                    new PointF(cx - s, cy + s * 0.05f),
+                    new PointF(cx - s * 0.28f, cy + s * 0.78f),
+                    new PointF(cx + s, cy - s * 0.62f)
+                });
+            }
+        }
+
+        /// <summary>A simple "X" cancel mark, centered in `box`.</summary>
+        public static void DrawCancelGlyph(Graphics g, RectangleF box, Color color)
+        {
+            g.SmoothingMode = SmoothingMode.AntiAlias;
+            float cx = box.X + box.Width / 2f;
+            float cy = box.Y + box.Height / 2f;
+            float s = Math.Min(box.Width, box.Height) * 0.26f;
+            using (Pen p = new Pen(color, Math.Max(1.6f, box.Width * 0.12f)) { StartCap = LineCap.Round, EndCap = LineCap.Round })
+            {
+                g.DrawLine(p, cx - s, cy - s, cx + s, cy + s);
+                g.DrawLine(p, cx - s, cy + s, cx + s, cy - s);
+            }
+        }
+
+        /// <summary>A right-pointing chevron ("&gt;"), centered in `box`.</summary>
+        public static void DrawChevronRightGlyph(Graphics g, RectangleF box, Color color)
+        {
+            g.SmoothingMode = SmoothingMode.AntiAlias;
+            float cx = box.X + box.Width / 2f;
+            float cy = box.Y + box.Height / 2f;
+            float s = Math.Min(box.Width, box.Height) * 0.22f;
+            using (Pen p = new Pen(color, Math.Max(1.6f, box.Width * 0.12f)) { StartCap = LineCap.Round, EndCap = LineCap.Round, LineJoin = LineJoin.Round })
+            {
+                g.DrawLines(p, new PointF[]
+                {
+                    new PointF(cx - s * 0.45f, cy - s),
+                    new PointF(cx + s * 0.55f, cy),
+                    new PointF(cx - s * 0.45f, cy + s)
+                });
+            }
+        }
+
+        /// <summary>A circular refresh/sync arrow, centered in `box`.</summary>
+        public static void DrawSyncGlyph(Graphics g, RectangleF box, Color color)
+        {
+            g.SmoothingMode = SmoothingMode.AntiAlias;
+            float cx = box.X + box.Width / 2f;
+            float cy = box.Y + box.Height / 2f;
+            float r = Math.Min(box.Width, box.Height) * 0.30f;
+            float penWidth = Math.Max(1.6f, box.Width * 0.11f);
+            const float startAngle = -30f;
+            const float sweepAngle = 260f;
+            const float endAngle = startAngle + sweepAngle; // 230 degrees
+            using (Pen p = new Pen(color, penWidth) { StartCap = LineCap.Round, EndCap = LineCap.Round })
+            {
+                g.DrawArc(p, cx - r, cy - r, r * 2f, r * 2f, startAngle, sweepAngle);
+            }
+
+            // Small filled arrowhead at the end of the arc. The arc is parametrized as
+            // (cx + r*cos(theta), cy + r*sin(theta)); its tangent (the direction the arc
+            // is travelling at that point, for increasing theta) is (-sin(theta), cos(theta)).
+            double endRad = endAngle * Math.PI / 180.0;
+            float ex = cx + r * (float)Math.Cos(endRad);
+            float ey = cy + r * (float)Math.Sin(endRad);
+            float dirX = -(float)Math.Sin(endRad);
+            float dirY = (float)Math.Cos(endRad);
+            float perpX = -dirY;
+            float perpY = dirX;
+            float headLen = r * 0.65f;
+            PointF tip = new PointF(ex + dirX * headLen * 0.55f, ey + dirY * headLen * 0.55f);
+            PointF baseA = new PointF(ex - dirX * headLen * 0.45f + perpX * headLen * 0.55f, ey - dirY * headLen * 0.45f + perpY * headLen * 0.55f);
+            PointF baseB = new PointF(ex - dirX * headLen * 0.45f - perpX * headLen * 0.55f, ey - dirY * headLen * 0.45f - perpY * headLen * 0.55f);
+            using (Brush b = new SolidBrush(color))
+            {
+                g.FillPolygon(b, new PointF[] { tip, baseA, baseB });
+            }
+        }
+
+        /// <summary>A mail envelope (rectangle outline with a V-shaped flap), centered in `box`.</summary>
+        public static void DrawMailGlyph(Graphics g, RectangleF box, Color color)
+        {
+            g.SmoothingMode = SmoothingMode.AntiAlias;
+            float cx = box.X + box.Width / 2f;
+            float cy = box.Y + box.Height / 2f;
+            float s = Math.Min(box.Width, box.Height) * 0.34f;
+            RectangleF rect = new RectangleF(cx - s, cy - s * 0.68f, s * 2f, s * 1.36f);
+            float penWidth = Math.Max(1.4f, box.Width * 0.08f);
+            using (Pen p = new Pen(color, penWidth) { LineJoin = LineJoin.Round })
+            {
+                g.DrawRectangle(p, rect.X, rect.Y, rect.Width, rect.Height);
+                g.DrawLine(p, rect.Left, rect.Top, cx, cy + s * 0.12f);
+                g.DrawLine(p, rect.Right, rect.Top, cx, cy + s * 0.12f);
+            }
+        }
+
+        /// <summary>A key (a ring plus a shaft with two teeth), centered in `box`.</summary>
+        public static void DrawKeyGlyph(Graphics g, RectangleF box, Color color)
+        {
+            g.SmoothingMode = SmoothingMode.AntiAlias;
+            float cx = box.X + box.Width / 2f;
+            float cy = box.Y + box.Height / 2f;
+            float s = Math.Min(box.Width, box.Height) * 0.34f;
+            float headR = s * 0.42f;
+            float headCx = cx - s * 0.50f;
+            float penWidth = Math.Max(1.4f, box.Width * 0.09f);
+            using (Pen p = new Pen(color, penWidth) { StartCap = LineCap.Round, EndCap = LineCap.Round })
+            {
+                g.DrawEllipse(p, headCx - headR, cy - headR, headR * 2f, headR * 2f);
+                float shaftStartX = headCx + headR * 0.60f;
+                float shaftEndX = cx + s * 0.95f;
+                g.DrawLine(p, shaftStartX, cy, shaftEndX, cy);
+                g.DrawLine(p, shaftEndX, cy, shaftEndX, cy + s * 0.45f);
+                g.DrawLine(p, shaftEndX - s * 0.30f, cy, shaftEndX - s * 0.30f, cy + s * 0.32f);
+            }
+        }
+
+        /// <summary>A globe (outer circle, a narrow meridian ellipse and an equator line), centered in `box`.</summary>
+        public static void DrawGlobeGlyph(Graphics g, RectangleF box, Color color)
+        {
+            g.SmoothingMode = SmoothingMode.AntiAlias;
+            float cx = box.X + box.Width / 2f;
+            float cy = box.Y + box.Height / 2f;
+            float r = Math.Min(box.Width, box.Height) * 0.36f;
+            float penWidth = Math.Max(1.3f, box.Width * 0.07f);
+            using (Pen p = new Pen(color, penWidth))
+            {
+                g.DrawEllipse(p, cx - r, cy - r, r * 2f, r * 2f);
+                g.DrawEllipse(p, cx - r * 0.42f, cy - r, r * 0.84f, r * 2f);
+                g.DrawLine(p, cx - r, cy, cx + r, cy);
+            }
+        }
+
+        /// <summary>A paper-plane "send" icon (a dart-shaped silhouette with a fold crease), centered in `box`.</summary>
+        public static void DrawSendGlyph(Graphics g, RectangleF box, Color color)
+        {
+            g.SmoothingMode = SmoothingMode.AntiAlias;
+            float cx = box.X + box.Width / 2f;
+            float cy = box.Y + box.Height / 2f;
+            float s = Math.Min(box.Width, box.Height) * 0.34f;
+
+            PointF nose = new PointF(cx + s * 1.05f, cy);
+            PointF topBack = new PointF(cx - s * 0.85f, cy - s * 0.78f);
+            PointF notch = new PointF(cx - s * 0.30f, cy);
+            PointF bottomBack = new PointF(cx - s * 0.85f, cy + s * 0.78f);
+
+            using (Brush b = new SolidBrush(color))
+            {
+                g.FillPolygon(b, new PointF[] { nose, topBack, notch, bottomBack });
+            }
+            using (Pen p = new Pen(color, Math.Max(1f, box.Width * 0.05f)) { StartCap = LineCap.Round, EndCap = LineCap.Round })
+            {
+                g.DrawLine(p, notch, nose);
             }
         }
     }
@@ -456,12 +682,7 @@ namespace NutriculaInstaller
             }
 
             Rectangle chevronRect = new Rectangle(Width - 40, (Height - 24) / 2, 24, 24);
-            using (Font cf = UiHelpers.IconFont(11f))
-            using (Brush cb = new SolidBrush(hovering ? UiHelpers.BrandColor : UiHelpers.TextMuted))
-            using (StringFormat sfm = new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center })
-            {
-                g.DrawString(UiHelpers.GlyphChevronRight, cf, cb, chevronRect, sfm);
-            }
+            UiHelpers.DrawChevronRightGlyph(g, chevronRect, hovering ? UiHelpers.BrandColor : UiHelpers.TextMuted);
         }
     }
 
@@ -611,7 +832,15 @@ namespace NutriculaInstaller
                         }
                         else
                         {
-                            g.DrawString(IconGlyph, iconFont, fgb, startX, centerY - glyphSize.Height / 2f);
+                            if (CustomIconDrawer != null)
+                            {
+                                RectangleF glyphRect = new RectangleF(startX, centerY - glyphSize.Height / 2f, glyphSize.Width, glyphSize.Height);
+                                CustomIconDrawer(g, glyphRect, fg);
+                            }
+                            else
+                            {
+                                g.DrawString(IconGlyph, iconFont, fgb, startX, centerY - glyphSize.Height / 2f);
+                            }
                         }
                     }
                     g.DrawString(Text2, Font, fgb, startX + iconBoxWidth + gap, centerY - textSize.Height / 2f);
@@ -785,7 +1014,7 @@ namespace NutriculaInstaller
     [Obfuscation(Exclude = false, Feature = "-ctrl flow", ApplyToMembers = true)]
     internal sealed class ResultBadge : Panel
     {
-        private string glyph = UiHelpers.GlyphCheck;
+        private Action<Graphics, RectangleF, Color> iconDrawer = UiHelpers.DrawCheckGlyph;
         private Color badgeColor = UiHelpers.Success;
         private Color softColor = UiHelpers.SuccessSoft;
 
@@ -797,7 +1026,7 @@ namespace NutriculaInstaller
 
         public void SetSuccess(bool success)
         {
-            glyph = success ? UiHelpers.GlyphCheck : UiHelpers.GlyphCancel;
+            iconDrawer = success ? UiHelpers.DrawCheckGlyph : UiHelpers.DrawCancelGlyph;
             badgeColor = success ? UiHelpers.Success : UiHelpers.Error;
             softColor = success ? UiHelpers.SuccessSoft : UiHelpers.ErrorSoft;
             Invalidate();
@@ -812,7 +1041,7 @@ namespace NutriculaInstaller
             using (Brush b = new SolidBrush(softColor))
                 g.FillEllipse(b, outer);
             Rectangle inner = Rectangle.Inflate(outer, -14, -14);
-            UiHelpers.DrawGlyphBadge(g, inner, glyph, badgeColor, Color.White, 24f);
+            UiHelpers.DrawGlyphBadge(g, inner, iconDrawer, badgeColor, Color.White);
         }
     }
 
@@ -825,6 +1054,11 @@ namespace NutriculaInstaller
     internal sealed class HeaderIconButton : Panel
     {
         private readonly string glyph;
+        /// <summary>
+        /// When set, draws this vector icon instead of the "Segoe MDL2 Assets" glyph -
+        /// see the Windows 8/8.1 compatibility note above DrawBackArrowGlyph in UiHelpers.
+        /// </summary>
+        public Action<Graphics, RectangleF, Color> CustomIconDrawer { get; set; }
         private bool hovering;
         private bool pressed;
 
@@ -858,11 +1092,18 @@ namespace NutriculaInstaller
                     g.FillEllipse(cb, new Rectangle(0, 0, Width - 1, Height - 1));
             }
 
-            using (Font f = UiHelpers.IconFont(12f))
-            using (Brush fb = new SolidBrush(Color.White))
-            using (StringFormat sf = new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center })
+            if (CustomIconDrawer != null)
             {
-                g.DrawString(glyph, f, fb, new RectangleF(0, 0, Width, Height), sf);
+                CustomIconDrawer(g, new RectangleF(0, 0, Width, Height), Color.White);
+            }
+            else
+            {
+                using (Font f = UiHelpers.IconFont(12f))
+                using (Brush fb = new SolidBrush(Color.White))
+                using (StringFormat sf = new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center })
+                {
+                    g.DrawString(glyph, f, fb, new RectangleF(0, 0, Width, Height), sf);
+                }
             }
         }
     }
