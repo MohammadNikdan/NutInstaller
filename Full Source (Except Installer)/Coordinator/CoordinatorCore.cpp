@@ -1529,15 +1529,34 @@ void CoordinatorCore::WorkerLoop()
                 if (m_noMeasurableSessionSince == 0) m_noMeasurableSessionSince = nowNoSession;
                 if (nowNoSession - m_noMeasurableSessionSince >= NO_SESSION_GRACE_SEC)
                 {
-                    publishFailedTier();
-                    // Quote the SPECIFIC reason the last connection attempt
-                    // could not become a measurable session (see
-                    // m_lastDiscoveryFailureDetail's own comment in
-                    // CoordinatorCore.h) when one was recorded recently
-                    // enough to plausibly be what's still happening; fall
-                    // back to the old generic wording only if nothing more
-                    // specific was ever captured (e.g. NoteEaActivity was
-                    // never reached with a real pipe handle at all).
+                    // 2026 fix (project owner's report): this branch used to
+                    // escalate to a reported -2 EVEN WHEN NOTHING WAS EVER
+                    // CAPTURED about why - i.e. no pipe connection attempt
+                    // was ever recorded failing during the whole grace
+                    // window, which in practice is overwhelmingly the
+                    // ordinary case of "no MetaTrader is open right now"
+                    // (the user closed it, or hasn't opened the other
+                    // platform yet) rather than tampering. That produced a
+                    // very visible false positive: close MetaTrader (or sit
+                    // between closing one platform and opening another) for
+                    // more than NO_SESSION_GRACE_SEC but less than
+                    // EA_ACTIVITY_WINDOW_SEC, and the NEXT terminal to open
+                    // would read an already-published -2 on its very first
+                    // poll (OnInit), purely because the Broker gave up
+                    // waiting for a session that was never going to appear
+                    // while nothing was running - nothing was ever actually
+                    // unmeasurable, there was simply no terminal to measure.
+                    //
+                    // Only escalate when a connection attempt was genuinely
+                    // made and genuinely could not be turned into a
+                    // measurable session (m_lastDiscoveryFailureDetail is
+                    // populated by DiscoverSessionFromPipe's own failure
+                    // detail - see its comment in CoordinatorCore.h). That is
+                    // the real "host would not let us read process info"
+                    // case this grace period exists for. When nothing was
+                    // ever captured, there is nothing to measure and nothing
+                    // to report - treat it exactly like the ordinary
+                    // EA-closed-in-between case and simply keep waiting.
                     std::string detailToReport;
                     {
                         std::lock_guard<std::mutex> failLock(m_lastDiscoveryFailureMutex);
@@ -1547,13 +1566,11 @@ void CoordinatorCore::WorkerLoop()
                             detailToReport = m_lastDiscoveryFailureDetail;
                         }
                     }
-                    if (detailToReport.empty())
+                    if (!detailToReport.empty())
                     {
-                        detailToReport =
-                            "an EA is active but the MetaTrader process using Nutricula could not be "
-                            "identified or its loaded modules could not be read, so integrity cannot be measured";
+                        publishFailedTier();
+                        reportLocalFailure("artifact_check_failed", detailToReport);
                     }
-                    reportLocalFailure("artifact_check_failed", detailToReport);
                 }
                 Sleep(5000);
                 continue;
