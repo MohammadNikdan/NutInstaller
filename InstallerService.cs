@@ -140,7 +140,7 @@ namespace NutriculaInstaller
                 result.OverallSuccess = freeOutcome.AllSucceeded;
                 string freeBaseMessage = freeOutcome.AllSucceeded
                     ? Messages.FreeSuccess
-                    : Messages.ForFileFailure(freeOutcome.FailureKind);
+                    : Messages.ForFileFailure(freeOutcome.FailureKind, freeOutcome.UnknownDetail);
                 // See FileInstallOutcome.CoordinatorWarning / TerminalWarning -
                 // both used to be swallowed into a log line nobody ever saw.
                 if (freeOutcome.CoordinatorWarning != null) freeBaseMessage += "\n\n" + freeOutcome.CoordinatorWarning;
@@ -326,7 +326,7 @@ namespace NutriculaInstaller
             // happened (or didn't happen) with the server.
             if (!fileOutcome.AllSucceeded)
             {
-                return Messages.ForFileFailure(fileOutcome.FailureKind);
+                return Messages.ForFileFailure(fileOutcome.FailureKind, fileOutcome.UnknownDetail);
             }
 
             // Files installed, but we never got a completed server exchange.
@@ -520,6 +520,8 @@ namespace NutriculaInstaller
             object progressLock = new object();
             object failureLock = new object();
             LocalFileFailureKind worstFailure = LocalFileFailureKind.None;
+            // TEMPORARY diagnostic (see FileInstallOutcome.UnknownDetail's own comment).
+            string worstUnknownDetail = null;
             var inaccessibleTerminals = new List<string>();
 
             var tasks = terminals.Select(async terminal =>
@@ -639,6 +641,13 @@ namespace NutriculaInstaller
                             {
                                 worstFailure = kind;
                             }
+                            // TEMPORARY diagnostic (see FileInstallOutcome.UnknownDetail's
+                            // own comment) - capture the real exception whenever this
+                            // terminal's failure is Unknown, so it can reach the screen.
+                            if (kind == LocalFileFailureKind.Unknown)
+                            {
+                                worstUnknownDetail = ex.GetType().Name + ": " + ex.Message;
+                            }
                         }
                         log("FAILED " + terminal.Type + " -> " + terminal.TerminalPath + " | " + ex.Message);
                     }
@@ -749,7 +758,8 @@ namespace NutriculaInstaller
             return new FileInstallOutcome(allSucceeded, allSucceeded ? LocalFileFailureKind.None : worstFailure)
             {
                 CoordinatorWarning = coordinatorWarning,
-                TerminalWarning = terminalWarning
+                TerminalWarning = terminalWarning,
+                UnknownDetail = allSucceeded ? null : worstUnknownDetail
             };
         }
 
@@ -1665,6 +1675,18 @@ namespace NutriculaInstaller
             /// AccessDenied failure instead (AllSucceeded=false).
             /// </summary>
             public string TerminalWarning { get; set; }
+            /// <summary>
+            /// TEMPORARY diagnostic (2026, project owner's own request while
+            /// chasing a real report of the Unknown/generic file-system
+            /// error on an old Windows 8 machine): null unless FailureKind is
+            /// Unknown, in which case this carries the actual exception's
+            /// type name + message, so the on-screen message can show it
+            /// instead of only the generic "unexpected file system error"
+            /// wording. Never parsed, never relied on for any decision -
+            /// purely diagnostic text. Remove this field and its one use in
+            /// Messages.ForFileFailure once the real cause is identified.
+            /// </summary>
+            public string UnknownDetail { get; set; }
             public FileInstallOutcome(bool allSucceeded, LocalFileFailureKind failureKind)
             {
                 AllSucceeded = allSucceeded;
@@ -1828,7 +1850,14 @@ namespace NutriculaInstaller
             // (path length is deliberately NOT a case here anymore - see the
             // LongPath() helper, which makes installation work regardless of
             // how long MetaTrader's own path is, since it cannot be moved.)
-            public static string ForFileFailure(LocalFileFailureKind kind)
+            // TEMPORARY diagnostic (see FileInstallOutcome.UnknownDetail's own
+            // comment): unknownDetail is only ever non-null when kind is
+            // Unknown, and is appended to that one branch's message so the
+            // real exception can be read off the screen during a real report
+            // instead of guessed at. Remove the parameter and the one line
+            // that uses it once the Windows-8 "unexpected file system error"
+            // report is actually diagnosed.
+            public static string ForFileFailure(LocalFileFailureKind kind, string unknownDetail = null)
             {
                 switch (kind)
                 {
@@ -1856,7 +1885,8 @@ namespace NutriculaInstaller
                                "re-download the Nutricula installer (or rebuild it, if you are the developer) and try again.";
                     default:
                         return "Nutricula could not be installed due to an unexpected file system error. " +
-                               "Please close MetaTrader and try again.";
+                               "Please close MetaTrader and try again." +
+                               (string.IsNullOrEmpty(unknownDetail) ? "" : "\n\n[Diagnostic - temporary, for the developer: " + unknownDetail + "]");
                 }
             }
 
