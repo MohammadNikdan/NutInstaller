@@ -433,7 +433,10 @@ namespace NutriculaInstaller
             g.SmoothingMode = SmoothingMode.AntiAlias;
             float cx = box.X + box.Width / 2f;
             float cy = box.Y + box.Height / 2f;
-            float s = Math.Min(box.Width, box.Height) * 0.30f;
+            // 115% of the original 0.30 scale - the Install button's icon was
+            // asked to read larger than the other icons (approved after a
+            // first pass at 130% came back as too big).
+            float s = Math.Min(box.Width, box.Height) * 0.345f;
             using (Pen p = new Pen(color, Math.Max(1.4f, box.Width * 0.052f)) { StartCap = LineCap.Round, EndCap = LineCap.Round, LineJoin = LineJoin.Round })
             {
                 g.DrawLine(p, cx, cy - s, cx, cy + s * 0.25f);
@@ -501,7 +504,12 @@ namespace NutriculaInstaller
             float cy = box.Y + box.Height / 2f;
             float r = Math.Min(box.Width, box.Height) * 0.30f;
             float penWidth = Math.Max(1.4f, box.Width * 0.052f);
-            const float startAngle = -30f;
+            // Rotated 180 degrees from the original (-30f) per approval -
+            // same arc, same arrowhead, just flipped to the opposite side.
+            // Every point below (ex/ey, the arrowhead triangle) is already
+            // derived purely from startAngle/sweepAngle, so this one constant
+            // is the only thing that needed to change.
+            const float startAngle = 150f;
             const float sweepAngle = 260f;
             const float endAngle = startAngle + sweepAngle; // 230 degrees
             using (Pen p = new Pen(color, penWidth) { StartCap = LineCap.Round, EndCap = LineCap.Round })
@@ -535,9 +543,13 @@ namespace NutriculaInstaller
             g.SmoothingMode = SmoothingMode.AntiAlias;
             float cx = box.X + box.Width / 2f;
             float cy = box.Y + box.Height / 2f;
-            float s = Math.Min(box.Width, box.Height) * 0.34f;
+            // 80% of the original 0.34 scale, approved alongside the key
+            // icon's matching shrink.
+            float s = Math.Min(box.Width, box.Height) * 0.272f;
             RectangleF rect = new RectangleF(cx - s, cy - s * 0.68f, s * 2f, s * 1.36f);
-            float penWidth = Math.Max(1.2f, box.Width * 0.041f);
+            // Thinner than before on top of the size reduction (was 0.041,
+            // floor 1.2) - explicitly asked for separately from the shrink.
+            float penWidth = Math.Max(1.0f, box.Width * 0.030f);
             using (Pen p = new Pen(color, penWidth) { LineJoin = LineJoin.Round })
             {
                 g.DrawRectangle(p, rect.X, rect.Y, rect.Width, rect.Height);
@@ -552,10 +564,13 @@ namespace NutriculaInstaller
             g.SmoothingMode = SmoothingMode.AntiAlias;
             float cx = box.X + box.Width / 2f;
             float cy = box.Y + box.Height / 2f;
-            float s = Math.Min(box.Width, box.Height) * 0.34f;
+            // 80% of the original 0.34 scale, approved alongside the email
+            // icon's matching shrink. headR/headCx/shaft points below are
+            // all expressed as fractions of s, so they scale automatically.
+            float s = Math.Min(box.Width, box.Height) * 0.272f;
             float headR = s * 0.42f;
             float headCx = cx - s * 0.50f;
-            float penWidth = Math.Max(1.2f, box.Width * 0.042f);
+            float penWidth = Math.Max(1.0f, box.Width * 0.0336f);
             using (Pen p = new Pen(color, penWidth) { StartCap = LineCap.Round, EndCap = LineCap.Round })
             {
                 g.DrawEllipse(p, headCx - headR, cy - headR, headR * 2f, headR * 2f);
@@ -576,8 +591,9 @@ namespace NutriculaInstaller
             g.SmoothingMode = SmoothingMode.AntiAlias;
             float cx = box.X + box.Width / 2f;
             float cy = box.Y + box.Height / 2f;
-            float r = Math.Min(box.Width, box.Height) * 0.36f;
-            float penWidth = Math.Max(1.1f, box.Width * 0.0375f);
+            // 70% of the original 0.36 scale, per approval.
+            float r = Math.Min(box.Width, box.Height) * 0.252f;
+            float penWidth = Math.Max(1.0f, box.Width * 0.02625f);
             using (Pen p = new Pen(color, penWidth))
             {
                 g.DrawEllipse(p, cx - r, cy - r, r * 2f, r * 2f);
@@ -586,26 +602,58 @@ namespace NutriculaInstaller
             }
         }
 
-        /// <summary>A paper-plane "send" icon (a dart-shaped silhouette with a fold crease), centered in `box`.</summary>
-        public static void DrawSendGlyph(Graphics g, RectangleF box, Color color)
+        /// <summary>
+        /// A hollow chat/speech-bubble icon (rounded rectangle with a small
+        /// tail), centered in `box` - replaces the old paper-plane "send"
+        /// icon for the support/chat button. Deliberately outline-only
+        /// (no fill), matching the globe glyph's thin-stroke style, per
+        /// explicit request ("مثل همون آیکون گلوب باشه - توخالی"). Sized at
+        /// 85% of an initial 0.32 scale (70% read as too small once built,
+        /// 85% was the approved middle ground) and nudged up slightly from
+        /// dead-center (the `- s * 0.15f` on `top`) after the bubble's
+        /// center was asked to sit on the box's own center and then
+        /// adjusted up "just a little" from there.
+        /// </summary>
+        public static void DrawChatGlyph(Graphics g, RectangleF box, Color color)
         {
             g.SmoothingMode = SmoothingMode.AntiAlias;
             float cx = box.X + box.Width / 2f;
             float cy = box.Y + box.Height / 2f;
-            float s = Math.Min(box.Width, box.Height) * 0.305f;
+            float s = Math.Min(box.Width, box.Height) * 0.272f; // 0.32 * 0.85
+            float w = s * 2f;
+            float h = s * 1.5f;
+            float r = s * 0.42f;
+            float left = cx - w / 2f;
+            float right = cx + w / 2f;
+            float top = cy - h / 2f - s * 0.15f;
+            float bottom = top + h;
+            // Tail: a small triangular notch cut into the bottom edge,
+            // left-of-center, pointing down-left - built as part of the
+            // same single path/contour as the rounded rectangle rather than
+            // a separate overlapping shape, so the outline reads as one
+            // continuous stroke with no seam.
+            float tailBaseLeftX = left + w * 0.22f;
+            float tailBaseRightX = left + w * 0.42f;
+            float tailTipX = left + w * 0.16f;
+            float tailTipY = bottom + s * 0.34f;
+            float penWidth = Math.Max(1.0f, box.Width * 0.0319f); // 0.0375 * 0.85, same style/thinness as the globe glyph
 
-            PointF nose = new PointF(cx + s * 1.05f, cy);
-            PointF topBack = new PointF(cx - s * 0.85f, cy - s * 0.78f);
-            PointF notch = new PointF(cx - s * 0.30f, cy);
-            PointF bottomBack = new PointF(cx - s * 0.85f, cy + s * 0.78f);
-
-            using (Brush b = new SolidBrush(color))
+            using (GraphicsPath path = new GraphicsPath())
+            using (Pen p = new Pen(color, penWidth) { LineJoin = LineJoin.Round })
             {
-                g.FillPolygon(b, new PointF[] { nose, topBack, notch, bottomBack });
-            }
-            using (Pen p = new Pen(color, Math.Max(1.1f, box.Width * 0.034f)) { StartCap = LineCap.Round, EndCap = LineCap.Round })
-            {
-                g.DrawLine(p, notch, nose);
+                path.StartFigure();
+                path.AddArc(left, top, r * 2f, r * 2f, 180f, 90f);               // top-left corner
+                path.AddLine(left + r, top, right - r, top);                     // top edge
+                path.AddArc(right - r * 2f, top, r * 2f, r * 2f, 270f, 90f);     // top-right corner
+                path.AddLine(right, top + r, right, bottom - r);                 // right edge
+                path.AddArc(right - r * 2f, bottom - r * 2f, r * 2f, r * 2f, 0f, 90f); // bottom-right corner
+                path.AddLine(right - r, bottom, tailBaseRightX, bottom);          // bottom edge, right of the tail
+                path.AddLine(tailBaseRightX, bottom, tailTipX, tailTipY);        // down to the tail tip
+                path.AddLine(tailTipX, tailTipY, tailBaseLeftX, bottom);         // back up from the tail tip
+                path.AddLine(tailBaseLeftX, bottom, left + r, bottom);           // bottom edge, left of the tail
+                path.AddArc(left, bottom - r * 2f, r * 2f, r * 2f, 90f, 90f);    // bottom-left corner
+                path.CloseFigure(); // closes straight back up the left edge to the start point
+                g.DrawPath(p, path);
             }
         }
     }

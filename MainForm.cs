@@ -603,7 +603,7 @@ namespace NutriculaInstaller
                 int chatLeft = rowLeft + (int)Math.Round(gap);
                 int webLeft = chatLeft + buttonSize + (int)Math.Round(gap);
 
-                chatButton = new HeaderIconButton(UiHelpers.GlyphSendFill) { Location = new Point(chatLeft, 40), CustomIconDrawer = UiHelpers.DrawSendGlyph };
+                chatButton = new HeaderIconButton(UiHelpers.GlyphSendFill) { Location = new Point(chatLeft, 40), CustomIconDrawer = UiHelpers.DrawChatGlyph };
                 webButton = new HeaderIconButton(UiHelpers.GlyphGlobe) { Location = new Point(webLeft, 40), CustomIconDrawer = UiHelpers.DrawGlobeGlyph };
             }
 
