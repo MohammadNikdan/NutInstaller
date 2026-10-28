@@ -646,7 +646,14 @@ namespace NutriculaInstaller
                             // terminal's failure is Unknown, so it can reach the screen.
                             if (kind == LocalFileFailureKind.Unknown)
                             {
-                                worstUnknownDetail = ex.GetType().Name + ": " + ex.Message;
+                                // Dig into InnerException too (AtomicFile.Replace's
+                                // Win32Exception carries the real, human-readable
+                                // Win32 error text - e.g. "Access is denied" -
+                                // which the outer IOException's own Message does
+                                // not repeat) so the real cause is actually visible
+                                // here, not just the generic wrapper text.
+                                worstUnknownDetail = ex.GetType().Name + " (HResult=0x" + ex.HResult.ToString("X8") + "): " + ex.Message +
+                                    (ex.InnerException != null ? " | inner: " + ex.InnerException.GetType().Name + ": " + ex.InnerException.Message : "");
                             }
                         }
                         log("FAILED " + terminal.Type + " -> " + terminal.TerminalPath + " | " + ex.Message);

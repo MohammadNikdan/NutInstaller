@@ -61,7 +61,21 @@ namespace NutriculaInstaller
                 Thread.Sleep(250);
             }
             TryDelete(tempPath);
-            throw new IOException("Could not replace the file atomically: " + finalPath, new Win32Exception(lastError));
+            // 2026 fix (real report): this exception used to carry the real
+            // Win32 error ONLY inside its Win32Exception InnerException,
+            // never on the IOException's own HResult. ClassifyLocalFileException
+            // (InstallerService.cs) classifies purely by `io.HResult & 0xFFFF`,
+            // so every single Replace() failure - a disk-full, an
+            // access-denied, a sharing violation that outlasted the retry
+            // loop above, anything - was silently misreported to the user as
+            // the generic "unexpected file system error" message, regardless
+            // of what actually went wrong. Setting HResult here to the
+            // standard Win32-to-HRESULT mapping (the same 0x8007xxxx form
+            // .NET itself uses for Win32-sourced IOExceptions) is what makes
+            // that classification actually work.
+            IOException ex = new IOException("Could not replace the file atomically: " + finalPath, new Win32Exception(lastError));
+            ex.HResult = unchecked((int)(0x80070000 | (uint)(lastError & 0xFFFF)));
+            throw ex;
         }
 
         /// <summary>Atomically writes <paramref name="data"/> to <paramref name="finalPath"/>.</summary>
