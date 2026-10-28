@@ -140,7 +140,7 @@ namespace NutriculaInstaller
                 result.OverallSuccess = freeOutcome.AllSucceeded;
                 string freeBaseMessage = freeOutcome.AllSucceeded
                     ? Messages.FreeSuccess
-                    : Messages.ForFileFailure(freeOutcome.FailureKind, freeOutcome.UnknownDetail);
+                    : Messages.ForFileFailure(freeOutcome.FailureKind);
                 // See FileInstallOutcome.CoordinatorWarning / TerminalWarning -
                 // both used to be swallowed into a log line nobody ever saw.
                 if (freeOutcome.CoordinatorWarning != null) freeBaseMessage += "\n\n" + freeOutcome.CoordinatorWarning;
@@ -326,7 +326,7 @@ namespace NutriculaInstaller
             // happened (or didn't happen) with the server.
             if (!fileOutcome.AllSucceeded)
             {
-                return Messages.ForFileFailure(fileOutcome.FailureKind, fileOutcome.UnknownDetail);
+                return Messages.ForFileFailure(fileOutcome.FailureKind);
             }
 
             // Files installed, but we never got a completed server exchange.
@@ -520,8 +520,6 @@ namespace NutriculaInstaller
             object progressLock = new object();
             object failureLock = new object();
             LocalFileFailureKind worstFailure = LocalFileFailureKind.None;
-            // TEMPORARY diagnostic (see FileInstallOutcome.UnknownDetail's own comment).
-            string worstUnknownDetail = null;
             var inaccessibleTerminals = new List<string>();
 
             var tasks = terminals.Select(async terminal =>
@@ -641,20 +639,6 @@ namespace NutriculaInstaller
                             {
                                 worstFailure = kind;
                             }
-                            // TEMPORARY diagnostic (see FileInstallOutcome.UnknownDetail's
-                            // own comment) - capture the real exception whenever this
-                            // terminal's failure is Unknown, so it can reach the screen.
-                            if (kind == LocalFileFailureKind.Unknown)
-                            {
-                                // Dig into InnerException too (AtomicFile.Replace's
-                                // Win32Exception carries the real, human-readable
-                                // Win32 error text - e.g. "Access is denied" -
-                                // which the outer IOException's own Message does
-                                // not repeat) so the real cause is actually visible
-                                // here, not just the generic wrapper text.
-                                worstUnknownDetail = ex.GetType().Name + " (HResult=0x" + ex.HResult.ToString("X8") + "): " + ex.Message +
-                                    (ex.InnerException != null ? " | inner: " + ex.InnerException.GetType().Name + ": " + ex.InnerException.Message : "");
-                            }
                         }
                         log("FAILED " + terminal.Type + " -> " + terminal.TerminalPath + " | " + ex.Message);
                     }
@@ -765,8 +749,7 @@ namespace NutriculaInstaller
             return new FileInstallOutcome(allSucceeded, allSucceeded ? LocalFileFailureKind.None : worstFailure)
             {
                 CoordinatorWarning = coordinatorWarning,
-                TerminalWarning = terminalWarning,
-                UnknownDetail = allSucceeded ? null : worstUnknownDetail
+                TerminalWarning = terminalWarning
             };
         }
 
@@ -1682,18 +1665,6 @@ namespace NutriculaInstaller
             /// AccessDenied failure instead (AllSucceeded=false).
             /// </summary>
             public string TerminalWarning { get; set; }
-            /// <summary>
-            /// TEMPORARY diagnostic (2026, project owner's own request while
-            /// chasing a real report of the Unknown/generic file-system
-            /// error on an old Windows 8 machine): null unless FailureKind is
-            /// Unknown, in which case this carries the actual exception's
-            /// type name + message, so the on-screen message can show it
-            /// instead of only the generic "unexpected file system error"
-            /// wording. Never parsed, never relied on for any decision -
-            /// purely diagnostic text. Remove this field and its one use in
-            /// Messages.ForFileFailure once the real cause is identified.
-            /// </summary>
-            public string UnknownDetail { get; set; }
             public FileInstallOutcome(bool allSucceeded, LocalFileFailureKind failureKind)
             {
                 AllSucceeded = allSucceeded;
@@ -1857,14 +1828,7 @@ namespace NutriculaInstaller
             // (path length is deliberately NOT a case here anymore - see the
             // LongPath() helper, which makes installation work regardless of
             // how long MetaTrader's own path is, since it cannot be moved.)
-            // TEMPORARY diagnostic (see FileInstallOutcome.UnknownDetail's own
-            // comment): unknownDetail is only ever non-null when kind is
-            // Unknown, and is appended to that one branch's message so the
-            // real exception can be read off the screen during a real report
-            // instead of guessed at. Remove the parameter and the one line
-            // that uses it once the Windows-8 "unexpected file system error"
-            // report is actually diagnosed.
-            public static string ForFileFailure(LocalFileFailureKind kind, string unknownDetail = null)
+            public static string ForFileFailure(LocalFileFailureKind kind)
             {
                 switch (kind)
                 {
@@ -1892,8 +1856,7 @@ namespace NutriculaInstaller
                                "re-download the Nutricula installer (or rebuild it, if you are the developer) and try again.";
                     default:
                         return "Nutricula could not be installed due to an unexpected file system error. " +
-                               "Please close MetaTrader and try again." +
-                               (string.IsNullOrEmpty(unknownDetail) ? "" : "\n\n[Diagnostic - temporary, for the developer: " + unknownDetail + "]");
+                               "Please close MetaTrader and try again.";
                 }
             }
 
@@ -1943,32 +1906,7 @@ namespace NutriculaInstaller
                         return "The Nutricula server could not process the request right now. Please try again in a few minutes.";
                     case ServerFailureKind.ConnectionProblem:
                     default:
-                        // TEMPORARY diagnostic (2026, project owner's own
-                        // request while chasing a real report of "we
-                        // couldn't connect" on a machine whose internet
-                        // connection is otherwise fine - most likely an SSL/
-                        // TLS or certificate-trust failure on an old,
-                        // long-unpatched Windows install, which HttpClient
-                        // also surfaces as a generic connection exception).
-                        // serverResult.Error is the real exception
-                        // HttpClient.SendAsync (or the cancellation path)
-                        // threw - never shown in production for the same
-                        // fingerprinting reason as the rest of this method,
-                        // but genuinely useful here. Remove this block once
-                        // the real cause is identified.
-                        string connDetail = null;
-                        if (serverResult.Error != null)
-                        {
-                            connDetail = serverResult.Error.GetType().Name + ": " + serverResult.Error.Message;
-                            Exception inner = serverResult.Error.InnerException;
-                            while (inner != null)
-                            {
-                                connDetail += " | inner: " + inner.GetType().Name + ": " + inner.Message;
-                                inner = inner.InnerException;
-                            }
-                        }
-                        return "We couldn't connect to the Nutricula server. Please check your internet connection and try again." +
-                               (string.IsNullOrEmpty(connDetail) ? "" : "\n\n[Diagnostic - temporary, for the developer: " + connDetail + "]");
+                        return "We couldn't connect to the Nutricula server. Please check your internet connection and try again.";
                 }
             }
 
