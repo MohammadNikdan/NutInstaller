@@ -1943,7 +1943,32 @@ namespace NutriculaInstaller
                         return "The Nutricula server could not process the request right now. Please try again in a few minutes.";
                     case ServerFailureKind.ConnectionProblem:
                     default:
-                        return "We couldn't connect to the Nutricula server. Please check your internet connection and try again.";
+                        // TEMPORARY diagnostic (2026, project owner's own
+                        // request while chasing a real report of "we
+                        // couldn't connect" on a machine whose internet
+                        // connection is otherwise fine - most likely an SSL/
+                        // TLS or certificate-trust failure on an old,
+                        // long-unpatched Windows install, which HttpClient
+                        // also surfaces as a generic connection exception).
+                        // serverResult.Error is the real exception
+                        // HttpClient.SendAsync (or the cancellation path)
+                        // threw - never shown in production for the same
+                        // fingerprinting reason as the rest of this method,
+                        // but genuinely useful here. Remove this block once
+                        // the real cause is identified.
+                        string connDetail = null;
+                        if (serverResult.Error != null)
+                        {
+                            connDetail = serverResult.Error.GetType().Name + ": " + serverResult.Error.Message;
+                            Exception inner = serverResult.Error.InnerException;
+                            while (inner != null)
+                            {
+                                connDetail += " | inner: " + inner.GetType().Name + ": " + inner.Message;
+                                inner = inner.InnerException;
+                            }
+                        }
+                        return "We couldn't connect to the Nutricula server. Please check your internet connection and try again." +
+                               (string.IsNullOrEmpty(connDetail) ? "" : "\n\n[Diagnostic - temporary, for the developer: " + connDetail + "]");
                 }
             }
 
