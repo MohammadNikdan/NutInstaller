@@ -38,6 +38,12 @@
 #include <windows.h>
 #include <bcrypt.h>
 #include <process.h>
+// 2026 (crash-dump capture): only for the MINIDUMP_EXCEPTION_INFORMATION/
+// MiniDumpWriteDump TYPE DECLARATIONS below - MiniDumpWriteDump itself is
+// resolved at runtime via LoadLibraryA/GetProcAddress (see
+// EnsureCrashDumpHandlerInstalled), so this does NOT add a hard link-time
+// dependency on dbghelp.lib.
+#include <dbghelp.h>
 #include <atomic>
 #include <mutex>
 #include <string>
@@ -8888,7 +8894,7 @@ constexpr unsigned long long COORDINATOR_LAUNCH_THROTTLE_MS = 15000; // ~once / 
 // OURSELVES tell EnsureCoordinatorRunning() to launch the Broker a
 // subsequent pipe-connect failure is still treated as the Broker's own
 // normal, expected start-up gap rather than a real problem - see its use
-// in the pipe-failure handling branch below for the full reasoning. Measured
+// at the DLL_22/DLL_26 branch below for the full reasoning. Measured
 // directly in a real log: a freshly-launched Broker took ~2.6s (41
 // consecutive CreateFileW/GetLastError=2 failures) before its named pipe
 // accepted a connection. This constant is set well above that with
@@ -8905,9 +8911,11 @@ void EnsureCoordinatorRunning()
     unsigned long long last = g_lastCoordinatorLaunchMs.load();
     if (last != 0 && (nowMs - last) < COORDINATOR_LAUNCH_THROTTLE_MS)
     {
+        NUT_PipeDiag("DLL_01", "EnsureCoordinatorRunning: throttled, skipping relaunch attempt");
         return;
     }
     g_lastCoordinatorLaunchMs.store(nowMs);
+    NUT_PipeDiag("DLL_02", "EnsureCoordinatorRunning: throttle cleared, attempting to locate/launch Broker");
 
     // The Installer places the Coordinator (Broker) under
     // %LocalAppData%\Nutricula\LicenseService (a per-user, non-elevated
@@ -8927,11 +8935,13 @@ void EnsureCoordinatorRunning()
         size_t slash = appData.find_last_of(L"\\/");
         if (slash != std::wstring::npos) roots[1] = appData.substr(0, slash) + L"\\Local";
     }
+    bool nutDiagFoundAny = false;
     for (int i = 0; i < 2; ++i)
     {
         if (roots[i].empty()) continue;
         std::wstring path = roots[i] + subPath;
         if (GetFileAttributesW(path.c_str()) == INVALID_FILE_ATTRIBUTES) continue;
+        nutDiagFoundAny = true;
 
         STARTUPINFOW si;
         ZeroMemory(&si, sizeof(si));
@@ -8955,10 +8965,21 @@ void EnsureCoordinatorRunning()
         if (CreateProcessW(path.c_str(), &cmd[0], nullptr, nullptr, FALSE,
                            CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi))
         {
+            NUT_PipeDiag("DLL_03", "EnsureCoordinatorRunning: CreateProcessW succeeded for Broker.exe");
             CloseHandle(pi.hThread);
             CloseHandle(pi.hProcess);
         }
+        else
+        {
+            char detail[96];
+            sprintf(detail, "EnsureCoordinatorRunning: CreateProcessW FAILED, GetLastError=%lu", GetLastError());
+            NUT_PipeDiag("DLL_04", detail);
+        }
         return; // found the install dir; one attempt is enough this cycle
+    }
+    if (!nutDiagFoundAny)
+    {
+        NUT_PipeDiag("DLL_05", "EnsureCoordinatorRunning: Broker.exe not found under either LOCALAPPDATA or APPDATA\\..\\Local candidate root");
     }
 }
 
@@ -8968,9 +8989,13 @@ void EnsureCoordinatorRunning()
 // the caller (architecture point 100: no fallback either way).
 bool QueryCoordinatorStatus(CoordinatorProtocol::StatusReplyMsg& outStatus)
 {
+    unsigned long long nutDiagQT0 = GetTickCount64();
     HANDLE pipe = NamedPipeIpc::ConnectAndVerify(CoordinatorIdentity::PublicKeyXY(), 2000);
     if (pipe == INVALID_HANDLE_VALUE)
     {
+        char detail[80];
+        sprintf(detail, "ConnectAndVerify failed after %llu ms (timeoutMs=2000)", GetTickCount64() - nutDiagQT0);
+        NUT_PipeDiag("DLL_06", detail);
         // Coordinator not reachable right now - best-effort, throttled
         // attempt to start it so it comes up the moment this EA attaches.
         // Fail-safe: returns false regardless, exactly as before.
@@ -8981,22 +9006,45 @@ bool QueryCoordinatorStatus(CoordinatorProtocol::StatusReplyMsg& outStatus)
     CoordinatorProtocol::GetStatusMsg req;
     DWORD written = 0;
     bool ok = WriteFile(pipe, &req, sizeof(req), &written, nullptr) && written == sizeof(req);
+    if (!ok)
+    {
+        char detail[80];
+        sprintf(detail, "WriteFile(GetStatusMsg) failed/short, GetLastError=%lu, written=%lu", GetLastError(), written);
+        NUT_PipeDiag("DLL_07", detail);
+    }
     if (ok)
     {
         DWORD read = 0;
         ok = ReadFile(pipe, &outStatus, sizeof(outStatus), &read, nullptr) &&
              read == sizeof(outStatus) &&
              outStatus.type == CoordinatorProtocol::MessageType::StatusReply;
+        if (!ok)
+        {
+            char detail[112];
+            sprintf(detail, "ReadFile(StatusReplyMsg) failed/invalid, GetLastError=%lu, read=%lu, type=%d",
+                GetLastError(), read, (int)outStatus.type);
+            NUT_PipeDiag("DLL_08", detail);
+        }
     }
     CloseHandle(pipe);
+    if (ok)
+    {
+        char detail[64];
+        sprintf(detail, "status query OK, total %llu ms", GetTickCount64() - nutDiagQT0);
+        NUT_PipeDiag("DLL_09", detail);
+    }
     return ok;
 }
 
 void SendRefreshRequest()
 {
+    unsigned long long nutDiagRT0 = GetTickCount64();
     HANDLE pipe = NamedPipeIpc::ConnectAndVerify(CoordinatorIdentity::PublicKeyXY(), 2000);
     if (pipe == INVALID_HANDLE_VALUE)
     {
+        char detail[80];
+        sprintf(detail, "ConnectAndVerify failed after %llu ms (timeoutMs=2000)", GetTickCount64() - nutDiagRT0);
+        NUT_PipeDiag("DLL_10", detail);
         return; // Coordinator unavailable - no fallback, just try again next Poll
     }
     CoordinatorProtocol::RequestRefreshMsg req;
@@ -9004,8 +9052,14 @@ void SendRefreshRequest()
     WriteFile(pipe, &req, sizeof(req), &written, nullptr);
     CoordinatorProtocol::RefreshAckMsg ack;
     DWORD read = 0;
-    ReadFile(pipe, &ack, sizeof(ack), &read, nullptr); // best-effort; don't care about the ack's content, just draining the reply
+    BOOL ackOk = ReadFile(pipe, &ack, sizeof(ack), &read, nullptr); // best-effort; don't care about the ack's content, just draining the reply
     CloseHandle(pipe);
+    {
+        char detail[80];
+        sprintf(detail, "refresh request sent, ack read=%s, total %llu ms",
+            ackOk ? "ok" : "failed", GetTickCount64() - nutDiagRT0);
+        NUT_PipeDiag("DLL_11", detail);
+    }
 }
 
 // How often a TIER_LICENSED claim actually gets re-run through the real
@@ -9340,6 +9394,94 @@ void EnsureDebuggerWatchdogStarted()
 // still active.
 // =========================================================================
 
+// ============================================================================
+// Crash-dump capture (2026, diagnostic). This DLL has had zero visibility
+// into its own crashes until now - a reported Access Violation gave us
+// nothing but a faulting address, never which function or which call
+// chain. This installs a process-wide SetUnhandledExceptionFilter that
+// writes a small .dmp next to it the moment a crash happens, then falls
+// through to EXCEPTION_CONTINUE_SEARCH so the host process's existing
+// crash behavior (Windows Error Reporting, the process terminating) is
+// completely unchanged - this ONLY adds a dump file beforehand, it never
+// swallows or alters the crash itself. Zero runtime cost unless an
+// exception actually fires.
+//
+// MiniDumpWriteDump is resolved via LoadLibraryA/GetProcAddress rather than
+// linked statically (same pattern as NtQueryInformationProcess in
+// IsDebuggerAttached above) - dbghelp.dll ships with every Windows version
+// this targets, but resolving it dynamically means a missing/blocked
+// dbghelp.dll fails this filter alone rather than the whole DLL.
+//
+// Deliberately MiniDumpNormal (threads, stacks, loaded-module list, basic
+// context) - enough to see the exact faulting instruction, which module/
+// offset it's in, and the call stack of every thread, without the size or
+// time cost of a full memory dump. Only installed once per
+// process (g_crashDumpHandlerInstalled), same one-shot pattern as
+// EnsureDebuggerWatchdogStarted just above - SetUnhandledExceptionFilter
+// itself is idempotent/harmless to call twice, this just avoids the
+// redundant call when multiple charts/EAs call Vela_Boot_84.
+typedef BOOL(WINAPI* NutMiniDumpWriteDumpFn)(
+    HANDLE hProcess, DWORD ProcessId, HANDLE hFile, MINIDUMP_TYPE DumpType,
+    PMINIDUMP_EXCEPTION_INFORMATION ExceptionParam,
+    PMINIDUMP_USER_STREAM_INFORMATION UserStreamParam,
+    PMINIDUMP_CALLBACK_INFORMATION CallbackParam);
+
+LONG WINAPI NutCrashDumpFilter(EXCEPTION_POINTERS* exceptionPointers)
+{
+    // Best-effort, entirely wrapped so a problem writing the dump can never
+    // itself turn into a second-fault/crash-inside-the-crash-handler -
+    // every failure here just falls through to the same
+    // EXCEPTION_CONTINUE_SEARCH as the success path.
+    HMODULE dbghelp = LoadLibraryA("dbghelp.dll");
+    if (dbghelp)
+    {
+        auto miniDumpWriteDump = reinterpret_cast<NutMiniDumpWriteDumpFn>(
+            GetProcAddress(dbghelp, "MiniDumpWriteDump"));
+        if (miniDumpWriteDump)
+        {
+            char tempPath[MAX_PATH];
+            DWORD n = GetTempPathA(MAX_PATH, tempPath);
+            if (n != 0 && n < MAX_PATH)
+            {
+                char dumpPath[MAX_PATH + 128]; // generous margin over the longest possible formatted suffix
+                sprintf(dumpPath,
+                    "%sNutriculaLicenseCheck_crash_pid%lu_tick%llu.dmp",
+                    tempPath,
+                    static_cast<unsigned long>(GetCurrentProcessId()),
+                    static_cast<unsigned long long>(GetTickCount64()));
+                HANDLE file = CreateFileA(dumpPath, GENERIC_WRITE, 0, nullptr,
+                    CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+                if (file != INVALID_HANDLE_VALUE)
+                {
+                    MINIDUMP_EXCEPTION_INFORMATION mei;
+                    mei.ThreadId = GetCurrentThreadId();
+                    mei.ExceptionPointers = exceptionPointers;
+                    mei.ClientPointers = FALSE;
+                    miniDumpWriteDump(GetCurrentProcess(), GetCurrentProcessId(), file,
+                        MiniDumpNormal,
+                        exceptionPointers ? &mei : nullptr, nullptr, nullptr);
+                    CloseHandle(file);
+                }
+            }
+        }
+    }
+    // Never EXCEPTION_EXECUTE_HANDLER: this must not change what happens to
+    // the crashing process, only capture a dump of it first.
+    return EXCEPTION_CONTINUE_SEARCH;
+}
+
+std::atomic<bool> g_crashDumpHandlerInstalled{false};
+
+void EnsureCrashDumpHandlerInstalled()
+{
+    bool expected = false;
+    if (g_crashDumpHandlerInstalled.compare_exchange_strong(expected, true))
+    {
+        SetUnhandledExceptionFilter(NutCrashDumpFilter);
+    }
+}
+// ============================================================================
+
 } // namespace
 
 // Renamed from Nutricula_Initialize (2026 hardening): the old name told
@@ -9349,6 +9491,13 @@ void EnsureDebuggerWatchdogStarted()
 // must use this exact new name.
 extern "C" __declspec(dllexport) int __cdecl Vela_Boot_84()
 {
+    // 2026 (crash-dump capture): installed as literally the first thing
+    // in this function, before even the debugger-gate checks below, so it
+    // covers the entire boot sequence plus everything that runs later on
+    // this process (SetUnhandledExceptionFilter is process-wide, not
+    // scoped to this function) - including Pavo_Sync_85's periodic polls.
+    EnsureCrashDumpHandlerInstalled();
+
     // 2026 hardening (project owner's explicit, stronger requirement):
     // fail closed if a user-mode debugger is already attached at boot,
     // before any machine-identity/public-key loading happens. This used
@@ -9369,6 +9518,7 @@ extern "C" __declspec(dllexport) int __cdecl Vela_Boot_84()
     // would silently turn the fail-closed policy back into a fail-open
     // one. Single clean entry, two exits (the early return below and the
     // fall-through on success), both covered.
+    unsigned long long nutDiagBootT0 = GetTickCount64();
     NUT_VMP_BEGIN_ULTRA("Vela_Boot_84_DebuggerGate");
     if (IsDebuggerAttached())
     {
@@ -9380,6 +9530,11 @@ extern "C" __declspec(dllexport) int __cdecl Vela_Boot_84()
         // already used for "public key missing" just below, so this
         // does not hand an attacker a specific "a debugger was
         // detected" signal.
+        // DIAGNOSTIC NOTE: this log line is dev-only (written to %TEMP%,
+        // never surfaced to the EA/trader) and must be removed along with
+        // every other temporary call site before shipping - it names an
+        // internal gate the end user must never see distinguished.
+        NUT_PipeDiag("DLL_40", "Vela_Boot_84: boot gate failed closed (debugger check) - returning 0");
         NUT_VMP_END();
         return 0;
     }
@@ -9395,6 +9550,7 @@ extern "C" __declspec(dllexport) int __cdecl Vela_Boot_84()
     NUT_VMP_BEGIN_ULTRA("Vela_Boot_84_KernelDebugGate");
     if (IsKernelDebuggerActive())
     {
+        NUT_PipeDiag("DLL_41", "Vela_Boot_84: boot gate failed closed (kernel debugger check) - returning 0");
         NUT_VMP_END();
         return 0;
     }
@@ -9415,8 +9571,14 @@ extern "C" __declspec(dllexport) int __cdecl Vela_Boot_84()
     // Machine ID DLL is reachable, and the identity only ever gates a Tier 2
     // claim (see IsCanonicalBoundToThisMachine).
     EnsureMachineIdentityLoaded();
-    bool pubKeyOk = EnsurePublicKeyLoaded();
-    return pubKeyOk ? 1 : 0;
+    bool nutDiagPubKeyOk = EnsurePublicKeyLoaded();
+    {
+        char detail[80];
+        sprintf(detail, "Vela_Boot_84: boot sequence finished in %llu ms, result=%d",
+            GetTickCount64() - nutDiagBootT0, nutDiagPubKeyOk ? 1 : 0);
+        NUT_PipeDiag("DLL_42", detail);
+    }
+    return nutDiagPubKeyOk ? 1 : 0;
 }
 
 // Thin wrapper - all the actual anti-tamper logic (debugger detection +
@@ -9504,6 +9666,7 @@ extern "C" __declspec(dllexport) void __cdecl Pavo_Sync_85()
         // counted as a completed (failed) poll cycle for Check_Core_Integrity
         // - otherwise a genuinely broken install would sit at "-1: still
         // waiting" forever instead of ever surfacing as an actionable "-2".
+        NUT_PipeDiag("DLL_20", "Pavo_Sync_85: EnsurePublicKeyLoaded() FAILED - zero-tolerance, no server public key available");
         g_pollEverCompleted.store(true);
         g_lastPollOutcomeOk.store(false);
         g_pollInFlight.store(false);
@@ -9511,6 +9674,7 @@ extern "C" __declspec(dllexport) void __cdecl Pavo_Sync_85()
     }
 
     CoordinatorProtocol::StatusReplyMsg status;
+    unsigned long long nutDiagPollT0 = GetTickCount64();
     if (!QueryCoordinatorStatus(status))
     {
         // Coordinator unavailable or failed identity verification.
@@ -9533,6 +9697,7 @@ extern "C" __declspec(dllexport) void __cdecl Pavo_Sync_85()
         bool countsTowardPipeFailStreak = true;
         if (lastVerifiedTick != 0 && (GetTickCount64() - lastVerifiedTick) > static_cast<unsigned long long>(STALE_COORDINATOR_DEGRADE_SECONDS) * 1000ULL)
         {
+            NUT_PipeDiag("DLL_21", "Pavo_Sync_85: QueryCoordinatorStatus failed AND stale-coordinator degrade window exceeded - forcing TIER_FAILED");
             SetTier(TIER_FAILED); // 2026 rule: no silent 2 -> 1 downgrade; only license expiry may do that
         }
         else
@@ -9559,7 +9724,7 @@ extern "C" __declspec(dllexport) void __cdecl Pavo_Sync_85()
             // outage is also not masked by this: once COORDINATOR_LAUNCH_GRACE_MS
             // passes without a successful connection, failures count again
             // exactly as before, and the independent stale-coordinator
-            // degrade check above remains the real backstop that
+            // degrade check above (DLL_21) remains the real backstop that
             // still forces TIER_FAILED if no verified answer arrives for an
             // extended time, regardless of how many individual polls this
             // short window exempts.
@@ -9569,6 +9734,17 @@ extern "C" __declspec(dllexport) void __cdecl Pavo_Sync_85()
             if (justLaunchedBroker)
             {
                 countsTowardPipeFailStreak = false;
+                char detail[128];
+                sprintf(detail, "Pavo_Sync_85: QueryCoordinatorStatus failed %llu ms after we launched the Broker - within grace window, uncounted",
+                    GetTickCount64() - lastLaunchMs);
+                NUT_PipeDiag("DLL_37", detail);
+            }
+            else
+            {
+                char detail[96];
+                sprintf(detail, "Pavo_Sync_85: QueryCoordinatorStatus failed, pipeFailStreak will become %d, took %llu ms",
+                    g_pipeFailStreak.load() + 1, GetTickCount64() - nutDiagPollT0);
+                NUT_PipeDiag("DLL_22", detail);
             }
         }
         g_pending.store(PENDING_COMM_FAIL);
@@ -9601,21 +9777,28 @@ extern "C" __declspec(dllexport) void __cdecl Pavo_Sync_85()
     // "Broker crash-recovery/relaunch", escalating toward -2 exactly like a
     // real pipe failure) - but a Broker that is continuously alive and
     // perfectly healthy leaves m_state.pending stuck at PENDING_WARMING_UP
-    // for its ENTIRE first real integrity measurement pass (confirmed by
-    // profiling to run many seconds), so a perfectly healthy Broker was
-    // being reported to the EA as -2 (TIER_FAILED) purely because that
-    // first measurement was slow - not
+    // for its ENTIRE first real integrity measurement pass (confirmed via
+    // RuntimeMeasure.cpp's RM_20/21/22 diagnostics to run many seconds), so a
+    // perfectly healthy Broker was being reported to the EA as -2
+    // (TIER_FAILED) purely because that first measurement was slow - not
     // because anything was actually wrong. The one thing this gate used to
     // catch - a Broker being killed and relaunched in a tight loop - now
     // just leaves the EA sitting at the existing harmless "-1: still
-    // waiting" state indefinitely (see the no-verified-response branch
-    // below / g_tier left untouched) instead of ever being told -2 for
-    // it: a strictly safer failure mode
+    // waiting" state indefinitely (see DLL_35 / g_tier left untouched)
+    // instead of ever being told -2 for it: a strictly safer failure mode
     // than wrongly asserting TIER_FAILED. Deliberately still never latches
     // g_pollEverCompleted and never touches g_pipeFailStreak here, on either
     // branch - this block's whole point is to never count as a failure.
     if (status.pending == PENDING_WARMING_UP)
     {
+        if (!g_pollEverCompleted.load())
+        {
+            NUT_PipeDiag("DLL_23", "Pavo_Sync_85: PENDING_WARMING_UP on this process's very first poll cycle - staying at -1, uncounted");
+        }
+        else
+        {
+            NUT_PipeDiag("DLL_24", "Pavo_Sync_85: PENDING_WARMING_UP on a LATER poll cycle - staying at -1, uncounted (no longer folded into pipeFailStreak)");
+        }
         g_pollInFlight.store(false);
         return;
     }
@@ -9624,6 +9807,12 @@ extern "C" __declspec(dllexport) void __cdecl Pavo_Sync_85()
     // a real answer (not a warm-up placeholder) - reset the
     // consecutive-failure streak immediately (a single success fully
     // clears any prior run of hiccups).
+    {
+        char detail[80];
+        sprintf(detail, "Pavo_Sync_85: pipe answered OK (not warm-up) after %llu ms, status.tier=%d, status.pending=%d",
+            GetTickCount64() - nutDiagPollT0, (int)status.tier, (int)status.pending);
+        NUT_PipeDiag("DLL_25", detail);
+    }
     g_pipeFailStreak.store(0);
 
     // Ask the Coordinator to ensure a refresh happens if one is due - a
@@ -9652,6 +9841,12 @@ extern "C" __declspec(dllexport) void __cdecl Pavo_Sync_85()
         std::string canonical(status.canonical, status.canonicalLen);
         std::string signatureB64(status.signatureB64, status.signatureLen);
         bool sigOk = ServerSignatureVerify::Verify(canonical, signatureB64);
+        {
+            char detail[80];
+            sprintf(detail, "Pavo_Sync_85: status carried a canonical/signature, sigOk=%s, status.tier=%d",
+                sigOk ? "true" : "false", (int)status.tier);
+            NUT_PipeDiag("DLL_26", detail);
+        }
 
         const unsigned long long canonicalRequestedAt =
             sigOk ? ParseCanonicalUnsigned(canonical, "requested_at") : 0;
@@ -9692,6 +9887,12 @@ extern "C" __declspec(dllexport) void __cdecl Pavo_Sync_85()
                 // so no later re-verification can resurrect it, and
                 // Check_Core_Integrity reports it as "-2" immediately.
                 {
+                    char detail[112];
+                    sprintf(detail, "Pavo_Sync_85: TIER_LICENSED answer REJECTED locally - boundToThisMachine=%s, freshEnough=%s",
+                        boundToThisMachine ? "true" : "false", freshEnough ? "true" : "false");
+                    NUT_PipeDiag("DLL_27", detail);
+                }
+                {
                     std::lock_guard<NutMutex> lock(g_verifiedCacheMutex);
                     g_verifiedCanonical.clear();
                     g_verifiedSignatureB64.clear();
@@ -9728,6 +9929,7 @@ extern "C" __declspec(dllexport) void __cdecl Pavo_Sync_85()
             }
             SetTier(TIER_LICENSED);
             g_everGotRealAnswer.store(true);
+            NUT_PipeDiag("DLL_28", "Pavo_Sync_85: TIER_LICENSED answer ACCEPTED (bound to this machine, fresh, signature OK)");
             // Force GetLicenseTier's own rate-limited cache to re-check
             // immediately on the next call rather than serving a stale
             // cached result from before this fresh verification.
@@ -9737,6 +9939,7 @@ extern "C" __declspec(dllexport) void __cdecl Pavo_Sync_85()
         {
             SetTier(TIER_FREE);
             g_everGotRealAnswer.store(true);
+            NUT_PipeDiag("DLL_29", "Pavo_Sync_85: signed TIER_FREE answer");
             std::lock_guard<NutMutex> lock(g_verifiedCacheMutex);
             g_verifiedTierClaim = TIER_FREE;
         }
@@ -9744,11 +9947,13 @@ extern "C" __declspec(dllexport) void __cdecl Pavo_Sync_85()
         {
             SetTier(TIER_UPDATE_REQUIRED);
             g_everGotRealAnswer.store(true);
+            NUT_PipeDiag("DLL_30", "Pavo_Sync_85: signed TIER_UPDATE_REQUIRED answer");
             std::lock_guard<NutMutex> lock(g_verifiedCacheMutex);
             g_verifiedTierClaim = TIER_UPDATE_REQUIRED;
         }
         else if (sigOk && status.tier == TIER_BLOCKED)
         {
+            NUT_PipeDiag("DLL_31", "Pavo_Sync_85: signed TIER_BLOCKED answer (clone detection tripped) - overriding any cached TIER_LICENSED");
             // BUG FIX (2026) - see TIER_BLOCKED's own declaration comment
             // above. A signature-verified "blocked" Reject (clone detection
             // tripped) must immediately override any previously-cached Tier
@@ -9776,6 +9981,7 @@ extern "C" __declspec(dllexport) void __cdecl Pavo_Sync_85()
             // this cycle. Still surfaced via g_lastPollOutcomeOk below so
             // Check_Core_Integrity can report it immediately (as "-2"),
             // even though g_tier itself is deliberately left untouched.
+            NUT_PipeDiag("DLL_32", "Pavo_Sync_85: Coordinator reply signature FAILED verification - zero-tolerance, reporting -2 this cycle");
             g_lastPollOutcomeOk.store(false);
             g_pollEverCompleted.store(true);
             g_pending.store(status.pending);
@@ -9794,6 +10000,7 @@ extern "C" __declspec(dllexport) void __cdecl Pavo_Sync_85()
         // trustworthy answer FROM the system (not a comms/verification
         // failure OF the polling mechanism itself) - Check_Core_Integrity
         // folds this into "-2" separately, via g_tier, not via this flag.
+        NUT_PipeDiag("DLL_33", "Pavo_Sync_85: status.tier == TIER_FAILED (unsigned by design, attempts exhausted on Coordinator side)");
         SetTier(TIER_FAILED);
         g_everGotRealAnswer.store(true);
         g_lastPollOutcomeOk.store(true);
@@ -9803,6 +10010,7 @@ extern "C" __declspec(dllexport) void __cdecl Pavo_Sync_85()
         // Unsigned by design, like TIER_FAILED: it only ever LOWERS what this
         // install may do (nobody gains by forging it), and the Broker itself
         // was identity-verified by QueryCoordinatorStatus above. Latched.
+        NUT_PipeDiag("DLL_34", "Pavo_Sync_85: status.tier == TIER_FILE_LOCKED (latched)");
         g_fileLockedLatched.store(true);
         SetTier(TIER_FILE_LOCKED);
         g_everGotRealAnswer.store(true);
@@ -9826,11 +10034,11 @@ extern "C" __declspec(dllexport) void __cdecl Pavo_Sync_85()
         // status.tier==TIER_FREE alone cannot. This changes nothing for any
         // tier that DOES require proof: LICENSED/UPDATE_REQUIRED/BLOCKED all
         // still fall through to the signature-checked branches above (or to
-        // the no-verified-response branch below, untrusted, if ever claimed
-        // without one) - only this specific, harmless "confirmed free"
-        // case is unblocked.
+        // DLL_35 below, untrusted, if ever claimed without one) - only this
+        // specific, harmless "confirmed free" case is unblocked.
         SetTier(TIER_FREE);
         g_everGotRealAnswer.store(true);
+        NUT_PipeDiag("DLL_38", "Pavo_Sync_85: unsigned TIER_FREE confirmed genuine (Coordinator completed a real free_checkin round) - accepted without signature, by design");
         g_lastPollOutcomeOk.store(true);
     }
     else
@@ -9844,9 +10052,15 @@ extern "C" __declspec(dllexport) void __cdecl Pavo_Sync_85()
         // claims something that would need a signature and doesn't have
         // one. Not a failure of anything - g_tier is correctly left at its
         // current value (TIER_FREE by default).
+        NUT_PipeDiag("DLL_35", "Pavo_Sync_85: no verified response available yet (canonicalLen/signatureLen==0, tier not FAILED/FILE_LOCKED/confirmed-FREE) - idle, g_tier left untouched");
         g_lastPollOutcomeOk.store(true);
     }
 
+    {
+        char detail[64];
+        sprintf(detail, "Pavo_Sync_85: poll cycle complete, total %llu ms", GetTickCount64() - nutDiagPollT0);
+        NUT_PipeDiag("DLL_36", detail);
+    }
     g_pollEverCompleted.store(true);
     g_pending.store(status.pending);
     g_pollInFlight.store(false);
