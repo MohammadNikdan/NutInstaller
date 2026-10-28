@@ -62,20 +62,32 @@ namespace NutriculaInstaller
             }
             TryDelete(tempPath);
             // 2026 fix (real report): this exception used to carry the real
-            // Win32 error ONLY inside its Win32Exception InnerException,
-            // never on the IOException's own HResult. ClassifyLocalFileException
+            // Win32 error ONLY inside a Win32Exception InnerException, never
+            // on the IOException's own HResult. ClassifyLocalFileException
             // (InstallerService.cs) classifies purely by `io.HResult & 0xFFFF`,
             // so every single Replace() failure - a disk-full, an
             // access-denied, a sharing violation that outlasted the retry
             // loop above, anything - was silently misreported to the user as
             // the generic "unexpected file system error" message, regardless
-            // of what actually went wrong. Setting HResult here to the
-            // standard Win32-to-HRESULT mapping (the same 0x8007xxxx form
-            // .NET itself uses for Win32-sourced IOExceptions) is what makes
-            // that classification actually work.
-            IOException ex = new IOException("Could not replace the file atomically: " + finalPath, new Win32Exception(lastError));
-            ex.HResult = unchecked((int)(0x80070000 | (uint)(lastError & 0xFFFF)));
-            throw ex;
+            // of what actually went wrong.
+            //
+            // Exception.HResult has a PROTECTED setter under the .NET
+            // Framework this project actually targets/builds against (CS0272
+            // - it only became publicly settable later, under .NET
+            // Core/5+), so it cannot be assigned from here the way it could
+            // on a newer runtime. IOException's own (string, int) constructor
+            // is the .NET Framework-compatible way to set a real HRESULT at
+            // construction time instead - same standard Win32-to-HRESULT
+            // mapping (0x8007xxxx) .NET itself uses for Win32-sourced
+            // IOExceptions, which is what makes that classification actually
+            // work. The human-readable Win32 message (e.g. "Access is
+            // denied") is folded into the message text itself, since there
+            // is no InnerException slot on this constructor to carry it.
+            string win32Message = new Win32Exception(lastError).Message;
+            int hresult = unchecked((int)(0x80070000 | (uint)(lastError & 0xFFFF)));
+            throw new IOException(
+                "Could not replace the file atomically: " + finalPath + " (" + win32Message + ")",
+                hresult);
         }
 
         /// <summary>Atomically writes <paramref name="data"/> to <paramref name="finalPath"/>.</summary>
