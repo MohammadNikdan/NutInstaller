@@ -658,7 +658,7 @@ namespace NutriculaInstaller
                 UseCircularIcon = false,
                 TextColor = UiHelpers.TextMuted,
                 Visible = false,
-                CustomIconDrawer = UiHelpers.DrawCancelGlyph
+                CustomIconDrawer = (g, box, color) => UiHelpers.DrawNudgedUp(UiHelpers.DrawCancelGlyph, g, box, color)
             };
             uninstallButton.Click += delegate { OnUninstallTapped(); };
             footer.Controls.Add(uninstallButton);
@@ -795,7 +795,7 @@ namespace NutriculaInstaller
             };
             credentialsCard.Controls.Add(helperLabel);
 
-            backButton = new MaterialButton("Back", UiHelpers.GlyphBack, ButtonKind.Outline) { Location = new Point(0, 308), Size = new Size(140, 46), CustomIconDrawer = UiHelpers.DrawBackArrowGlyph };
+            backButton = new MaterialButton("Back", UiHelpers.GlyphBack, ButtonKind.Outline) { Location = new Point(0, 308), Size = new Size(140, 46), CustomIconDrawer = (g, box, color) => UiHelpers.DrawNudgedUp(UiHelpers.DrawBackArrowGlyph, g, box, color) };
             backButton.Click += delegate { ShowPage(pageSelect); };
             page.Controls.Add(backButton);
 
@@ -804,7 +804,7 @@ namespace NutriculaInstaller
                 Location = new Point(PageWidth - 170, 308),
                 Size = new Size(170, 46),
                 FillColor = UiHelpers.Success,
-                CustomIconDrawer = UiHelpers.DrawDownloadGlyph
+                CustomIconDrawer = (g, box, color) => UiHelpers.DrawNudgedUp(UiHelpers.DrawDownloadGlyph, g, box, color)
             };
             installButton.Click += async delegate { await OnInstallTappedAsync(); };
             page.Controls.Add(installButton);
@@ -959,7 +959,7 @@ namespace NutriculaInstaller
             {
                 Location = new Point((PageWidth - 180) / 2, 164),
                 Size = new Size(180, 46),
-                CustomIconDrawer = UiHelpers.DrawCheckGlyph
+                CustomIconDrawer = (g, box, color) => UiHelpers.DrawNudgedUp(UiHelpers.DrawCheckGlyph, g, box, color)
             };
             finishButton.Click += delegate { Close(); };
             resultPanel.Controls.Add(finishButton);
@@ -968,7 +968,7 @@ namespace NutriculaInstaller
             {
                 Size = new Size(170, 46),
                 Visible = false,
-                CustomIconDrawer = UiHelpers.DrawSyncGlyph
+                CustomIconDrawer = (g, box, color) => UiHelpers.DrawNudgedUp(UiHelpers.DrawSyncGlyph, g, box, color)
             };
             tryAgainButton.Click += delegate { OnTryAgainTapped(); };
             resultPanel.Controls.Add(tryAgainButton);

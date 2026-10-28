@@ -537,6 +537,23 @@ namespace NutriculaInstaller
             }
         }
 
+        /// <summary>
+        /// Wraps an existing glyph drawer so the icon is drawn slightly higher
+        /// inside its box (7% of the box height). Used only at specific button
+        /// call sites (Back / Try Again / Install / Uninstall / Close-Finish)
+        /// where that small upward nudge was requested - this intentionally
+        /// does NOT touch the shared Draw*Glyph functions themselves, because
+        /// DrawCheckGlyph/DrawCancelGlyph are also used by ResultBadge (the
+        /// success/failure badge shown after install finishes), which must
+        /// stay exactly as it was, unmoved.
+        /// </summary>
+        public static void DrawNudgedUp(Action<Graphics, RectangleF, Color> inner, Graphics g, RectangleF box, Color color)
+        {
+            float dy = box.Height * 0.07f;
+            RectangleF shifted = new RectangleF(box.X, box.Y - dy, box.Width, box.Height);
+            inner(g, shifted, color);
+        }
+
         /// <summary>A mail envelope (rectangle outline with a V-shaped flap), centered in `box`.</summary>
         public static void DrawMailGlyph(Graphics g, RectangleF box, Color color)
         {
