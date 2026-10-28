@@ -61,7 +61,32 @@ namespace NutriculaInstaller
                 Thread.Sleep(250);
             }
             TryDelete(tempPath);
-            throw new IOException("Could not replace the file atomically: " + finalPath, new Win32Exception(lastError));
+            // 2026 fix (real report): this exception used to carry the real
+            // Win32 error ONLY inside a Win32Exception InnerException, never
+            // on the IOException's own HResult. ClassifyLocalFileException
+            // (InstallerService.cs) classifies purely by `io.HResult & 0xFFFF`,
+            // so every single Replace() failure - a disk-full, an
+            // access-denied, a sharing violation that outlasted the retry
+            // loop above, anything - was silently misreported to the user as
+            // the generic "unexpected file system error" message, regardless
+            // of what actually went wrong, on any Windows version.
+            //
+            // Exception.HResult has a PROTECTED setter under the .NET
+            // Framework this project builds against (it only became publicly
+            // settable later, under .NET Core/5+), so it cannot be assigned
+            // after construction here. IOException's own (string, int)
+            // constructor sets a real HRESULT at construction time instead -
+            // the same standard Win32-to-HRESULT mapping (0x8007xxxx) .NET
+            // itself uses for Win32-sourced IOExceptions - which is what
+            // makes that classification actually work. The human-readable
+            // Win32 message (e.g. "Access is denied") is folded into the
+            // message text itself, since this constructor has no
+            // InnerException slot to carry it separately.
+            string win32Message = new Win32Exception(lastError).Message;
+            int hresult = unchecked((int)(0x80070000 | (uint)(lastError & 0xFFFF)));
+            throw new IOException(
+                "Could not replace the file atomically: " + finalPath + " (" + win32Message + ")",
+                hresult);
         }
 
         /// <summary>Atomically writes <paramref name="data"/> to <paramref name="finalPath"/>.</summary>
