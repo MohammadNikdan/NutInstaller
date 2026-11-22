@@ -61,6 +61,16 @@ jobs:
           chmod +x appimagetool
 
       - name: Build the AppImage
+        env:
+          # appimagetool normally detects the target architecture by
+          # inspecting a real ELF binary inside the AppDir. Our AppDir has
+          # no such binary - AppRun is a shell script, and the actual
+          # payload (Resources/Nutricula Setup.exe) is a Windows PE file,
+          # not ELF - so detection fails ("Unable to guess the
+          # architecture"). This AppImage only runs on x86_64 Linux hosts
+          # anyway (Nutricula's MT4/MT5 + Wine stack targets x86_64), so
+          # the architecture is simply stated explicitly here instead.
+          ARCH: x86_64
         run: |
           set -e
           ./appimagetool --appimage-extract-and-run "build/Nutricula Setup.AppDir" "build/Nutricula Setup.AppImage"
