@@ -5,6 +5,9 @@ using System.IO;
 using System.Linq;
 using System.Net;
 using System.Net.Http;
+using System.Net.Security;
+using System.Net.Sockets;
+using System.Security.Authentication;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -84,6 +87,37 @@ namespace NutriculaInstaller
                 result.LicenseFileOperationFinished = mode == InstallMode.Free;
                 result.LicenseSucceeded = mode == InstallMode.Free;
                 result.OverallSuccess = false;
+                return result;
+            }
+
+            /* 2026 feature (real report): this runs before ANYTHING else
+               network- or file-related, in every mode including Free. A
+               real-world test on an old Windows 8.1 machine showed Free
+               "succeeding" with files copied but the EA unable to check in
+               at all, and the same underlying TLS problem would otherwise
+               let Premium/Transfer get as far as sending a purchase_key/
+               transfer_key to a server it cannot actually reach reliably.
+               A genuine TLS-handshake failure here (see
+               IsTlsHandshakeFailure) now stops the WHOLE install before a
+               single file is copied or a single key is ever sent -
+               nothing partial, nothing left behind.
+
+               This deliberately does NOT veto on every connectivity
+               problem - only on this exact signature. No internet at all,
+               a slow/unreachable server, a firewall: every other outcome
+               returns false here, and the rest of RunAsync behaves
+               exactly as it always has (Free stays fully local and
+               offline-tolerant; Premium/Transfer still get their own real
+               attempt and their own existing error messages further
+               down). */
+            if (await HasTlsHandshakeProblemAsync(token, log).ConfigureAwait(true))
+            {
+                result.FilesInstalled = false;
+                result.ServerRequestFinished = false;
+                result.LicenseFileOperationFinished = false;
+                result.LicenseSucceeded = false;
+                result.OverallSuccess = false;
+                result.FinalMessage = Messages.SecureConnectionPreCheckFailed;
                 return result;
             }
 
@@ -1243,6 +1277,105 @@ namespace NutriculaInstaller
             return LocalFileFailureKind.Unknown;
         }
 
+        /// <summary>
+        /// A test TLS handshake against the license server's own host - no
+        /// HTTP request at all, just enough of a raw connection to find out
+        /// whether this machine's TLS stack can actually complete a modern
+        /// handshake with it. Uses the exact same protocol set
+        /// RequestLicenseAsync itself requests (Tls12 | Tls11 | Tls, see its
+        /// ServicePointManager.SecurityProtocol line) so a pass/fail here
+        /// genuinely predicts what RequestLicenseAsync would see, without
+        /// needing a real HTTP exchange or any dedicated server-side
+        /// endpoint. The host is taken from PremiumUrl purely as this
+        /// installer's one configured license-server address - Free and
+        /// Transfer talk to the very same server, just different paths, so
+        /// the same host/TLS configuration applies to all three modes.
+        ///
+        /// Returns true ONLY for the specific "Could not create SSL/TLS
+        /// secure channel" signature (see IsTlsHandshakeFailure) - every
+        /// other outcome (no connection at all, DNS failure, a slow or
+        /// unreachable host) returns false, since this check's one job is
+        /// to catch THIS exact, previously-misdiagnosed failure, not to
+        /// become a general connectivity gate for an install that has
+        /// always tolerated being offline (Free) or already handles its
+        /// own connection errors further down (Premium/Transfer).
+        /// </summary>
+        private static async Task<bool> HasTlsHandshakeProblemAsync(CancellationToken token, Action<string> log)
+        {
+            string host;
+            int port = 443;
+            try
+            {
+                Uri uri = new Uri(PremiumUrl);
+                host = uri.Host;
+                if (!uri.IsDefaultPort) port = uri.Port;
+            }
+            catch (Exception)
+            {
+                return false; // this installer's own configured URL couldn't even be parsed - not this check's problem
+            }
+
+            try
+            {
+                using (TcpClient tcpClient = new TcpClient())
+                {
+                    Task connectTask = tcpClient.ConnectAsync(host, port);
+                    if (await Task.WhenAny(connectTask, Task.Delay(8000, token)).ConfigureAwait(true) != connectTask)
+                    {
+                        return false; // timed out - no connection at all, not this check's job
+                    }
+                    await connectTask.ConfigureAwait(true); // observe + rethrow any connect fault
+
+                    using (SslStream sslStream = new SslStream(tcpClient.GetStream(), false))
+                    {
+                        await sslStream.AuthenticateAsClientAsync(
+                            host,
+                            null,
+                            SslProtocols.Tls12 | SslProtocols.Tls11 | SslProtocols.Tls,
+                            false).ConfigureAwait(true);
+                    }
+                }
+                return false;
+            }
+            catch (Exception ex)
+            {
+                if (!IsTlsHandshakeFailure(ex)) return false;
+                if (log != null) log("Secure-connection pre-check failed: " + ex.Message);
+                return true;
+            }
+        }
+
+        /// <summary>
+        /// True when the exception chain is this specific, well-known
+        /// failure: "Could not create SSL/TLS secure channel". HttpClient
+        /// (and SslStream directly) always wraps the real cause - usually
+        /// an AuthenticationException - inside an outer exception, so this
+        /// walks the whole InnerException chain rather than checking only
+        /// the outermost one.
+        ///
+        /// This is the known signature of an old Windows/.NET TLS stack
+        /// that cannot complete a modern handshake with a current
+        /// TLS1.2-only server - whatever the precise underlying cause on
+        /// that machine (an outdated cipher-suite set, a missing root
+        /// certificate, .NET Framework's own SchUseStrongCrypto defaulting
+        /// off on pre-4.6 versions) - this detection only needs to
+        /// recognize the one symptom they all share, not diagnose which of
+        /// them it is.
+        /// </summary>
+        private static bool IsTlsHandshakeFailure(Exception ex)
+        {
+            for (Exception current = ex; current != null; current = current.InnerException)
+            {
+                if (current is AuthenticationException) return true;
+                if (current.Message != null &&
+                    current.Message.IndexOf("secure channel", StringComparison.OrdinalIgnoreCase) >= 0)
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+
         private async Task<ServerResult> RequestLicenseAsync(
             InstallMode mode,
             string email,
@@ -1408,7 +1541,14 @@ namespace NutriculaInstaller
             }
             catch (Exception ex)
             {
-                return ServerResult.Failed(ServerFailureKind.ConnectionProblem, ex);
+                // Defense in depth - HasTlsHandshakeProblemAsync already
+                // catches this before RunAsync ever reaches this call, but
+                // classifying it correctly here too means the message
+                // shown is still accurate on the rare chance the condition
+                // changed between the two checks.
+                return ServerResult.Failed(
+                    IsTlsHandshakeFailure(ex) ? ServerFailureKind.TlsHandshakeFailed : ServerFailureKind.ConnectionProblem,
+                    ex);
             }
         }
 
@@ -1585,6 +1725,7 @@ namespace NutriculaInstaller
         {
             None,
             ConnectionProblem,
+            TlsHandshakeFailed,
             Timeout,
             HttpError,
             EmptyResponse,
@@ -1824,6 +1965,16 @@ namespace NutriculaInstaller
                 "No MetaTrader 4 or MetaTrader 5 installation was found on this computer. " +
                 "Please install MetaTrader first, then run this installer again.";
 
+            // Shown by RunAsync's own TLS pre-check (see
+            // HasTlsHandshakeProblemAsync), before any file is copied or any
+            // purchase_key/transfer_key is sent, in every install mode
+            // including Free. Also reused as the ForIncompleteServerRequest
+            // fallback for ServerFailureKind.TlsHandshakeFailed, in the rare
+            // case RequestLicenseAsync itself hits this signature instead.
+            public const string SecureConnectionPreCheckFailed =
+                "Secure connection failed. This typically indicates that Windows needs to be " +
+                "updated. Please update Windows and try again.";
+
             // ---- Local file installation failures ----
             // (path length is deliberately NOT a case here anymore - see the
             // LongPath() helper, which makes installation work regardless of
@@ -1897,6 +2048,8 @@ namespace NutriculaInstaller
                         return "This installer file appears to be corrupted or damaged and cannot be used. Please " +
                                "download a fresh copy of the Nutricula installer from the official Nutricula " +
                                "website: www.Nutricula.Trade";
+                    case ServerFailureKind.TlsHandshakeFailed:
+                        return Messages.SecureConnectionPreCheckFailed;
                     case ServerFailureKind.Timeout:
                         return "The Nutricula server did not respond in time. Please check your internet connection and try again.";
                     case ServerFailureKind.HttpError:
