@@ -59,6 +59,13 @@ function nutricula_validate_config(array $config): void
     $requireString($config, ['db', 'charset']);
     $requireString($config, ['edd', 'api_key']);
     $requireString($config, ['edd', 'api_token']);
+    // 2026 feature: second EDD store (the Persian-language site,
+    // fa.nutricula.trade) - see nutricula_fetch_edd_sales() below for how
+    // both stores are checked together. Required with the same fail-
+    // closed treatment as the primary 'edd' block above - an incomplete
+    // deployment must never silently check only one store.
+    $requireString($config, ['edd_persian', 'api_key']);
+    $requireString($config, ['edd_persian', 'api_token']);
     $requireString($config, ['server_signing_private_key_path']);
     $requireString($config, ['transport_key_path']);
 
@@ -1532,38 +1539,167 @@ function nutricula_server_sign(string $canonical, array $config): string
 const NUTRICULA_MAX_EDD_RESPONSE_BYTES = 262144; // 256KB
 const NUTRICULA_TRANSFER_KEY_PRODUCT_ID = 11348;
 
-/** Fetches this email's EDD sales list once - shared by every code path that
-    needs to check something against it (a license purchase, a transfer-key
-    purchase, or both in the same request), so a single caller checking both
-    only makes one outbound EDD call, not two. */
+/* 2026 feature (project owner's request): TWO EDD stores are now checked
+   for every signup/transfer - the original site (nutricula.trade) and a
+   second, Persian-language site (fa.nutricula.trade) selling the exact
+   same products. The project owner confirmed every EDD product ID,
+   INCLUDING the Transfer Key product (11348), means the same thing on
+   both sites - so no separate product/duration mapping is needed per
+   store, and a transfer_key from one site is accepted together with a
+   purchase_key from the OTHER site with no restriction (both are looked
+   up independently against the same merged, both-store list below).
+   Every sale fetched is tagged with which store it came from purely so
+   nutricula_computer_based_signup.php can record it on
+   nutricula_licenses.license_source for reporting - this tag is NEVER
+   used in any authorization decision, here or anywhere downstream. */
+const NUTRICULA_EDD_SOURCE_GLOBAL = 'global';
+const NUTRICULA_EDD_SOURCE_IRAN = 'iran';
+
+/** The only two things that differ between the two EDD stores being
+    checked: each one's own host, and which config block holds its
+    key/token. Everything else (URL path, query shape, response format)
+    is identical, since both are the same WordPress/EDD software. */
+function nutricula_edd_stores(): array
+{
+    return [
+        NUTRICULA_EDD_SOURCE_GLOBAL => ['host' => 'nutricula.trade', 'config_key' => 'edd'],
+        NUTRICULA_EDD_SOURCE_IRAN => ['host' => 'fa.nutricula.trade', 'config_key' => 'edd_persian'],
+    ];
+}
+
+/** Fetches this email's EDD sales list from BOTH stores AT ONCE (via
+    curl_multi - two genuinely parallel requests, not one after the
+    other, so checking two stores never doubles this request's latency),
+    merges the two lists into one, and tags every sale with which store
+    it came from (key '_nutricula_source', one of the NUTRICULA_EDD_
+    SOURCE_* constants above - see nutricula_find_edd_sale_in() /
+    nutricula_find_edd_transfer_purchase_in(), which pass this straight
+    through in their own return value).
+
+    curl_multi_exec's run loop below always waits for EVERY handle to
+    either finish or hit its own 20-second timeout before this function
+    moves on - it never stops early just because one store answered
+    first, and both lists are always merged when both succeed.
+    Deliberately resilient to only ONE store being unreachable: if
+    either store's call fails (network error, bad HTTP status, invalid
+    JSON), that single failure is logged server-side and silently
+    ignored, and the OTHER store's sales are used alone - a temporary
+    problem with one store (e.g. the newer Persian site having an
+    outage) must never block a customer whose purchase is on the other,
+    perfectly healthy store. This function throws (same exception type/
+    message as before this feature, so every existing upstream
+    catch (RuntimeException $e) keeps behaving exactly as it already
+    does) only if BOTH stores fail.
+
+    Shared by every code path that needs to check something against this
+    list (a license purchase, a transfer-key purchase, or both in the
+    same request), so a single caller checking both still costs one
+    round of EDD calls total, not two per store. */
 function nutricula_fetch_edd_sales(array $config, string $email): array
 {
-    // The EDD store is the main WordPress site (nutricula.trade). The API
-    // is served by the store itself, so this host must stay the apex domain
-    // (login.nutricula.trade only serves the license endpoints). If the EDD
-    // store is ever moved elsewhere, correct this URL manually.
-    $url =
-        'https://nutricula.trade/edd-api/sales/' .
-        '?key=' . urlencode((string)$config['edd']['api_key']) .
-        '&token=' . urlencode((string)$config['edd']['api_token']) .
-        '&number=100&email=' . urlencode($email);
+    $stores = nutricula_edd_stores();
 
-    $ctx = stream_context_create([
-        'http' => [
-            'timeout' => 20,
-            'ignore_errors' => true,
-        ],
-    ]);
+    $multiHandle = curl_multi_init();
+    $handles = [];
+    $bodies = [];
+    $byteCounts = [];
 
-    /* Cap how much of the response we'll ever read (see constant above). */
-    $json = @file_get_contents($url, false, $ctx, 0, NUTRICULA_MAX_EDD_RESPONSE_BYTES);
-    if ($json === false) throw new RuntimeException('EDD request failed.');
+    foreach ($stores as $source => $store) {
+        $apiKey = (string)($config[$store['config_key']]['api_key'] ?? '');
+        $apiToken = (string)($config[$store['config_key']]['api_token'] ?? '');
+        // If the EDD store is ever moved to a different host, correct it
+        // in nutricula_edd_stores() above.
+        $url =
+            'https://' . $store['host'] . '/edd-api/sales/' .
+            '?key=' . urlencode($apiKey) .
+            '&token=' . urlencode($apiToken) .
+            '&number=100&email=' . urlencode($email);
 
-    $data = json_decode($json, true);
-    if (!is_array($data) || !isset($data['sales']) || !is_array($data['sales'])) {
-        throw new RuntimeException('EDD response is invalid.');
+        $bodies[$source] = '';
+        $byteCounts[$source] = 0;
+
+        $handle = curl_init($url);
+        curl_setopt_array($handle, [
+            CURLOPT_TIMEOUT => 20,
+            CURLOPT_CONNECTTIMEOUT => 20,
+            CURLOPT_FOLLOWLOCATION => false,
+            CURLOPT_PROTOCOLS => CURLPROTO_HTTPS,
+            CURLOPT_SSL_VERIFYPEER => true,
+            CURLOPT_SSL_VERIFYHOST => 2,
+            // Body is accumulated here (not via CURLOPT_RETURNTRANSFER) so
+            // the same response-size cap the old file_get_contents() length
+            // argument enforced can still be enforced mid-transfer: once
+            // this store's running total exceeds the cap, returning fewer
+            // bytes than were handed to this callback tells curl to abort
+            // THAT transfer immediately (CURLE_WRITE_ERROR) - it does not
+            // affect the other store's handle at all.
+            CURLOPT_WRITEFUNCTION => function ($ch, string $chunk) use (&$bodies, &$byteCounts, $source) {
+                $byteCounts[$source] += strlen($chunk);
+                if ($byteCounts[$source] > NUTRICULA_MAX_EDD_RESPONSE_BYTES) return 0;
+                $bodies[$source] .= $chunk;
+                return strlen($chunk);
+            },
+        ]);
+
+        curl_multi_add_handle($multiHandle, $handle);
+        $handles[$source] = $handle;
     }
-    return $data['sales'];
+
+    /* Standard curl_multi run loop - blocks until EVERY handle has
+       finished (succeeded, failed, or hit its own CURLOPT_TIMEOUT above).
+       curl_multi_select() sleeps efficiently (no busy-wait) until there is
+       actually more data to read on any handle. */
+    $stillRunning = null;
+    do {
+        $status = curl_multi_exec($multiHandle, $stillRunning);
+        if ($stillRunning) curl_multi_select($multiHandle);
+    } while ($stillRunning && $status === CURLM_OK);
+
+    $mergedSales = [];
+    $failureCount = 0;
+
+    foreach ($handles as $source => $handle) {
+        $curlErrno = curl_errno($handle);
+        $httpCode = (int)curl_getinfo($handle, CURLINFO_HTTP_CODE);
+        curl_multi_remove_handle($multiHandle, $handle);
+        curl_close($handle);
+
+        try {
+            if ($curlErrno !== 0) {
+                throw new RuntimeException('EDD request failed (curl error ' . $curlErrno . ').');
+            }
+            if ($httpCode < 200 || $httpCode >= 300) {
+                throw new RuntimeException('EDD request failed (HTTP ' . $httpCode . ').');
+            }
+            $data = json_decode($bodies[$source], true);
+            if (!is_array($data) || !isset($data['sales']) || !is_array($data['sales'])) {
+                throw new RuntimeException('EDD response is invalid.');
+            }
+            foreach ($data['sales'] as $sale) {
+                if (!is_array($sale)) continue;
+                $sale['_nutricula_source'] = $source;
+                $mergedSales[] = $sale;
+            }
+        } catch (RuntimeException $e) {
+            // Logged, never re-thrown immediately here - see this
+            // function's own doc comment for why one store failing must
+            // not, by itself, block a customer whose purchase is on the
+            // OTHER, healthy store.
+            $failureCount++;
+            error_log('[Nutricula EDD] Store "' . $source . '" fetch failed: ' . $e->getMessage());
+        }
+    }
+
+    curl_multi_close($multiHandle);
+
+    if ($failureCount >= count($stores)) {
+        // Every store failed - nothing to search, no point pretending
+        // otherwise. Same exception type/message as before this
+        // feature existed.
+        throw new RuntimeException('EDD request failed.');
+    }
+
+    return $mergedSales;
 }
 
 function nutricula_find_edd_sale(array $config, string $email, string $purchaseKey): array
@@ -1585,6 +1721,12 @@ function nutricula_find_edd_sale_in(array $sales, string $purchaseKey): array
             'product_id' => $productId,
             'duration' => $duration,
             'product_name' => (string)($sale['products'][0]['name'] ?? 'N/A'),
+            // Which EDD store this sale came from (see
+            // nutricula_fetch_edd_sales above) - stored by
+            // nutricula_computer_based_signup.php on
+            // nutricula_licenses.license_source for reporting only, never
+            // used in any authorization decision.
+            'source' => (string)($sale['_nutricula_source'] ?? NUTRICULA_EDD_SOURCE_GLOBAL),
         ];
     }
     throw new RuntimeException('Purchase was not found.');
@@ -1594,7 +1736,10 @@ function nutricula_find_edd_sale_in(array $sales, string $purchaseKey): array
     product specifically (11348) rather than the license products. Operates
     on an already-fetched sales list (see nutricula_fetch_edd_sales) so
     checking both a purchase_key and a transfer_key for the same email costs
-    one EDD call total, not two. */
+    one round of EDD calls total, not two. The transfer_key and purchase_key
+    are looked up completely independently here - nothing requires them to
+    have come from the same store (see nutricula_fetch_edd_sales' own doc
+    comment). */
 function nutricula_find_edd_transfer_purchase_in(array $sales, string $transferKey): array
 {
     foreach ($sales as $sale) {
@@ -1602,7 +1747,11 @@ function nutricula_find_edd_transfer_purchase_in(array $sales, string $transferK
         if (!hash_equals((string)$sale['key'], $transferKey)) continue;
         $productId = (int)$sale['products'][0]['id'];
         if ($productId !== NUTRICULA_TRANSFER_KEY_PRODUCT_ID) continue;
-        return ['sale' => $sale, 'product_id' => $productId];
+        return [
+            'sale' => $sale,
+            'product_id' => $productId,
+            'source' => (string)($sale['_nutricula_source'] ?? NUTRICULA_EDD_SOURCE_GLOBAL),
+        ];
     }
     throw new RuntimeException('Transfer key was not found.');
 }

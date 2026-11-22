@@ -127,6 +127,15 @@ try {
     $productId = (int)$saleInfo['product_id'];
     $productName = (string)$saleInfo['product_name'];
     $duration = $saleInfo['duration'];
+    // 2026 feature: which of the two EDD stores (nutricula.trade /
+    // fa.nutricula.trade - see nutricula_fetch_edd_sales in
+    // license_common.php) this sale actually came from. Only ever read
+    // here, at the moment a NEW license row is first created below -
+    // once set, it is never rewritten (not on re-signup, not on
+    // transfer): it describes the one, immutable fact of which store the
+    // original purchase was made on, same spirit as product_id/
+    // product_name right above, which this mirrors exactly.
+    $licenseSource = (string)$saleInfo['source'];
 
     $conn->begin_transaction();
 
@@ -357,21 +366,22 @@ try {
 
         $insert = $conn->prepare(
             'INSERT INTO nutricula_licenses
-             (license_uuid,user_email,purchase_key,product_id,product_name,machine_id,
+             (license_uuid,user_email,purchase_key,product_id,product_name,license_source,machine_id,
               device_public_key_b64,device_public_key_hash,device_type,claimed_local_ip,
               first_observed_ip,last_observed_ip,license_issued_at,license_expires_at,
               last_request_time,last_success_time,current_refresh_token_hash,vps_bound_ip,status,activated_at,last_seen_at)
-             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,"active",NOW(),NOW())'
+             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,"active",NOW(),NOW())'
         );
         if (!$insert) throw new RuntimeException('DB prepare failed.');
 
         $insert->bind_param(
-            'sssissssssssiiiiss',
+            'sssisssssssssiiiiss',
             $licenseUuid,
             $email,
             $purchaseKey,
             $productId,
             $productName,
+            $licenseSource,
             $finalMachineIdUsed,
             $devicePublicKey,
             $deviceKeyHash,
