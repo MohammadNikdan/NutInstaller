@@ -137,19 +137,34 @@ jobs:
           xcrun stapler staple "$APP_PATH"
           rm -f "build/Nutricula Setup-for-notarize.zip"
 
-      - name: Zip the final .app for distribution
+      # A plain .dmg instead of a .zip: double-clicking it mounts a disk
+      # image with the .app sitting right there, ready to double-click and
+      # run immediately - no separate "extract" step first, unlike a .zip.
+      # This is the simple/no-frills kind of .dmg: just the .app, no
+      # Applications-folder shortcut icon or custom background image (that
+      # fancier layout needs Finder window-position scripting, which is
+      # known to be flaky on headless CI runners like this one - not worth
+      # the risk for what's otherwise a cosmetic nicety).
+      - name: Create the .dmg for distribution
         run: |
           set -e
-          ditto -c -k --keepParent "$APP_PATH" "build/Nutricula Setup.zip"
+          rm -f "build/Nutricula Setup.dmg"
+          hdiutil create \
+            -volname "Nutricula Setup" \
+            -srcfolder "$APP_PATH" \
+            -fs HFS+ \
+            -format UDZO \
+            -ov \
+            "build/Nutricula Setup.dmg"
 
       - name: Upload Mac build artifact
         uses: actions/upload-artifact@v7
         with:
           name: Nutricula Setup
-          path: build/Nutricula Setup.zip
+          path: build/Nutricula Setup.dmg
 
       - name: Attach to GitHub Release (tag pushes only)
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v3
         with:
-          files: build/Nutricula Setup.zip
+          files: build/Nutricula Setup.dmg
