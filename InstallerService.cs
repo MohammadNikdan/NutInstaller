@@ -1952,8 +1952,14 @@ namespace NutriculaInstaller
             public const string IdentityWarningNoTransfer =
                 "Stop the transfer. I'd rather transfer my license to a different computer.";
 
+            // 2026 wording change (project owner's request): shown to the
+            // user as "license key" everywhere in this file - purely a
+            // label change, not a functional one. Every message below
+            // that says "license key" is, in code, still the purchase
+            // key (the purchaseKey parameter / purchase_key sent to the
+            // server) - that internal name is deliberately left alone.
             public const string SignupCancelledByUser =
-                "Activation was cancelled. Your purchase key was not used, and no license was activated on " +
+                "Activation was cancelled. Your license key was not used, and no license was activated on " +
                 "this computer. You can run this installer again on a different computer whenever you're ready.";
 
             public const string TransferCancelledByUser =
@@ -2083,7 +2089,7 @@ namespace NutriculaInstaller
                 if (string.IsNullOrEmpty(reason))
                 {
                     return mode == InstallMode.Premium
-                        ? "Your license could not be activated. Please make sure the email and purchase key you " +
+                        ? "Your license could not be activated. Please make sure the email and license key you " +
                           "entered are correct. You can currently only use the free version of Nutricula."
                         : "Your license could not be transferred. Please make sure the information you entered is " +
                           "correct. You can currently only use the free version of Nutricula.";
@@ -2172,9 +2178,9 @@ namespace NutriculaInstaller
                     case "license_not_found":
                         return mode == InstallMode.Transfer
                             ? "The information you entered could not be verified. Please double-check your email, " +
-                              "purchase key, and transfer key, and try again, or contact support."
+                              "license key, and transfer key, and try again, or contact support."
                             : "The information you entered could not be verified. Please double-check your email " +
-                              "and purchase key, and try again, or contact support.";
+                              "and license key, and try again, or contact support.";
 
                     default:
                         // Forward-compatibility: a reason code the installer doesn't

@@ -769,7 +769,13 @@ namespace NutriculaInstaller
             Panel emailWrap = BuildFieldWrap(UiHelpers.DrawMailGlyph, new Point(18, 36), credentialsCard.Width - 36, out emailBox);
             credentialsCard.Controls.Add(emailWrap);
 
-            Label purchaseCaption = new Label { AutoSize = true, Text = "Purchase Key:", Font = UiHelpers.UiFont(9.5f, FontStyle.Bold), ForeColor = UiHelpers.TextDark, Location = new Point(18, 96), BackColor = Color.Transparent };
+            // 2026 wording change (project owner's request): shown to the
+            // user as "License Key" everywhere in this UI - purely a
+            // label change, not a functional one. The field itself, the
+            // variable (purchaseKeyBox), and everything sent to the
+            // server (purchase_key) are still "purchase key" internally
+            // and are deliberately left alone.
+            Label purchaseCaption = new Label { AutoSize = true, Text = "License Key:", Font = UiHelpers.UiFont(9.5f, FontStyle.Bold), ForeColor = UiHelpers.TextDark, Location = new Point(18, 96), BackColor = Color.Transparent };
             credentialsCard.Controls.Add(purchaseCaption);
             Panel purchaseWrap = BuildFieldWrap(UiHelpers.DrawKeyGlyph, new Point(18, 116), credentialsCard.Width - 36, out purchaseKeyBox);
             credentialsCard.Controls.Add(purchaseWrap);
@@ -1062,8 +1068,8 @@ namespace NutriculaInstaller
 
             credTitleLabel.Text = mode == InstallMode.Premium ? "Activate Premium License" : "Transfer License to This Computer";
             credSubtitleLabel.Text = mode == InstallMode.Premium
-                ? "Enter your Email and Purchase Key to activate a license on this computer."
-                : "Enter your Email, Purchase Key, and Transfer Key to move your existing license to this computer.";
+                ? "Enter your Email and License Key to activate a license on this computer."
+                : "Enter your Email, License Key, and Transfer Key to move your existing license to this computer.";
             helperLabel.ForeColor = UiHelpers.TextMuted;
             helperLabel.Text = mode == InstallMode.Premium
                 ? "Required for Premium installation."
@@ -1348,8 +1354,8 @@ namespace NutriculaInstaller
             if (emailMissing || keyMissing || transferMissing)
             {
                 error = requireTransferKey
-                    ? "Email, Purchase Key, and Transfer Key are all required."
-                    : "Email and Purchase Key are both required.";
+                    ? "Email, License Key, and Transfer Key are all required."
+                    : "Email and License Key are both required.";
                 return false;
             }
 
