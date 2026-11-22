@@ -13,6 +13,17 @@ return [
         'api_token' => 'YOUR_EDD_API_TOKEN',
     ],
 
+    /* 2026 feature: second EDD store - the Persian-language site
+       (fa.nutricula.trade), checked together with the main store above
+       for every signup/transfer (see nutricula_fetch_edd_sales() in
+       license_common.php). Get these from that site's own EDD ->
+       Settings -> API Keys screen, exactly like the 'edd' block above -
+       they are a SEPARATE key/token pair, specific to that site. */
+    'edd_persian' => [
+        'api_key' => 'YOUR_EDD_PERSIAN_API_KEY',
+        'api_token' => 'YOUR_EDD_PERSIAN_API_TOKEN',
+    ],
+
     /* Must match TransportKeyPrivate.h's TRANSPORT_KEY byte-for-byte
        (compiled into NutriculaLicenseService/Broker only - NOT into
        MachineId32/64.dll, which no longer contains any transport key at

@@ -16,6 +16,16 @@ CREATE TABLE nutricula_licenses (
     purchase_key VARCHAR(255) NOT NULL,
     product_id INT UNSIGNED NOT NULL,
     product_name VARCHAR(255) NOT NULL,
+    /* 2026 feature: which of the two EDD stores (nutricula.trade vs.
+       fa.nutricula.trade - see nutricula_fetch_edd_sales() in
+       license_common.php) this license was actually purchased on. Set
+       once, at creation, in nutricula_computer_based_signup.php; never
+       rewritten afterwards (not on re-signup, not on transfer) - same
+       spirit as product_id/product_name above. Reporting/support only,
+       never used in any authorization decision. DEFAULT 'global' so
+       every license row that existed before this column was added (when
+       only the one, original store existed) is correctly backfilled. */
+    license_source ENUM('global','iran') NOT NULL DEFAULT 'global',
     machine_id CHAR(64) NOT NULL,
     device_public_key_b64 VARCHAR(128) NOT NULL,
     device_public_key_hash CHAR(64) NOT NULL,
