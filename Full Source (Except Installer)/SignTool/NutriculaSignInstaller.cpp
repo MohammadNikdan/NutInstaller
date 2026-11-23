@@ -28,15 +28,15 @@
 //      It looks for BOTH names next to itself, tells you which one(s) it
 //      found, then asks you to confirm before signing every file it found.
 //      Having only one of the two is fine - only that one is signed.
-//      Each signed file is written under its final name and the unsigned
-//      input file is removed, so only the finished file is left.
+//      Each file is signed in place and then renamed to its final name, so
+//      only the finished file is left.
 //
 //   2) Scripted (for automation) - one file at a time:
 //        NutriculaSignInstaller.exe <path_to_installer.exe>
 //      The 32/64 flavour is read from the file's NAME (not its folder).
-//      The signed result is written next to the input file under the final
-//      name above. If the name has neither or both of "32" / "64", the file
-//      is signed in place and keeps its name (nothing is guessed).
+//      The file is signed in place and then renamed (next to where it is) to
+//      the final name above. If the name has neither or both of "32" / "64",
+//      the file is signed in place and keeps its name (nothing is guessed).
 //
 // TRAILER FORMAT (appended after the exe's normal content):
 //   [64 bytes]  raw (r||s) P-256 signature, over the SHA-256 of every byte
@@ -222,11 +222,11 @@ bool PathsEqualIgnoreCase(const std::wstring& a, const std::wstring& b)
 }
 
 // Shared by both interactive and scripted mode: reads sourcePath, strips any
-// existing trailer, signs, and writes the result to finalPath (atomically).
-// When finalPath is a different file than sourcePath, the unsigned source is
-// removed afterwards - and ONLY after the signed file has been written
-// successfully, so a failure never costs you the input. Prints its own
-// success/error messages. Returns 0 on success, 1 on failure.
+// existing trailer, signs, writes the signed bytes back in place (atomically),
+// then renames the file to finalPath (unless that is the same name already).
+// Same flow as before the 32/64-bit split - only the target name differs.
+// Prints its own success/error messages. Returns 0 on success, 1 on failure
+// (including the case where signing worked but the final rename did not).
 int SignInstallerFile(const std::wstring& sourcePath, const std::wstring& finalPath)
 {
     std::vector<unsigned char> exeBytes;
@@ -252,18 +252,21 @@ int SignInstallerFile(const std::wstring& sourcePath, const std::wstring& finalP
     exeBytes.insert(exeBytes.end(), signature, signature + SIGNATURE_LEN);
     exeBytes.insert(exeBytes.end(), MAGIC, MAGIC + MAGIC_LEN);
 
-    if (!WriteFileBytesAtomic(finalPath, exeBytes))
+    if (!WriteFileBytesAtomic(sourcePath, exeBytes))
     {
-        printf("ERROR: could not write signed output (is a file with the final name open in another program?).\n");
+        printf("ERROR: could not write signed output.\n");
         return 1;
     }
 
     if (!PathsEqualIgnoreCase(sourcePath, finalPath))
     {
-        if (!DeleteFileW(sourcePath.c_str()))
+        if (!MoveFileExW(sourcePath.c_str(), finalPath.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH))
         {
-            printf("OK: signed successfully, but the unsigned input file could not be removed.\n");
-            wprintf(L"Please delete it yourself so it is not mixed up with the signed one: %ls\n", sourcePath.c_str());
+            printf("WARNING: signed successfully, but the file could not be renamed to its final name\n");
+            printf("(is a file with the final name open in another program?).\n");
+            wprintf(L"It is still fully signed under its original name: %ls\n", sourcePath.c_str());
+            wprintf(L"Rename it yourself to: %ls\n", finalPath.c_str());
+            return 1;
         }
     }
 
@@ -351,7 +354,7 @@ int RunInteractive()
     }
     if (failures > 0)
     {
-        printf("\nERROR: %d file(s) could not be signed - see the messages above.\n", failures);
+        printf("\nERROR: %d file(s) could not be completed - see the messages above.\n", failures);
         return 1;
     }
     return 0;
