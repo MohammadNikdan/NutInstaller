@@ -1,0 +1,231 @@
+name: 2. Windows - 64bit
+#
+# Builds the 64-bit (x64) flavour of the Windows installer. It is NEVER given
+# to Windows users (they all get the 32-bit installer, which runs on both
+# 32-bit and 64-bit Windows). It exists only to be bundled, next to the
+# 32-bit one, into the Mac and Linux packages: some Wine builds that ship
+# with MetaTrader on Mac have no 32-bit Windows support, and only a 64-bit
+# exe can run there. The Mac/Linux launchers try this one first and fall
+# back to the 32-bit one automatically.
+#
+# Same source, same NutriculaInstaller.csproj (NOT modified) as the 32-bit
+# workflow - the architecture is switched purely by the msbuild command-line
+# properties below. /p:PlatformTarget is the property that actually decides
+# the compiled architecture (the csproj sets it to x86 unconditionally, and a
+# command-line property overrides that); /p:Platform alone would NOT be
+# enough.
+#
+# Output artifact: Nutricula-Unsigned-64bit.exe
+#   -> run ConfuserEx on it, then NutriculaSignInstaller.exe. The sign tool
+#      finds it by its "64bit" name and produces Nutricula-64bit.exe, which
+#      you place in dist/ for the Mac and Linux workflows.
+#
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+      - master
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build Release EXE (64-bit)
+    runs-on: windows-2022
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v7
+
+      - name: Generate VendorPublicKeyEmbedded.cs from the vendor public key
+        shell: pwsh
+        run: |
+          # NutriculaInstaller.csproj compiles VendorPublicKeyEmbedded.cs
+          # (consumed by SelfIntegrityCheck.cs, the Installer's own
+          # anti-tamper check) but that file is never committed - it is
+          # regenerated fresh on every build, right here, from ONLY
+          # Keys/VendorSigningKey_Public.pem.
+          #
+          # That file is a PUBLIC key, not a secret, and is already
+          # committed for real in this repo. This step reads nothing else
+          # from Keys/ - none of the 3 real private keys or the transport
+          # key are touched, read, or needed here. No GitHub Secret is
+          # required and no private key material is ever involved in this
+          # workflow. KeyBaker.exe / KeyBaker.cpp and the *_Generated.h
+          # headers it produces (which DO need the private keys) are
+          # completely separate from this step and are left untouched.
+          #
+          # SelfIntegrityCheck.cs hard-codes BCRYPT_ECDSA_PUBLIC_P256_MAGIC
+          # and expects 32-byte X/Y - i.e. the vendor key MUST be a genuine
+          # P-256 (secp256r1/prime256v1) key. This step fails the build
+          # loudly if it is not, instead of silently baking in garbage
+          # coordinates that would only surface as a self-integrity
+          # failure at runtime on a customer's machine.
+          $pemPath = "Full Source (Except Installer)\Keys\VendorSigningKey_Public.pem"
+          if (-not (Test-Path -LiteralPath $pemPath -PathType Leaf)) {
+            Write-Error "Vendor public key not found at $pemPath"
+            exit 1
+          }
+          $pem = Get-Content -Raw -LiteralPath $pemPath
+          if ($pem -notmatch 'BEGIN PUBLIC KEY') {
+            Write-Error "$pemPath does not look like a PEM public key (no BEGIN PUBLIC KEY marker)."
+            exit 1
+          }
+
+          $ecdsa = [System.Security.Cryptography.ECDsa]::Create()
+          try {
+            $ecdsa.ImportFromPem($pem)
+          } catch {
+            Write-Error "Failed to parse $pemPath as an EC public key: $_"
+            exit 1
+          }
+
+          $parameters = $ecdsa.ExportParameters($false)
+          $curveOid = $parameters.Curve.Oid.Value
+          if ($curveOid -ne "1.2.840.10045.3.1.7") {
+            Write-Error "Vendor public key at $pemPath is not on curve P-256 (nistP256/prime256v1) - found OID $curveOid. SelfIntegrityCheck.cs only supports P-256; replace the key with a genuine P-256 key pair before building."
+            exit 1
+          }
+
+          $x = $parameters.Q.X
+          $y = $parameters.Q.Y
+          if ($x.Length -ne 32 -or $y.Length -ne 32) {
+            Write-Error "Unexpected coordinate size for vendor public key: X=$($x.Length) bytes, Y=$($y.Length) bytes (expected 32/32 for P-256)."
+            exit 1
+          }
+
+          $xCsv = ($x | ForEach-Object { [int]$_ }) -join ","
+          $yCsv = ($y | ForEach-Object { [int]$_ }) -join ","
+
+          $outPath = "VendorPublicKeyEmbedded.cs"
+          $lines = @(
+            "// AUTO-GENERATED at build time by .github/workflows/build-x64.yml from VendorSigningKey_Public.pem - do not edit by hand or commit.",
+            "// Regenerated on every build; rotate the vendor key pair by replacing Keys\VendorSigningKey_Public.pem.",
+            "namespace NutriculaInstaller",
+            "{",
+            "    internal static class VendorPublicKeyEmbedded",
+            "    {",
+            "        public static readonly byte[] X = { $xCsv };",
+            "        public static readonly byte[] Y = { $yCsv };",
+            "    }",
+            "}"
+          )
+          Set-Content -LiteralPath $outPath -Value $lines -Encoding utf8
+          Write-Host "Generated $outPath from $pemPath (P-256, verified 32/32-byte X/Y)."
+
+      - name: Verify required installer files
+        shell: pwsh
+        run: |
+          # CRITICAL FIX (found via full repo audit + build test): this list
+          # was completely stale - it checked for Nutricula.ex4.sig,
+          # Nutricula.ex5.sig, and MathUtils.dll, none of which
+          # InstallerService.cs has needed since the Coordinator
+          # architecture migration. It also never checked for any of the
+          # actual files InstallerService.cs DOES need now (the license
+          # DLLs, MachineId DLLs, Broker exes, manifest.txt) - so this check
+          # could never catch a genuinely missing required file, while
+          # unnecessarily blocking a build over files nobody needs anymore.
+          # List below matches InstallerService.cs's ResourceItem
+          # declarations exactly - keep both in sync if that ever changes.
+          # (The Windows Service exes were removed in 2026 - the Broker is the
+          # sole Coordinator host.)
+          $required = @(
+            "icon.ico",
+            "UIAssets\\installerpic.jpg",
+            "Assets\\Nutricula.ex4",
+            "Assets\\Nutricula.ex5",
+            "Assets\\NutriculaLicenseCheck32.dll",
+            "Assets\\NutriculaLicenseCheck64.dll",
+            "Assets\\MachineId32.dll",
+            "Assets\\MachineId64.dll",
+            "Assets\\NutriculaLicenseBroker32.exe",
+            "Assets\\NutriculaLicenseBroker64.exe",
+            "Assets\\manifest.txt"
+          )
+
+          $missing = @()
+          foreach ($file in $required) {
+            if (-not (Test-Path -LiteralPath $file -PathType Leaf)) {
+              $missing += $file
+            }
+          }
+
+          if ($missing.Count -gt 0) {
+            Write-Error ("Required files are missing:`n" + ($missing -join "`n"))
+            exit 1
+          }
+
+      - name: Setup MSBuild
+        uses: microsoft/setup-msbuild@v3
+
+      - name: Verify project target framework
+        shell: pwsh
+        run: |
+          $project = Get-Content -Raw -LiteralPath "NutriculaInstaller.csproj"
+          if ($project -notmatch '<TargetFrameworkVersion>v4\.8</TargetFrameworkVersion>') {
+            Write-Error "NutriculaInstaller.csproj is not targeting .NET Framework 4.8."
+            exit 1
+          }
+          Write-Host "Project targets .NET Framework 4.8."
+
+      - name: Rebuild Release
+        shell: pwsh
+        run: >-
+          msbuild .\NutriculaInstaller.csproj
+          /t:Rebuild
+          /p:Configuration=Release
+          /p:Platform=x64
+          /p:PlatformTarget=x64
+          /p:Prefer32Bit=false
+          /p:BaseOutputPath=bin\
+          /p:OutputPath=bin\Release\
+          /m
+          /v:minimal
+
+      - name: Verify single EXE output
+        shell: pwsh
+        run: |
+          $exe = Join-Path $PWD "bin\\Release\\NutriculaExpertInstaller.exe"
+          if (-not (Test-Path -LiteralPath $exe -PathType Leaf)) {
+            Write-Error "Build completed but NutriculaExpertInstaller.exe was not found."
+            exit 1
+          }
+
+          Write-Host "Built EXE: $exe"
+          Write-Host "Size: $((Get-Item $exe).Length) bytes"
+          Get-FileHash -Algorithm SHA256 -LiteralPath $exe | Format-List
+
+      - name: Verify the EXE really is 64-bit (x64)
+        shell: pwsh
+        run: |
+          # Reads the PE header's Machine field directly, so a build that
+          # silently came out as the wrong architecture fails HERE, loudly,
+          # instead of surfacing later on a customer's machine.
+          $exe = Join-Path $PWD "bin\\Release\\NutriculaExpertInstaller.exe"
+          $bytes = [System.IO.File]::ReadAllBytes($exe)
+          $peOffset = [BitConverter]::ToInt32($bytes, 0x3C)
+          $machine = [BitConverter]::ToUInt16($bytes, $peOffset + 4)
+          Write-Host ("PE Machine field: 0x{0:X4}" -f $machine)
+          if ($machine -ne 0x8664) {
+            Write-Error ("Expected a 64-bit (x64, 0x8664) executable but got 0x{0:X4}." -f $machine)
+            exit 1
+          }
+          Write-Host "Confirmed: 64-bit (x64) executable."
+
+      - name: Stage the output under its final pre-signing name
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path staging | Out-Null
+          Copy-Item -LiteralPath "bin\\Release\\NutriculaExpertInstaller.exe" -Destination "staging\\Nutricula-Unsigned-64bit.exe" -Force
+          Get-Item "staging\\Nutricula-Unsigned-64bit.exe" | Format-List Name, Length
+
+      - name: Upload EXE artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: Nutricula-Unsigned-64bit
+          path: staging/Nutricula-Unsigned-64bit.exe
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0

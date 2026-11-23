@@ -1,4 +1,17 @@
-name: 1. Main Build (needs ConfuserEx & Signing)
+name: 1. Windows - 32bit
+#
+# Builds the 32-bit (x86) Windows installer - THE installer that all Windows
+# users get (a 32-bit exe runs on both 32-bit and 64-bit Windows).
+#
+# Output artifact: Nutricula-Unsigned-32bit.exe
+#   -> run ConfuserEx on it, then NutriculaSignInstaller.exe. The sign tool
+#      finds it by its "32bit" name and produces Nutricula-32bit.exe, which
+#      is both the file you publish for Windows and the file you place in
+#      dist/ for the Mac and Linux workflows.
+#
+# The 64-bit counterpart is "2. Windows - 64bit" (build-x64.yml). That one
+# is only ever bundled into the Mac/Linux packages, never given to Windows
+# users.
 
 on:
   workflow_dispatch:
@@ -12,7 +25,7 @@ permissions:
 
 jobs:
   build:
-    name: Build Release EXE
+    name: Build Release EXE (32-bit)
     runs-on: windows-2022
 
     steps:
@@ -175,11 +188,35 @@ jobs:
           Write-Host "Size: $((Get-Item $exe).Length) bytes"
           Get-FileHash -Algorithm SHA256 -LiteralPath $exe | Format-List
 
+      - name: Verify the EXE really is 32-bit (x86)
+        shell: pwsh
+        run: |
+          # Reads the PE header's Machine field directly, so a build that
+          # silently came out as the wrong architecture fails HERE, loudly,
+          # instead of surfacing later on a customer's machine.
+          $exe = Join-Path $PWD "bin\\Release\\NutriculaExpertInstaller.exe"
+          $bytes = [System.IO.File]::ReadAllBytes($exe)
+          $peOffset = [BitConverter]::ToInt32($bytes, 0x3C)
+          $machine = [BitConverter]::ToUInt16($bytes, $peOffset + 4)
+          Write-Host ("PE Machine field: 0x{0:X4}" -f $machine)
+          if ($machine -ne 0x014C) {
+            Write-Error ("Expected a 32-bit (x86, 0x014C) executable but got 0x{0:X4}." -f $machine)
+            exit 1
+          }
+          Write-Host "Confirmed: 32-bit (x86) executable."
+
+      - name: Stage the output under its final pre-signing name
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path staging | Out-Null
+          Copy-Item -LiteralPath "bin\\Release\\NutriculaExpertInstaller.exe" -Destination "staging\\Nutricula-Unsigned-32bit.exe" -Force
+          Get-Item "staging\\Nutricula-Unsigned-32bit.exe" | Format-List Name, Length
+
       - name: Upload EXE artifact
         uses: actions/upload-artifact@v7
         with:
-          name: NutriculaExpertInstaller
-          path: bin/Release/NutriculaExpertInstaller.exe
+          name: Nutricula-Unsigned-32bit
+          path: staging/Nutricula-Unsigned-32bit.exe
           if-no-files-found: error
           retention-days: 30
           compression-level: 0
