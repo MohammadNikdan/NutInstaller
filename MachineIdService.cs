@@ -8,8 +8,29 @@ namespace NutriculaInstaller
 {
     internal static class MachineIdService
     {
-        private const string ResourceName = "NutriculaInstaller.Assets.MachineId32.dll";
-        private const string DllFileName = "MachineId32.dll";
+        // The machine-id native DLL is LoadLibrary'd into THIS installer's own
+        // process, and Windows only lets a process load a native DLL of its
+        // own exact bitness (32-bit process <-> 32-bit DLL, 64-bit process
+        // <-> 64-bit DLL). The installer is built in both flavours from this
+        // same source file (workflows "Windows - 32bit" / "Windows - 64bit"),
+        // so the DLL is chosen by the bitness of the RUNNING process.
+        //
+        // This is unrelated to which MachineId DLL gets DEPLOYED into a
+        // MetaTrader terminal - that choice (InstallerService.cs) depends on
+        // the terminal / target OS, never on the installer's own bitness.
+        // MachineId32.dll and MachineId64.dll are built from the same single
+        // source file and export the identical function set, so either one
+        // behaves the same here.
+        //
+        // These three fields MUST stay the first static fields declared in
+        // this class (static initializers run in textual order).
+        private static readonly bool IsProcess64Bit = Environment.Is64BitProcess;
+        private static readonly string ResourceName = IsProcess64Bit
+            ? "NutriculaInstaller.Assets.MachineId64.dll"
+            : "NutriculaInstaller.Assets.MachineId32.dll";
+        private static readonly string DllFileName = IsProcess64Bit
+            ? "MachineId64.dll"
+            : "MachineId32.dll";
         private const int MachineIdOutputCapacity = 65;
         private const int DevicePublicKeyCapacity = 256;
         private const int DeviceKeyHashCapacity = 65;

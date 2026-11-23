@@ -29,15 +29,27 @@ The eleven files under `Assets` are compiled into the installer as embedded .NET
 2. Upload the complete project contents to the repository root.
 3. Confirm the twelve required files exist at the exact paths above.
 4. Open **Actions** in GitHub.
-5. Select **Build Nutricula Installer**.
+5. Select **1. Windows - 32bit** (and, separately, **2. Windows - 64bit**).
 6. Press **Run workflow**.
-7. When the workflow finishes successfully, open the workflow run and download the artifact named **NutriculaExpertInstaller**.
+7. When the workflow finishes successfully, open the workflow run and download its artifact:
+   - **Nutricula-Unsigned-32bit** (from *1. Windows - 32bit*)
+   - **Nutricula-Unsigned-64bit** (from *2. Windows - 64bit*)
 
-The downloaded artifact contains:
+Each downloaded artifact contains one file:
 
 ```text
-NutriculaExpertInstaller.exe
+Nutricula-Unsigned-32bit.exe
+Nutricula-Unsigned-64bit.exe
 ```
+
+Next, on the secure build machine: run each file through ConfuserEx, then put the results next to `NutriculaSignInstaller.exe` and run it. It finds the 32-bit / 64-bit file by name, signs it, and produces the final files:
+
+```text
+Nutricula-32bit.exe   <- the Windows installer for ALL Windows users (32- and 64-bit Windows)
+Nutricula-64bit.exe   <- only bundled into the Mac / Linux packages, never given to Windows users
+```
+
+Put **both** final files into the repo's `dist/` folder, then run **3. Mac** and **4. Linux** (they produce `Nutricula.dmg` and `Nutricula.AppImage`).
 
 The workflow uses a Windows Server 2022 GitHub-hosted runner and MSBuild. GitHub's Windows 2022 image includes Visual Studio 2022, MSBuild, and .NET Framework 4.8 targeting/build components.
 
