@@ -161,10 +161,25 @@ namespace NutriculaInstaller
 
         private void DiscoverCommonProgramFiles(Action<string> log)
         {
+            // A terminal's own bitness (MT4 = 32-bit, MT5 = 64-bit) decides
+            // whether it lives under "Program Files" or "Program Files (x86)" -
+            // never this installer's own bitness - so BOTH must be searched
+            // whichever flavour of the installer is running.
+            //
+            // GetFolderPath(ProgramFiles) alone does not guarantee that: in a
+            // 32-bit process on 64-bit Windows it returns "Program Files
+            // (x86)" (same as ProgramFilesX86), so the real 64-bit folder was
+            // never searched. ProgramW6432 always names the real 64-bit
+            // "Program Files" folder (Windows sets it for 32-bit processes on
+            // 64-bit Windows). On 32-bit Windows it is not set and simply
+            // drops out below; any folder that does not exist is skipped
+            // silently by SearchForTerminalExecutables, and duplicates are
+            // removed by Distinct below and by Add().
             string[] roots =
             {
                 Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),
                 Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86),
+                Environment.GetEnvironmentVariable("ProgramW6432"),
                 Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
                 Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData)
             };
