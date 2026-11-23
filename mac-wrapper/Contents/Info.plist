@@ -3,11 +3,14 @@
 <plist version="1.0">
 <dict>
     <key>CFBundleName</key>
-    <string>Nutricula Setup</string>
+    <string>Nutricula</string>
     <key>CFBundleDisplayName</key>
-    <string>Nutricula Setup</string>
+    <string>Nutricula</string>
+    <!-- CFBundleExecutable MUST be exactly the file name of the launcher script
+         in Contents/MacOS/ (mac-wrapper/Contents/MacOS/Nutricula) - rename both
+         together or the app will silently fail to launch. -->
     <key>CFBundleExecutable</key>
-    <string>Nutricula Setup</string>
+    <string>Nutricula</string>
     <key>CFBundleIdentifier</key>
     <string>com.nutricula.installer.mac</string>
     <key>CFBundleVersion</key>
