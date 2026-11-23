@@ -1,6 +1,6 @@
 #!/bin/bash
 # ==============================================================================
-# NutriculaInstaller AppRun (2026, Linux double-click wrapper).
+# Nutricula AppRun (2026, Linux double-click wrapper).
 #
 # When packaged into a .AppImage (via appimagetool - see the CI workflow),
 # this is the entry point the AppImage runtime executes directly when the
@@ -12,8 +12,9 @@
 # always already on this system if MetaTrader is running at all - unlike
 # Mac, Linux has no official MetaQuotes build, so SOME Wine install is how
 # MetaTrader got here in the first place) and launch the real Windows
-# installer (Nutricula Setup.exe, bundled alongside this script) through
-# it. If nothing usable is found anywhere, show a plain English message
+# installer (bundled alongside this script as TWO builds: a 64-bit
+# Nutricula-64bit.exe and a 32-bit Nutricula-32bit.exe - see the launch
+# section at the bottom for why) through it. If nothing usable is found anywhere, show a plain English message
 # (via whatever GUI dialog tool is available, or a desktop notification as
 # a fallback) saying no MetaTrader installation was found, and exit.
 # ==============================================================================
@@ -27,7 +28,11 @@ if [ -z "${APPDIR:-}" ]; then
     APPDIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 fi
 
-INSTALLER_EXE="$APPDIR/Resources/Nutricula Setup.exe"
+# Both builds of the same installer. Which one a given Wine can actually run
+# can differ from machine to machine, so the launch section at the bottom
+# tries the 64-bit one first and falls back to the 32-bit one - invisibly.
+INSTALLER_EXE_64="$APPDIR/Resources/Nutricula-64bit.exe"
+INSTALLER_EXE_32="$APPDIR/Resources/Nutricula-32bit.exe"
 LOG_FILE="$HOME/.nutricula_installer_launcher.log"
 log() { printf '%s %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$1" >> "$LOG_FILE" 2>/dev/null; }
 
@@ -59,9 +64,9 @@ show_message() {
     log "No GUI dialog tool available to show: $text"
 }
 
-if [ ! -f "$INSTALLER_EXE" ]; then
-    show_message "Nutricula Setup.exe is missing from this package. Reinstall it, or contact support."
-    log "ERROR: $INSTALLER_EXE not found."
+if [ ! -f "$INSTALLER_EXE_64" ] && [ ! -f "$INSTALLER_EXE_32" ]; then
+    show_message "The installer is missing from this package. Reinstall it, or contact support."
+    log "ERROR: neither $INSTALLER_EXE_64 nor $INSTALLER_EXE_32 found."
     exit 1
 fi
 
@@ -79,7 +84,7 @@ if [ -f "$OVERRIDE_FILE" ]; then
 fi
 
 # NOTE on why WHICH tier below matches doesn't matter for which terminals
-# get found: once Nutricula Setup.exe is running (under whatever Wine
+# get found: once the installer .exe is running (under whatever Wine
 # binary/prefix matched first), its own TerminalDiscoveryService scans
 # every known bottle location on the filesystem directly (Z:\ maps the
 # whole real filesystem regardless of which WINEPREFIX is active), so it
@@ -87,7 +92,7 @@ fi
 # prefix than the one that launched it. These tiers only decide which
 # Wine binary gets handed the .exe to run under.
 #
-# KNOWN OPEN RISK, not yet confirmed on real hardware: Nutricula Setup.exe
+# KNOWN OPEN RISK, not yet confirmed on real hardware: the installer .exe
 # is a classic .NET Framework 4.8 app, not self-contained. Most distro
 # Wine packages pull in wine-mono (or prompt to auto-install it on first
 # .NET app launch) which usually covers this, but it hasn't been verified
@@ -209,7 +214,73 @@ log "Using WINE_BIN=$WINE_BIN WINEPREFIX=$WINE_PREFIX_PATH"
 export WINEPREFIX="$WINE_PREFIX_PATH"
 export WINEDEBUG="${WINEDEBUG:--all}"
 
-"$WINE_BIN" "$INSTALLER_EXE" >>"$LOG_FILE" 2>&1
-STATUS=$?
-log "Wine exited with status $STATUS"
+# ------------------------------------------------------------------------
+# Launch: 64-bit installer first, 32-bit installer as the fallback.
+#
+# Why two builds: not every Wine can run both kinds of Windows program. Some
+# Wine builds can only run 64-bit Windows programs (no 32-bit Windows
+# support), some prefixes are 32-bit only. Rather than guess which kind of
+# Wine this is, we simply try the 64-bit build first and, only if THAT cannot
+# start under this Wine, the 32-bit one. Whoever double-clicked never sees the
+# failed first attempt.
+#
+# SAFETY RULE - when is the second attempt allowed? ONLY when the first one
+# never really started: Wine's own loader failed (a "wine: failed to load",
+# "Bad EXE format", "could not load" or "ShellExecuteEx failed" message, the
+# process exited with a non-zero status, and it did so quickly). All of that
+# happens before a single line of the installer itself has run, so trying the
+# other build cannot repeat any work. If the installer DID start - even if it
+# then failed or the person simply closed it - that outcome is final and it
+# is NEVER launched a second time (a second run could otherwise consume a
+# purchase/transfer key twice).
+# ------------------------------------------------------------------------
+loader_failed() {
+    # $1 = file holding one attempt's combined stdout/stderr
+    grep -Eqi 'wine: failed to load|wine: bad exe format|wine: could not load|ShellExecuteEx failed|Application could not be started' "$1" 2>/dev/null
+}
+
+STATUS=1
+LAUNCH_ABORTED=0
+for EXE in "$INSTALLER_EXE_64" "$INSTALLER_EXE_32"; do
+    [ -f "$EXE" ] || continue
+    EXE_NAME="$(basename "$EXE")"
+
+    ATTEMPT_OUT="$(mktemp "${TMPDIR:-/tmp}/nutricula-wine.XXXXXX" 2>/dev/null)" || ATTEMPT_OUT=""
+    if [ -z "$ATTEMPT_OUT" ]; then
+        # Cannot inspect this attempt's output, so a retry decision cannot be
+        # made safely - run it once, exactly as before, and accept the result.
+        "$WINE_BIN" "$EXE" >>"$LOG_FILE" 2>&1
+        STATUS=$?
+        log "Wine ($EXE_NAME) exited with status $STATUS"
+        LAUNCH_ABORTED=0
+        break
+    fi
+
+    START_SECONDS=$SECONDS
+    "$WINE_BIN" "$EXE" >"$ATTEMPT_OUT" 2>&1
+    STATUS=$?
+    ELAPSED=$((SECONDS - START_SECONDS))
+    cat "$ATTEMPT_OUT" >>"$LOG_FILE" 2>/dev/null
+    log "Wine ($EXE_NAME) exited with status $STATUS after ${ELAPSED}s"
+
+    if [ "$STATUS" -ne 0 ] && [ "$ELAPSED" -lt 120 ] && loader_failed "$ATTEMPT_OUT"; then
+        log "$EXE_NAME could not be started by this Wine (loader-level failure, installer code never ran)."
+        LAUNCH_ABORTED=1
+        rm -f "$ATTEMPT_OUT"
+        continue
+    fi
+
+    LAUNCH_ABORTED=0
+    rm -f "$ATTEMPT_OUT"
+    break
+done
+
+if [ "$LAUNCH_ABORTED" -eq 1 ]; then
+    # Every available build failed at the Wine-loader level: without this the
+    # double-click would look like it did nothing at all.
+    log "ERROR: no installer build could be started under $WINE_BIN"
+    show_message "Nutricula could not be started on this computer. Please contact support."
+    exit 1
+fi
+
 exit "$STATUS"

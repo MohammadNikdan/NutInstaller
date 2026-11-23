@@ -1,6 +1,6 @@
 [Desktop Entry]
 Type=Application
-Name=Nutricula Setup
+Name=Nutricula
 Comment=Install Nutricula into MetaTrader 4/5
 Exec=AppRun
 Icon=NutriculaInstaller
