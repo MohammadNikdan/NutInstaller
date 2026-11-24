@@ -7,36 +7,46 @@
 // customers, never committed anywhere the Installer itself is built from (it
 // links VendorIdentityPrivate.h, which must never ship).
 //
-// THERE ARE TWO INSTALLER FLAVOURS (built by two separate GitHub Actions
+// THERE ARE THREE INSTALLER FLAVOURS (built by three separate GitHub Actions
 // workflows from the same source):
 //
-//   "Windows - 32bit"  ->  Nutricula-Unsigned-32bit.exe  ->  Nutricula-32bit.exe
-//   "Windows - 64bit"  ->  Nutricula-Unsigned-64bit.exe  ->  Nutricula-64bit.exe
+//   "1. Windows - 32bit"
+//        -> Nutricula-Unsigned-32bit.exe     -> Nutricula-32bit.exe
+//           The installer for ALL Windows users (a 32-bit exe runs on both
+//           32-bit and 64-bit Windows). Not bundled into Mac/Linux packages.
+//   "2. Windows - 32bit (for Mac/Linux)"
+//        -> Nutricula-Unsigned-32bit-SC.exe  -> Nutricula-32bit-SC.exe
+//   "3. Windows - 64bit (for Mac/Linux)"
+//        -> Nutricula-Unsigned-64bit-SC.exe  -> Nutricula-64bit-SC.exe
+//           Self-contained builds (they carry their own .NET runtime). They
+//           exist ONLY to be bundled into the Mac and Linux packages and are
+//           never given to Windows users. "SC" = self-contained.
 //
 //   (left: workflow name, middle: the file name the workflow outputs and
 //   ConfuserEx keeps, right: the file name this tool produces.) This tool
-//   recognises a file as the 32-bit or the 64-bit flavour purely by that
-//   "32" / "64" in its file name, signs it, and gives it the clean final
-//   name on the right - NO "-Signed" suffix any more.
+//   recognises the flavour purely from the file's NAME: "32" or "64" (exactly
+//   one of them) plus "-SC" for the self-contained pair. It signs the file
+//   and gives it the clean final name on the right - NO "-Signed" suffix.
 //
 // TWO WAYS TO RUN IT:
 //
-//   1) Interactive (recommended, default) - place the ConfuserEx'd
-//      Nutricula-Unsigned-32bit.exe and/or Nutricula-Unsigned-64bit.exe in
-//      the SAME folder as NutriculaSignInstaller.exe, then run
-//      NutriculaSignInstaller.exe with NO arguments (e.g. double-click it).
-//      It looks for BOTH names next to itself, tells you which one(s) it
-//      found, then asks you to confirm before signing every file it found.
-//      Having only one of the two is fine - only that one is signed.
+//   1) Interactive (recommended, default) - place the (ConfuserEx'd) unsigned
+//      file(s) named exactly as in the middle column above in the SAME folder
+//      as NutriculaSignInstaller.exe, then run NutriculaSignInstaller.exe
+//      with NO arguments (e.g. double-click it). It looks for ALL the names
+//      next to itself, tells you which one(s) it found, then asks you to
+//      confirm before signing every file it found. Having only some of them
+//      is fine - only those are signed.
 //      Each file is signed in place and then renamed to its final name, so
 //      only the finished file is left.
 //
 //   2) Scripted (for automation) - one file at a time:
 //        NutriculaSignInstaller.exe <path_to_installer.exe>
-//      The 32/64 flavour is read from the file's NAME (not its folder).
+//      The flavour is read from the file's NAME (not its folder).
 //      The file is signed in place and then renamed (next to where it is) to
-//      the final name above. If the name has neither or both of "32" / "64",
-//      the file is signed in place and keeps its name (nothing is guessed).
+//      the final name above. If the name does not identify exactly one
+//      flavour (for example neither or both of "32" / "64"), the file is
+//      signed in place and keeps its name (nothing is guessed).
 //
 // TRAILER FORMAT (appended after the exe's normal content):
 //   [64 bytes]  raw (r||s) P-256 signature, over the SHA-256 of every byte
@@ -51,7 +61,9 @@
 // either loader. This is the same principle self-extracting archives and
 // many single-file .NET publishing tools already rely on. Verified
 // empirically for this project: a compiled test .exe with 72 arbitrary
-// bytes appended ran identically before and after. The signature covers the
+// bytes appended ran identically before and after (and the same was checked
+// for a .NET single-file bundle, which the self-contained flavours are:
+// appended bytes after the bundle do not disturb its start-up). The signature covers the
 // file's bytes only, never its name, so renaming a signed file is harmless.
 //
 // Safe to re-run: any existing trailer is stripped first, so a file is
@@ -82,20 +94,23 @@ constexpr size_t MAGIC_LEN = 8;
 constexpr size_t SIGNATURE_LEN = 64;
 constexpr size_t TRAILER_LEN = SIGNATURE_LEN + MAGIC_LEN;
 
-// The file names the two GitHub Actions workflows output (and ConfuserEx
-// keeps) and the clean names this tool gives them once signed. (The two
-// flavours are told apart by "32" / "64" in the file name.)
+// The file names the GitHub Actions workflows output (and ConfuserEx keeps)
+// and the clean names this tool gives them once signed. The flavours are told
+// apart by "32" / "64" plus an optional "-SC" (self-contained) in the name.
 struct InstallerKind
 {
     const wchar_t* unsignedName;
     const wchar_t* finalName;
     const wchar_t* label;
+    int  bits;             // 32 or 64
+    bool selfContained;    // true: the Mac/Linux-only self-contained flavour ("-SC")
     bool isWindowsRelease; // true: this is the file Windows users download
 };
 
 const InstallerKind KINDS[] = {
-    { L"Nutricula-Unsigned-32bit.exe", L"Nutricula-32bit.exe", L"32-bit", true  },
-    { L"Nutricula-Unsigned-64bit.exe", L"Nutricula-64bit.exe", L"64-bit", false },
+    { L"Nutricula-Unsigned-32bit.exe",    L"Nutricula-32bit.exe",    L"32-bit (Windows)",       32, false, true  },
+    { L"Nutricula-Unsigned-32bit-SC.exe", L"Nutricula-32bit-SC.exe", L"32-bit (for Mac/Linux)", 32, true,  false },
+    { L"Nutricula-Unsigned-64bit-SC.exe", L"Nutricula-64bit-SC.exe", L"64-bit (for Mac/Linux)", 64, true,  false },
 };
 constexpr size_t KIND_COUNT = sizeof(KINDS) / sizeof(KINDS[0]);
 
@@ -196,8 +211,10 @@ bool PromptYesNo(const char* prompt)
 }
 
 // Decides which flavour a file is from its NAME alone (never its folder):
-// contains "64" only -> 64-bit, contains "32" only -> 32-bit. Neither, or
-// both, is ambiguous and returns nullptr - the caller must not guess.
+// exactly one of "32" / "64" must be present, plus "-sc" for the
+// self-contained (Mac/Linux) pair. Neither or both of 32/64, or a
+// combination that matches no known flavour (e.g. a 64-bit WITHOUT "-sc" -
+// that flavour no longer exists), returns nullptr - the caller must not guess.
 const InstallerKind* DetectKindFromFileName(const std::wstring& path)
 {
     size_t slashPos = path.find_last_of(L"\\/");
@@ -207,7 +224,15 @@ const InstallerKind* DetectKindFromFileName(const std::wstring& path)
     bool has32 = name.find(L"32") != std::wstring::npos;
     bool has64 = name.find(L"64") != std::wstring::npos;
     if (has32 == has64) return nullptr;
-    return has64 ? &KINDS[1] : &KINDS[0];
+    int bits = has64 ? 64 : 32;
+    bool hasSC = name.find(L"-sc") != std::wstring::npos;
+
+    for (size_t i = 0; i < KIND_COUNT; ++i)
+    {
+        if (KINDS[i].bits == bits && KINDS[i].selfContained == hasSC)
+            return &KINDS[i];
+    }
+    return nullptr;
 }
 
 std::wstring DirectoryOf(const std::wstring& path)
@@ -325,7 +350,7 @@ int RunInteractive()
         printf("NutriculaSignInstaller.exe, named exactly:\n");
         for (size_t i = 0; i < KIND_COUNT; ++i)
             wprintf(L"  %ls\n", KINDS[i].unsignedName);
-        printf("and run this again (one of the two is enough).\n");
+        printf("and run this again (at least one of them is needed).\n");
         return 1;
     }
 
@@ -371,8 +396,9 @@ int RunScripted(const std::wstring& sourcePath)
     else
     {
         finalPath = sourcePath;
-        printf("NOTE: the file name has neither (or both of) \"32\" and \"64\", so the 32/64-bit\n");
-        printf("flavour cannot be told from it - signing in place, name left unchanged.\n\n");
+        printf("NOTE: the file name does not identify exactly one known flavour (it needs exactly\n");
+        printf("one of \"32\" / \"64\", plus \"-SC\" for the Mac/Linux self-contained pair) - signing\n");
+        printf("in place, name left unchanged.\n\n");
     }
 
     int rc = SignInstallerFile(sourcePath, finalPath);
@@ -401,7 +427,7 @@ int main(int argc, char** argv)
     printf("Interactive mode (recommended): place the ConfuserEx'd installer(s), named exactly\n");
     for (size_t i = 0; i < KIND_COUNT; ++i)
         wprintf(L"  %ls\n", KINDS[i].unsignedName);
-    wprintf(L"next to %ls with no arguments (one of the two is enough).\n\n", exeName.c_str());
+    wprintf(L"next to %ls with no arguments (at least one of them is needed).\n\n", exeName.c_str());
     printf("Scripted mode: %s <path_to_installer.exe>\n", argv[0]);
     return 1;
 }
