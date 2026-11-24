@@ -426,7 +426,13 @@ namespace NutriculaInstaller
                 // everything else now; the file itself and the directory
                 // get cleaned up by ScheduleSelfDelete after this process
                 // has exited and released the lock.
+#if NET6_0_OR_GREATER
+                // Single-file build (Mac/Linux flavour): Assembly.Location is
+                // empty there; the running exe's own path is what is locked.
+                string runningExe = Environment.ProcessPath;
+#else
                 string runningExe = Assembly.GetExecutingAssembly().Location;
+#endif
                 string dirWithSeparator = dir.TrimEnd('\\', '/') + Path.DirectorySeparatorChar;
                 bool containsSelf = !string.IsNullOrEmpty(runningExe) &&
                     runningExe.StartsWith(dirWithSeparator, StringComparison.OrdinalIgnoreCase);

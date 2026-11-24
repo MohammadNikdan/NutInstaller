@@ -850,7 +850,14 @@ namespace NutriculaInstaller
                 Directory.CreateDirectory(nutriculaRoot);
 
                 string uninstallExePath = Path.Combine(nutriculaRoot, "Uninstall.exe");
+#if NET6_0_OR_GREATER
+                // Single-file build (Mac/Linux flavour): Assembly.Location is
+                // empty there, which would silently skip this copy and leave
+                // no Uninstall.exe at all. The running exe's own path is right.
+                string thisExePath = Environment.ProcessPath;
+#else
                 string thisExePath = System.Reflection.Assembly.GetExecutingAssembly().Location;
+#endif
                 if (!string.IsNullOrEmpty(thisExePath) && File.Exists(thisExePath))
                 {
                     AtomicFile.Copy(thisExePath, uninstallExePath);

@@ -52,7 +52,16 @@ namespace NutriculaInstaller
             failureReason = null;
             try
             {
+#if NET6_0_OR_GREATER
+                // Single-file build (the Mac/Linux flavour, see
+                // SelfContained\NutriculaInstaller.SelfContained.csproj):
+                // there the assembly lives INSIDE the exe, so
+                // Assembly.Location is an empty string. The path of the
+                // running exe itself is what carries the signature trailer.
+                string exePath = Environment.ProcessPath;
+#else
                 string exePath = Assembly.GetExecutingAssembly().Location;
+#endif
                 byte[] fileBytes = File.ReadAllBytes(exePath);
 
                 if (fileBytes.Length < TrailerLen)

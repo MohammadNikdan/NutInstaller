@@ -471,7 +471,14 @@ namespace NutriculaInstaller
             // unlike a relative File.Exists("icon.ico") check.
             try
             {
+#if NET6_0_OR_GREATER
+                // Single-file build (Mac/Linux flavour): ask the process for
+                // its own exe path directly rather than depending on how
+                // Application.ExecutablePath resolves it for a bundled exe.
+                Icon extracted = Icon.ExtractAssociatedIcon(Environment.ProcessPath);
+#else
                 Icon extracted = Icon.ExtractAssociatedIcon(Application.ExecutablePath);
+#endif
                 if (extracted != null)
                 {
                     cachedAppIcon = extracted;
