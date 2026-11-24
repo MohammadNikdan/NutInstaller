@@ -17,15 +17,22 @@ name: 2. Windows - 32bit (for Mac/Linux)
 # itself is not modified). A guard step below fails the run if the two project
 # files ever list different sources/resources.
 #
-# Output artifact: Nutricula-Unsigned-32bit-SC.exe
-#   -> run NutriculaSignInstaller.exe on it (it finds it by its name and
-#      produces Nutricula-32bit-SC.exe), then place that file in dist/ for the Mac
-#      and Linux workflows.
-#
-# IMPORTANT - ConfuserEx: a self-contained single-file exe is a native
-# launcher with the .NET assemblies bundled inside it, so ConfuserEx cannot
-# open it the way it opens the 32-bit Windows exe. This output is therefore NOT
-# obfuscated yet. See the project notes before shipping it to customers.
+# Output artifact: Nutricula-Unsigned-32bit-SC.zip
+#   This is NOT the final exe - it is a zip of the whole self-contained
+#   PUBLISH FOLDER (the managed .dll plus the .NET runtime files next to
+#   it, not yet bundled into one file). Next steps, all on your own
+#   machine (never in this workflow):
+#     1) Extract the zip.
+#     2) Run the extracted folder through .NET Reactor, using its "Bundle"
+#        feature (Reactor both protects the code AND produces the single
+#        final .exe - ConfuserEx cannot do either step: it only
+#        understands a plain managed assembly, never a self-contained
+#        publish folder or an already-bundled single-file exe).
+#     3) Rename Reactor's output .exe to Nutricula-Unsigned-32bit-SC.exe,
+#        then run NutriculaSignInstaller.exe on it as usual (it finds it
+#        by its name and produces Nutricula-32bit-SC.exe).
+#     4) Place that signed file in dist/ for the Mac and Linux workflows.
+#   See README-GITHUB-BUILD.md for the full walkthrough.
 #
 # This workflow is the "first" of the pair: "2. Windows - 32bit (for
 # Mac/Linux)" (build-x86.yml) and "3. Windows - 64bit (for Mac/Linux)"
@@ -225,43 +232,51 @@ jobs:
           }
           Write-Host "Using .NET SDK $v."
 
-      - name: Publish Release (self-contained, single file)
+      - name: Publish Release (self-contained folder, not single-file)
         shell: pwsh
         run: |
-          # -r decides the architecture. Trimming is OFF on purpose (the app
-          # reads embedded resources; trimming could silently drop something
-          # it needs). The csproj also sets these - repeated here so the
-          # command line alone says exactly what is built.
+          # -r decides the architecture. PublishSingleFile=false (the
+          # csproj's own default too - repeated here so the command line
+          # alone says exactly what is built): the goal is a plain
+          # self-contained FOLDER, not a single-file bundle. Bundling into
+          # one exe is deliberately NOT done here - .NET Reactor does that
+          # itself afterwards (see this workflow's header comment).
+          # Trimming is OFF on purpose (the app reads embedded resources;
+          # trimming could silently drop something it needs).
           dotnet publish SelfContained\NutriculaInstaller.SelfContained.csproj `
             -c Release `
             -r win-x86 `
             --self-contained true `
             -p:PlatformTarget=x86 `
-            -p:PublishSingleFile=true `
+            -p:PublishSingleFile=false `
             -p:PublishTrimmed=false `
             -o publish `
             -v:minimal
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-      - name: Verify the output is one single EXE and nothing else
+      - name: Verify the expected files were produced
         shell: pwsh
         run: |
-          # Only the .exe is ever shipped. If the publish left ANY other file
-          # next to it (a native library, a config file, ...), that file would
-          # be missing on the customer's machine - so fail loudly here.
+          # This is a folder publish (see the step above), so MANY files are
+          # expected here (the .NET runtime's own native libraries, .deps.json,
+          # .runtimeconfig.json, ...) - that is normal and all of them are
+          # needed. This only checks for the two files that matter most: the
+          # native launcher exe and the managed assembly behind it.
           $exe = Join-Path $PWD "publish\NutriculaExpertInstaller.exe"
+          $dll = Join-Path $PWD "publish\NutriculaExpertInstaller.dll"
           if (-not (Test-Path -LiteralPath $exe -PathType Leaf)) {
             Write-Error "Publish completed but NutriculaExpertInstaller.exe was not found."
             exit 1
           }
-          $extra = @(Get-ChildItem -LiteralPath "publish" -Recurse -File | Where-Object { $_.Name -ne "NutriculaExpertInstaller.exe" })
-          if ($extra.Count -gt 0) {
-            Write-Error ("Unexpected extra file(s) were produced next to the exe:`n" + (($extra | ForEach-Object { $_.FullName }) -join "`n"))
+          if (-not (Test-Path -LiteralPath $dll -PathType Leaf)) {
+            Write-Error "Publish completed but NutriculaExpertInstaller.dll was not found."
             exit 1
           }
 
+          $fileCount = (Get-ChildItem -LiteralPath "publish" -Recurse -File).Count
           Write-Host "Built EXE: $exe"
           Write-Host "Size: $((Get-Item $exe).Length) bytes"
+          Write-Host "Total files in the publish folder: $fileCount"
           Get-FileHash -Algorithm SHA256 -LiteralPath $exe | Format-List
 
       - name: Verify the EXE really is 32-bit (x86)
@@ -269,7 +284,9 @@ jobs:
         run: |
           # Reads the PE header's Machine field directly, so a build that
           # silently came out as the wrong architecture fails HERE, loudly,
-          # instead of surfacing later on a customer's machine.
+          # instead of surfacing later on a customer's machine. This is the
+          # native launcher exe - still architecture-specific even though the
+          # managed .dll beside it is not.
           $exe = Join-Path $PWD "publish\NutriculaExpertInstaller.exe"
           $bytes = [System.IO.File]::ReadAllBytes($exe)
           $peOffset = [BitConverter]::ToInt32($bytes, 0x3C)
@@ -281,18 +298,20 @@ jobs:
           }
           Write-Host "Confirmed: 32-bit (x86) executable."
 
-      - name: Stage the output under its final pre-signing name
+      - name: Zip the self-contained publish folder
         shell: pwsh
         run: |
+          # The whole folder (not a single exe) is what goes to .NET Reactor
+          # next - see this workflow's header comment for the full flow.
           New-Item -ItemType Directory -Force -Path staging | Out-Null
-          Copy-Item -LiteralPath "publish\NutriculaExpertInstaller.exe" -Destination "staging\Nutricula-Unsigned-32bit-SC.exe" -Force
-          Get-Item "staging\Nutricula-Unsigned-32bit-SC.exe" | Format-List Name, Length
+          Compress-Archive -Path "publish\*" -DestinationPath "staging\Nutricula-Unsigned-32bit-SC.zip" -CompressionLevel Optimal
+          Get-Item "staging\Nutricula-Unsigned-32bit-SC.zip" | Format-List Name, Length
 
-      - name: Upload EXE artifact
+      - name: Upload the publish-folder artifact
         uses: actions/upload-artifact@v7
         with:
           name: Nutricula-Unsigned-32bit-SC
-          path: staging/Nutricula-Unsigned-32bit-SC.exe
+          path: staging/Nutricula-Unsigned-32bit-SC.zip
           if-no-files-found: error
           retention-days: 30
           compression-level: 0
