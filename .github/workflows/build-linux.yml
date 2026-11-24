@@ -1,4 +1,4 @@
-name: 4. Linux
+name: 5. Linux
 #
 # ============================================================================
 # SCOPE, STATED PLAINLY: this workflow does NOT rebuild the installer .exe
@@ -6,20 +6,25 @@ name: 4. Linux
 # reasoning (same applies here). It expects TWO already-built, already-signed
 # installer files to exist in the repo's dist/ folder:
 #
-#   dist/Nutricula-32bit.exe   (from "1. Windows - 32bit", after ConfuserEx
-#                               and NutriculaSignInstaller)
-#   dist/Nutricula-64bit.exe   (from "2. Windows - 64bit", after ConfuserEx
-#                               and NutriculaSignInstaller)
+#   dist/Nutricula-32bit-SC.exe  (from "2. Windows - 32bit (for Mac/Linux)",
+#                                 then NutriculaSignInstaller)
+#   dist/Nutricula-64bit-SC.exe  (from "3. Windows - 64bit (for Mac/Linux)",
+#                                 then NutriculaSignInstaller)
+#
+# ("SC" = self-contained: these two carry their own .NET runtime. The plain
+# dist/Nutricula-32bit.exe is the Windows installer - it is NOT used here.)
 #
 # and only wraps them for Linux double-click (AppImage) launch. BOTH are
-# bundled: AppRun tries the 64-bit one first and, only if the Wine it found
-# cannot start that, the 32-bit one - invisibly to the person double-clicking
-# (see linux-appdir/AppRun).
+# bundled (stored inside it as Resources/Nutricula-32bit.exe and
+# Resources/Nutricula-64bit.exe, the names AppRun expects): AppRun tries the
+# 64-bit one first and, only if the Wine it found cannot start that, the
+# 32-bit one - invisibly to the person double-clicking (see
+# linux-appdir/AppRun).
 #
 # The output is a single file, "Nutricula.AppImage".
 #
-# This workflow is independent of the two Windows workflows and of
-# "3. Mac" - each has its own "Run workflow" button on the Actions tab, so
+# This workflow is independent of the Windows workflows and of
+# "4. Mac" - each has its own "Run workflow" button on the Actions tab, so
 # you can build just this one platform whenever you want, without touching
 # the others. A tag push (v*) triggers the Mac and Linux builds, each
 # attaching its own file to the same GitHub Release separately.
@@ -38,11 +43,11 @@ jobs:
       - name: Checkout repo
         uses: actions/checkout@v7
 
-      - name: Verify both pre-built Windows installers are present
+      - name: Verify both pre-built self-contained installers are present
         run: |
-          for f in "dist/Nutricula-32bit.exe" "dist/Nutricula-64bit.exe"; do
+          for f in "dist/Nutricula-32bit-SC.exe" "dist/Nutricula-64bit-SC.exe"; do
             if [ ! -f "$f" ]; then
-              echo "::error::'$f' is missing. Build both Windows installers your usual way (workflows '1. Windows - 32bit' and '2. Windows - 64bit', then ConfuserEx and NutriculaSignInstaller), and place both signed files in dist/ under exactly these names."
+              echo "::error::'$f' is missing. Build both self-contained installers (workflows '2. Windows - 32bit (for Mac/Linux)' and '3. Windows - 64bit (for Mac/Linux)', then NutriculaSignInstaller), and place both signed files in dist/ under exactly these names."
               exit 1
             fi
           done
@@ -56,8 +61,8 @@ jobs:
           python3 - <<'PY'
           import struct, sys
           expected = {
-              "dist/Nutricula-32bit.exe": (0x014C, "32-bit (x86)"),
-              "dist/Nutricula-64bit.exe": (0x8664, "64-bit (x64)"),
+              "dist/Nutricula-32bit-SC.exe": (0x014C, "32-bit (x86)"),
+              "dist/Nutricula-64bit-SC.exe": (0x8664, "64-bit (x64)"),
           }
           bad = False
           for path, (want, label) in expected.items():
@@ -84,8 +89,9 @@ jobs:
           cp linux-appdir/AppRun "$APPDIR/AppRun"
           chmod +x "$APPDIR/AppRun"
           cp linux-appdir/NutriculaInstaller.desktop "$APPDIR/NutriculaInstaller.desktop"
-          cp "dist/Nutricula-32bit.exe" "$APPDIR/Resources/Nutricula-32bit.exe"
-          cp "dist/Nutricula-64bit.exe" "$APPDIR/Resources/Nutricula-64bit.exe"
+          # Stored under the names AppRun looks for.
+          cp "dist/Nutricula-32bit-SC.exe" "$APPDIR/Resources/Nutricula-32bit.exe"
+          cp "dist/Nutricula-64bit-SC.exe" "$APPDIR/Resources/Nutricula-64bit.exe"
           # appimagetool requires SOME icon file to exist. linux-appdir/NutriculaInstaller.png
           # is a tiny 1x1 placeholder checked into the repo - replace that
           # file with a real icon (same name, same location) whenever you

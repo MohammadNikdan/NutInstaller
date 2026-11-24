@@ -1,25 +1,37 @@
-name: 2. Windows - 64bit
+name: 3. Windows - 64bit (for Mac/Linux)
 #
-# Builds the 64-bit (x64) flavour of the Windows installer. It is NEVER given
-# to Windows users (they all get the 32-bit installer, which runs on both
-# 32-bit and 64-bit Windows). It exists only to be bundled, next to the
-# 32-bit one, into the Mac and Linux packages: some Wine builds that ship
-# with MetaTrader on Mac have no 32-bit Windows support, and only a 64-bit
-# exe can run there. The Mac/Linux launchers try this one first and fall
+# Builds the SELF-CONTAINED 64-bit (x64) installer - the flavour that is
+# bundled into the Mac and Linux packages. It is NEVER given to Windows users:
+# they all get the output of "1. Windows - 32bit", which this workflow does not
+# touch in any way.
+#
+# WHY IT EXISTS: the copy of Wine that ships with MetaTrader 5 on a Mac has no
+# .NET Framework / Mono registered inside it, so the normal .NET Framework 4.8
+# installer starts and then dies silently there (mscoree.dll finds no runtime
+# to host). This build carries its own .NET 8 runtime inside the one .exe, so
+# it needs nothing from the Wine prefix.
+#
+# SAME SOURCE, NO COPY: it compiles the very same .cs files and embeds the very
+# same resources as NutriculaInstaller.csproj, through the second project file
+# SelfContained/NutriculaInstaller.SelfContained.csproj (NutriculaInstaller.csproj
+# itself is not modified). A guard step below fails the run if the two project
+# files ever list different sources/resources.
+#
+# Output artifact: Nutricula-Unsigned-64bit-SC.exe
+#   -> run NutriculaSignInstaller.exe on it (it finds it by its name and
+#      produces Nutricula-64bit-SC.exe), then place that file in dist/ for the Mac
+#      and Linux workflows.
+#
+# IMPORTANT - ConfuserEx: a self-contained single-file exe is a native
+# launcher with the .NET assemblies bundled inside it, so ConfuserEx cannot
+# open it the way it opens the 32-bit Windows exe. This output is therefore NOT
+# obfuscated yet. See the project notes before shipping it to customers.
+#
+# This workflow is the "second" of the pair: "2. Windows - 32bit (for
+# Mac/Linux)" (build-x86.yml) and "3. Windows - 64bit (for Mac/Linux)"
+# (build-x64.yml). The Mac/Linux launchers try the 64-bit one first and fall
 # back to the 32-bit one automatically.
-#
-# Same source, same NutriculaInstaller.csproj (NOT modified) as the 32-bit
-# workflow - the architecture is switched purely by the msbuild command-line
-# properties below. /p:PlatformTarget is the property that actually decides
-# the compiled architecture (the csproj sets it to x86 unconditionally, and a
-# command-line property overrides that); /p:Platform alone would NOT be
-# enough.
-#
-# Output artifact: Nutricula-Unsigned-64bit.exe
-#   -> run ConfuserEx on it, then NutriculaSignInstaller.exe. The sign tool
-#      finds it by its "64bit" name and produces Nutricula-64bit.exe, which
-#      you place in dist/ for the Mac and Linux workflows.
-#
+
 on:
   workflow_dispatch:
   push:
@@ -32,7 +44,7 @@ permissions:
 
 jobs:
   build:
-    name: Build Release EXE (64-bit)
+    name: Build Release EXE (64-bit, self-contained)
     runs-on: windows-2022
 
     steps:
@@ -42,7 +54,7 @@ jobs:
       - name: Generate VendorPublicKeyEmbedded.cs from the vendor public key
         shell: pwsh
         run: |
-          # NutriculaInstaller.csproj compiles VendorPublicKeyEmbedded.cs
+          # NutriculaInstaller.csproj (and the self-contained project file SelfContained/NutriculaInstaller.SelfContained.csproj) compiles VendorPublicKeyEmbedded.cs
           # (consumed by SelfIntegrityCheck.cs, the Installer's own
           # anti-tamper check) but that file is never committed - it is
           # regenerated fresh on every build, right here, from ONLY
@@ -157,39 +169,94 @@ jobs:
             exit 1
           }
 
-      - name: Setup MSBuild
-        uses: microsoft/setup-msbuild@v3
-
-      - name: Verify project target framework
+      - name: Verify the self-contained project matches the main project
         shell: pwsh
         run: |
-          $project = Get-Content -Raw -LiteralPath "NutriculaInstaller.csproj"
-          if ($project -notmatch '<TargetFrameworkVersion>v4\.8</TargetFrameworkVersion>') {
-            Write-Error "NutriculaInstaller.csproj is not targeting .NET Framework 4.8."
+          # SelfContained\NutriculaInstaller.SelfContained.csproj lists the
+          # same .cs files and embedded resources as NutriculaInstaller.csproj
+          # (it cannot reuse that file: that one is the untouched .NET
+          # Framework 4.8 project). If somebody adds or removes an item in
+          # one and forgets the other, the Mac/Linux build would silently
+          # differ from the Windows build - so this fails the run instead.
+          function Get-ItemSet($xml, $kind, $stripParent) {
+            $set = @()
+            foreach ($n in $xml.SelectNodes("//*[local-name()='$kind']")) {
+              $inc = $n.GetAttribute("Include").Replace("/", "\")
+              if ($stripParent -and $inc.StartsWith("..\")) { $inc = $inc.Substring(3) }
+              $logical = ""
+              foreach ($c in $n.ChildNodes) {
+                if ($c.LocalName -eq "LogicalName") { $logical = $c.InnerText.Trim() }
+              }
+              $set += ($inc + " => " + $logical)
+            }
+            return @($set | Sort-Object)
+          }
+
+          $main = [xml](Get-Content -Raw -LiteralPath "NutriculaInstaller.csproj")
+          $sc   = [xml](Get-Content -Raw -LiteralPath "SelfContained\NutriculaInstaller.SelfContained.csproj")
+
+          $bad = $false
+          foreach ($kind in @("Compile", "EmbeddedResource")) {
+            $a = Get-ItemSet $main $kind $false
+            $b = Get-ItemSet $sc   $kind $true
+            if ($a.Count -eq 0 -or $b.Count -eq 0) {
+              Write-Error "No <$kind> items found in one of the project files - the guard cannot work."
+              exit 1
+            }
+            $diff = Compare-Object -ReferenceObject $a -DifferenceObject $b
+            if ($diff) {
+              $bad = $true
+              Write-Host "::error::The <$kind> items differ between NutriculaInstaller.csproj ('<=') and SelfContained\NutriculaInstaller.SelfContained.csproj ('=>'):"
+              $diff | ForEach-Object { Write-Host ("  " + $_.SideIndicator + " " + $_.InputObject) }
+            } else {
+              Write-Host "OK: $($a.Count) <$kind> item(s) identical in both project files."
+            }
+          }
+          if ($bad) { exit 1 }
+
+      - name: Check the .NET SDK
+        shell: pwsh
+        run: |
+          dotnet --info
+          $v = [version]((dotnet --version).Split("-")[0])
+          if ($v.Major -lt 8) {
+            Write-Error "A .NET SDK 8 or newer is required (found $v)."
             exit 1
           }
-          Write-Host "Project targets .NET Framework 4.8."
+          Write-Host "Using .NET SDK $v."
 
-      - name: Rebuild Release
-        shell: pwsh
-        run: >-
-          msbuild .\NutriculaInstaller.csproj
-          /t:Rebuild
-          /p:Configuration=Release
-          /p:Platform=x64
-          /p:PlatformTarget=x64
-          /p:Prefer32Bit=false
-          /p:BaseOutputPath=bin\
-          /p:OutputPath=bin\Release\
-          /m
-          /v:minimal
-
-      - name: Verify single EXE output
+      - name: Publish Release (self-contained, single file)
         shell: pwsh
         run: |
-          $exe = Join-Path $PWD "bin\\Release\\NutriculaExpertInstaller.exe"
+          # -r decides the architecture. Trimming is OFF on purpose (the app
+          # reads embedded resources; trimming could silently drop something
+          # it needs). The csproj also sets these - repeated here so the
+          # command line alone says exactly what is built.
+          dotnet publish SelfContained\NutriculaInstaller.SelfContained.csproj `
+            -c Release `
+            -r win-x64 `
+            --self-contained true `
+            -p:PlatformTarget=x64 `
+            -p:PublishSingleFile=true `
+            -p:PublishTrimmed=false `
+            -o publish `
+            -v:minimal
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Verify the output is one single EXE and nothing else
+        shell: pwsh
+        run: |
+          # Only the .exe is ever shipped. If the publish left ANY other file
+          # next to it (a native library, a config file, ...), that file would
+          # be missing on the customer's machine - so fail loudly here.
+          $exe = Join-Path $PWD "publish\NutriculaExpertInstaller.exe"
           if (-not (Test-Path -LiteralPath $exe -PathType Leaf)) {
-            Write-Error "Build completed but NutriculaExpertInstaller.exe was not found."
+            Write-Error "Publish completed but NutriculaExpertInstaller.exe was not found."
+            exit 1
+          }
+          $extra = @(Get-ChildItem -LiteralPath "publish" -Recurse -File | Where-Object { $_.Name -ne "NutriculaExpertInstaller.exe" })
+          if ($extra.Count -gt 0) {
+            Write-Error ("Unexpected extra file(s) were produced next to the exe:`n" + (($extra | ForEach-Object { $_.FullName }) -join "`n"))
             exit 1
           }
 
@@ -203,7 +270,7 @@ jobs:
           # Reads the PE header's Machine field directly, so a build that
           # silently came out as the wrong architecture fails HERE, loudly,
           # instead of surfacing later on a customer's machine.
-          $exe = Join-Path $PWD "bin\\Release\\NutriculaExpertInstaller.exe"
+          $exe = Join-Path $PWD "publish\NutriculaExpertInstaller.exe"
           $bytes = [System.IO.File]::ReadAllBytes($exe)
           $peOffset = [BitConverter]::ToInt32($bytes, 0x3C)
           $machine = [BitConverter]::ToUInt16($bytes, $peOffset + 4)
@@ -218,14 +285,14 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path staging | Out-Null
-          Copy-Item -LiteralPath "bin\\Release\\NutriculaExpertInstaller.exe" -Destination "staging\\Nutricula-Unsigned-64bit.exe" -Force
-          Get-Item "staging\\Nutricula-Unsigned-64bit.exe" | Format-List Name, Length
+          Copy-Item -LiteralPath "publish\NutriculaExpertInstaller.exe" -Destination "staging\Nutricula-Unsigned-64bit-SC.exe" -Force
+          Get-Item "staging\Nutricula-Unsigned-64bit-SC.exe" | Format-List Name, Length
 
       - name: Upload EXE artifact
         uses: actions/upload-artifact@v7
         with:
-          name: Nutricula-Unsigned-64bit
-          path: staging/Nutricula-Unsigned-64bit.exe
+          name: Nutricula-Unsigned-64bit-SC
+          path: staging/Nutricula-Unsigned-64bit-SC.exe
           if-no-files-found: error
           retention-days: 30
           compression-level: 0

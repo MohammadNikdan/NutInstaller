@@ -1,0 +1,298 @@
+name: 2. Windows - 32bit (for Mac/Linux)
+#
+# Builds the SELF-CONTAINED 32-bit (x86) installer - the flavour that is
+# bundled into the Mac and Linux packages. It is NEVER given to Windows users:
+# they all get the output of "1. Windows - 32bit", which this workflow does not
+# touch in any way.
+#
+# WHY IT EXISTS: the copy of Wine that ships with MetaTrader 5 on a Mac has no
+# .NET Framework / Mono registered inside it, so the normal .NET Framework 4.8
+# installer starts and then dies silently there (mscoree.dll finds no runtime
+# to host). This build carries its own .NET 8 runtime inside the one .exe, so
+# it needs nothing from the Wine prefix.
+#
+# SAME SOURCE, NO COPY: it compiles the very same .cs files and embeds the very
+# same resources as NutriculaInstaller.csproj, through the second project file
+# SelfContained/NutriculaInstaller.SelfContained.csproj (NutriculaInstaller.csproj
+# itself is not modified). A guard step below fails the run if the two project
+# files ever list different sources/resources.
+#
+# Output artifact: Nutricula-Unsigned-32bit-SC.exe
+#   -> run NutriculaSignInstaller.exe on it (it finds it by its name and
+#      produces Nutricula-32bit-SC.exe), then place that file in dist/ for the Mac
+#      and Linux workflows.
+#
+# IMPORTANT - ConfuserEx: a self-contained single-file exe is a native
+# launcher with the .NET assemblies bundled inside it, so ConfuserEx cannot
+# open it the way it opens the 32-bit Windows exe. This output is therefore NOT
+# obfuscated yet. See the project notes before shipping it to customers.
+#
+# This workflow is the "first" of the pair: "2. Windows - 32bit (for
+# Mac/Linux)" (build-x86.yml) and "3. Windows - 64bit (for Mac/Linux)"
+# (build-x64.yml). The Mac/Linux launchers try the 64-bit one first and fall
+# back to the 32-bit one automatically.
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+      - master
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build Release EXE (32-bit, self-contained)
+    runs-on: windows-2022
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v7
+
+      - name: Generate VendorPublicKeyEmbedded.cs from the vendor public key
+        shell: pwsh
+        run: |
+          # NutriculaInstaller.csproj (and the self-contained project file SelfContained/NutriculaInstaller.SelfContained.csproj) compiles VendorPublicKeyEmbedded.cs
+          # (consumed by SelfIntegrityCheck.cs, the Installer's own
+          # anti-tamper check) but that file is never committed - it is
+          # regenerated fresh on every build, right here, from ONLY
+          # Keys/VendorSigningKey_Public.pem.
+          #
+          # That file is a PUBLIC key, not a secret, and is already
+          # committed for real in this repo. This step reads nothing else
+          # from Keys/ - none of the 3 real private keys or the transport
+          # key are touched, read, or needed here. No GitHub Secret is
+          # required and no private key material is ever involved in this
+          # workflow. KeyBaker.exe / KeyBaker.cpp and the *_Generated.h
+          # headers it produces (which DO need the private keys) are
+          # completely separate from this step and are left untouched.
+          #
+          # SelfIntegrityCheck.cs hard-codes BCRYPT_ECDSA_PUBLIC_P256_MAGIC
+          # and expects 32-byte X/Y - i.e. the vendor key MUST be a genuine
+          # P-256 (secp256r1/prime256v1) key. This step fails the build
+          # loudly if it is not, instead of silently baking in garbage
+          # coordinates that would only surface as a self-integrity
+          # failure at runtime on a customer's machine.
+          $pemPath = "Full Source (Except Installer)\Keys\VendorSigningKey_Public.pem"
+          if (-not (Test-Path -LiteralPath $pemPath -PathType Leaf)) {
+            Write-Error "Vendor public key not found at $pemPath"
+            exit 1
+          }
+          $pem = Get-Content -Raw -LiteralPath $pemPath
+          if ($pem -notmatch 'BEGIN PUBLIC KEY') {
+            Write-Error "$pemPath does not look like a PEM public key (no BEGIN PUBLIC KEY marker)."
+            exit 1
+          }
+
+          $ecdsa = [System.Security.Cryptography.ECDsa]::Create()
+          try {
+            $ecdsa.ImportFromPem($pem)
+          } catch {
+            Write-Error "Failed to parse $pemPath as an EC public key: $_"
+            exit 1
+          }
+
+          $parameters = $ecdsa.ExportParameters($false)
+          $curveOid = $parameters.Curve.Oid.Value
+          if ($curveOid -ne "1.2.840.10045.3.1.7") {
+            Write-Error "Vendor public key at $pemPath is not on curve P-256 (nistP256/prime256v1) - found OID $curveOid. SelfIntegrityCheck.cs only supports P-256; replace the key with a genuine P-256 key pair before building."
+            exit 1
+          }
+
+          $x = $parameters.Q.X
+          $y = $parameters.Q.Y
+          if ($x.Length -ne 32 -or $y.Length -ne 32) {
+            Write-Error "Unexpected coordinate size for vendor public key: X=$($x.Length) bytes, Y=$($y.Length) bytes (expected 32/32 for P-256)."
+            exit 1
+          }
+
+          $xCsv = ($x | ForEach-Object { [int]$_ }) -join ","
+          $yCsv = ($y | ForEach-Object { [int]$_ }) -join ","
+
+          $outPath = "VendorPublicKeyEmbedded.cs"
+          $lines = @(
+            "// AUTO-GENERATED at build time by .github/workflows/build-x86.yml from VendorSigningKey_Public.pem - do not edit by hand or commit.",
+            "// Regenerated on every build; rotate the vendor key pair by replacing Keys\VendorSigningKey_Public.pem.",
+            "namespace NutriculaInstaller",
+            "{",
+            "    internal static class VendorPublicKeyEmbedded",
+            "    {",
+            "        public static readonly byte[] X = { $xCsv };",
+            "        public static readonly byte[] Y = { $yCsv };",
+            "    }",
+            "}"
+          )
+          Set-Content -LiteralPath $outPath -Value $lines -Encoding utf8
+          Write-Host "Generated $outPath from $pemPath (P-256, verified 32/32-byte X/Y)."
+
+      - name: Verify required installer files
+        shell: pwsh
+        run: |
+          # CRITICAL FIX (found via full repo audit + build test): this list
+          # was completely stale - it checked for Nutricula.ex4.sig,
+          # Nutricula.ex5.sig, and MathUtils.dll, none of which
+          # InstallerService.cs has needed since the Coordinator
+          # architecture migration. It also never checked for any of the
+          # actual files InstallerService.cs DOES need now (the license
+          # DLLs, MachineId DLLs, Broker exes, manifest.txt) - so this check
+          # could never catch a genuinely missing required file, while
+          # unnecessarily blocking a build over files nobody needs anymore.
+          # List below matches InstallerService.cs's ResourceItem
+          # declarations exactly - keep both in sync if that ever changes.
+          # (The Windows Service exes were removed in 2026 - the Broker is the
+          # sole Coordinator host.)
+          $required = @(
+            "icon.ico",
+            "UIAssets\\installerpic.jpg",
+            "Assets\\Nutricula.ex4",
+            "Assets\\Nutricula.ex5",
+            "Assets\\NutriculaLicenseCheck32.dll",
+            "Assets\\NutriculaLicenseCheck64.dll",
+            "Assets\\MachineId32.dll",
+            "Assets\\MachineId64.dll",
+            "Assets\\NutriculaLicenseBroker32.exe",
+            "Assets\\NutriculaLicenseBroker64.exe",
+            "Assets\\manifest.txt"
+          )
+
+          $missing = @()
+          foreach ($file in $required) {
+            if (-not (Test-Path -LiteralPath $file -PathType Leaf)) {
+              $missing += $file
+            }
+          }
+
+          if ($missing.Count -gt 0) {
+            Write-Error ("Required files are missing:`n" + ($missing -join "`n"))
+            exit 1
+          }
+
+      - name: Verify the self-contained project matches the main project
+        shell: pwsh
+        run: |
+          # SelfContained\NutriculaInstaller.SelfContained.csproj lists the
+          # same .cs files and embedded resources as NutriculaInstaller.csproj
+          # (it cannot reuse that file: that one is the untouched .NET
+          # Framework 4.8 project). If somebody adds or removes an item in
+          # one and forgets the other, the Mac/Linux build would silently
+          # differ from the Windows build - so this fails the run instead.
+          function Get-ItemSet($xml, $kind, $stripParent) {
+            $set = @()
+            foreach ($n in $xml.SelectNodes("//*[local-name()='$kind']")) {
+              $inc = $n.GetAttribute("Include").Replace("/", "\")
+              if ($stripParent -and $inc.StartsWith("..\")) { $inc = $inc.Substring(3) }
+              $logical = ""
+              foreach ($c in $n.ChildNodes) {
+                if ($c.LocalName -eq "LogicalName") { $logical = $c.InnerText.Trim() }
+              }
+              $set += ($inc + " => " + $logical)
+            }
+            return @($set | Sort-Object)
+          }
+
+          $main = [xml](Get-Content -Raw -LiteralPath "NutriculaInstaller.csproj")
+          $sc   = [xml](Get-Content -Raw -LiteralPath "SelfContained\NutriculaInstaller.SelfContained.csproj")
+
+          $bad = $false
+          foreach ($kind in @("Compile", "EmbeddedResource")) {
+            $a = Get-ItemSet $main $kind $false
+            $b = Get-ItemSet $sc   $kind $true
+            if ($a.Count -eq 0 -or $b.Count -eq 0) {
+              Write-Error "No <$kind> items found in one of the project files - the guard cannot work."
+              exit 1
+            }
+            $diff = Compare-Object -ReferenceObject $a -DifferenceObject $b
+            if ($diff) {
+              $bad = $true
+              Write-Host "::error::The <$kind> items differ between NutriculaInstaller.csproj ('<=') and SelfContained\NutriculaInstaller.SelfContained.csproj ('=>'):"
+              $diff | ForEach-Object { Write-Host ("  " + $_.SideIndicator + " " + $_.InputObject) }
+            } else {
+              Write-Host "OK: $($a.Count) <$kind> item(s) identical in both project files."
+            }
+          }
+          if ($bad) { exit 1 }
+
+      - name: Check the .NET SDK
+        shell: pwsh
+        run: |
+          dotnet --info
+          $v = [version]((dotnet --version).Split("-")[0])
+          if ($v.Major -lt 8) {
+            Write-Error "A .NET SDK 8 or newer is required (found $v)."
+            exit 1
+          }
+          Write-Host "Using .NET SDK $v."
+
+      - name: Publish Release (self-contained, single file)
+        shell: pwsh
+        run: |
+          # -r decides the architecture. Trimming is OFF on purpose (the app
+          # reads embedded resources; trimming could silently drop something
+          # it needs). The csproj also sets these - repeated here so the
+          # command line alone says exactly what is built.
+          dotnet publish SelfContained\NutriculaInstaller.SelfContained.csproj `
+            -c Release `
+            -r win-x86 `
+            --self-contained true `
+            -p:PlatformTarget=x86 `
+            -p:PublishSingleFile=true `
+            -p:PublishTrimmed=false `
+            -o publish `
+            -v:minimal
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Verify the output is one single EXE and nothing else
+        shell: pwsh
+        run: |
+          # Only the .exe is ever shipped. If the publish left ANY other file
+          # next to it (a native library, a config file, ...), that file would
+          # be missing on the customer's machine - so fail loudly here.
+          $exe = Join-Path $PWD "publish\NutriculaExpertInstaller.exe"
+          if (-not (Test-Path -LiteralPath $exe -PathType Leaf)) {
+            Write-Error "Publish completed but NutriculaExpertInstaller.exe was not found."
+            exit 1
+          }
+          $extra = @(Get-ChildItem -LiteralPath "publish" -Recurse -File | Where-Object { $_.Name -ne "NutriculaExpertInstaller.exe" })
+          if ($extra.Count -gt 0) {
+            Write-Error ("Unexpected extra file(s) were produced next to the exe:`n" + (($extra | ForEach-Object { $_.FullName }) -join "`n"))
+            exit 1
+          }
+
+          Write-Host "Built EXE: $exe"
+          Write-Host "Size: $((Get-Item $exe).Length) bytes"
+          Get-FileHash -Algorithm SHA256 -LiteralPath $exe | Format-List
+
+      - name: Verify the EXE really is 32-bit (x86)
+        shell: pwsh
+        run: |
+          # Reads the PE header's Machine field directly, so a build that
+          # silently came out as the wrong architecture fails HERE, loudly,
+          # instead of surfacing later on a customer's machine.
+          $exe = Join-Path $PWD "publish\NutriculaExpertInstaller.exe"
+          $bytes = [System.IO.File]::ReadAllBytes($exe)
+          $peOffset = [BitConverter]::ToInt32($bytes, 0x3C)
+          $machine = [BitConverter]::ToUInt16($bytes, $peOffset + 4)
+          Write-Host ("PE Machine field: 0x{0:X4}" -f $machine)
+          if ($machine -ne 0x014C) {
+            Write-Error ("Expected a 32-bit (x86, 0x014C) executable but got 0x{0:X4}." -f $machine)
+            exit 1
+          }
+          Write-Host "Confirmed: 32-bit (x86) executable."
+
+      - name: Stage the output under its final pre-signing name
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path staging | Out-Null
+          Copy-Item -LiteralPath "publish\NutriculaExpertInstaller.exe" -Destination "staging\Nutricula-Unsigned-32bit-SC.exe" -Force
+          Get-Item "staging\Nutricula-Unsigned-32bit-SC.exe" | Format-List Name, Length
+
+      - name: Upload EXE artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: Nutricula-Unsigned-32bit-SC
+          path: staging/Nutricula-Unsigned-32bit-SC.exe
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0

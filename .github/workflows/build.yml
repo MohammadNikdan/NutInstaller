@@ -5,13 +5,13 @@ name: 1. Windows - 32bit
 #
 # Output artifact: Nutricula-Unsigned-32bit.exe
 #   -> run ConfuserEx on it, then NutriculaSignInstaller.exe. The sign tool
-#      finds it by its "32bit" name and produces Nutricula-32bit.exe, which
-#      is both the file you publish for Windows and the file you place in
-#      dist/ for the Mac and Linux workflows.
+#      finds it by its "32bit" name and produces Nutricula-32bit.exe, the
+#      file you publish for Windows users.
 #
-# The 64-bit counterpart is "2. Windows - 64bit" (build-x64.yml). That one
-# is only ever bundled into the Mac/Linux packages, never given to Windows
-# users.
+# The Mac and Linux packages do NOT use this build: they bundle the two
+# self-contained builds from "2. Windows - 32bit (for Mac/Linux)"
+# (build-x86.yml) and "3. Windows - 64bit (for Mac/Linux)" (build-x64.yml),
+# which are never given to Windows users.
 
 on:
   workflow_dispatch:

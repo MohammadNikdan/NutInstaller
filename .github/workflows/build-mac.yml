@@ -1,19 +1,25 @@
-name: 3. Mac
+name: 4. Mac
 #
 # ============================================================================
 # SCOPE, STATED PLAINLY: this workflow does NOT rebuild the installer from
 # source. It expects TWO ALREADY-BUILT, ALREADY-SIGNED installer files to
 # exist in the repo's dist/ folder:
 #
-#   dist/Nutricula-32bit.exe   (from "1. Windows - 32bit", after ConfuserEx
-#                               and NutriculaSignInstaller)
-#   dist/Nutricula-64bit.exe   (from "2. Windows - 64bit", after ConfuserEx
-#                               and NutriculaSignInstaller)
+#   dist/Nutricula-32bit-SC.exe  (from "2. Windows - 32bit (for Mac/Linux)",
+#                                 then NutriculaSignInstaller)
+#   dist/Nutricula-64bit-SC.exe  (from "3. Windows - 64bit (for Mac/Linux)",
+#                                 then NutriculaSignInstaller)
+#
+# ("SC" = self-contained: these two carry their own .NET runtime, which the
+# MetaTrader 5 copy of Wine on a Mac cannot provide. The plain
+# dist/Nutricula-32bit.exe is the Windows installer - it is NOT used here.)
 #
 # and only wraps them for Mac double-click launch. BOTH are bundled into the
-# .app: the launcher script inside it tries the 64-bit one first and, only if
-# the Wine it found cannot start that, the 32-bit one - invisibly to the
-# person double-clicking (see mac-wrapper/Contents/MacOS/Nutricula).
+# .app (stored inside it as Resources/Nutricula-32bit.exe and
+# Resources/Nutricula-64bit.exe, the names the launcher script expects): the
+# launcher tries the 64-bit one first and, only if the Wine it found cannot
+# start that, the 32-bit one - invisibly to the person double-clicking (see
+# mac-wrapper/Contents/MacOS/Nutricula).
 #
 # Why: the real Windows build involves KeyBaker.exe baking real private keys
 # (from Keys/*.pem, deliberately kept empty in the repo and only filled in
@@ -28,8 +34,8 @@ name: 3. Mac
 #
 # The output is a single file, "Nutricula.dmg", containing "Nutricula.app".
 #
-# This workflow is independent of the two Windows workflows and of
-# "4. Linux" - each has its own "Run workflow" button on the Actions tab, so
+# This workflow is independent of the Windows workflows and of
+# "5. Linux" - each has its own "Run workflow" button on the Actions tab, so
 # you can build just this one platform whenever you want, without touching
 # the others. A tag push (v*) triggers the Mac and Linux builds, each
 # attaching its own file to the same GitHub Release separately.
@@ -59,11 +65,11 @@ jobs:
       - name: Checkout repo
         uses: actions/checkout@v7
 
-      - name: Verify both pre-built Windows installers are present
+      - name: Verify both pre-built self-contained installers are present
         run: |
-          for f in "dist/Nutricula-32bit.exe" "dist/Nutricula-64bit.exe"; do
+          for f in "dist/Nutricula-32bit-SC.exe" "dist/Nutricula-64bit-SC.exe"; do
             if [ ! -f "$f" ]; then
-              echo "::error::'$f' is missing. Build both Windows installers your usual way (workflows '1. Windows - 32bit' and '2. Windows - 64bit', then ConfuserEx and NutriculaSignInstaller), and place both signed files in dist/ under exactly these names."
+              echo "::error::'$f' is missing. Build both self-contained installers (workflows '2. Windows - 32bit (for Mac/Linux)' and '3. Windows - 64bit (for Mac/Linux)', then NutriculaSignInstaller), and place both signed files in dist/ under exactly these names."
               exit 1
             fi
           done
@@ -77,8 +83,8 @@ jobs:
           python3 - <<'PY'
           import struct, sys
           expected = {
-              "dist/Nutricula-32bit.exe": (0x014C, "32-bit (x86)"),
-              "dist/Nutricula-64bit.exe": (0x8664, "64-bit (x64)"),
+              "dist/Nutricula-32bit-SC.exe": (0x014C, "32-bit (x86)"),
+              "dist/Nutricula-64bit-SC.exe": (0x8664, "64-bit (x64)"),
           }
           bad = False
           for path, (want, label) in expected.items():
@@ -106,8 +112,9 @@ jobs:
           # The launcher's file name MUST equal CFBundleExecutable in Info.plist.
           cp -R "mac-wrapper/Contents/MacOS/Nutricula" "$APP/Contents/MacOS/Nutricula"
           chmod +x "$APP/Contents/MacOS/Nutricula"
-          cp "dist/Nutricula-32bit.exe" "$APP/Contents/Resources/Nutricula-32bit.exe"
-          cp "dist/Nutricula-64bit.exe" "$APP/Contents/Resources/Nutricula-64bit.exe"
+          # Stored under the names the launcher script looks for.
+          cp "dist/Nutricula-32bit-SC.exe" "$APP/Contents/Resources/Nutricula-32bit.exe"
+          cp "dist/Nutricula-64bit-SC.exe" "$APP/Contents/Resources/Nutricula-64bit.exe"
           echo "APP_PATH=$APP" >> "$GITHUB_ENV"
 
       # ---- Signing + notarization: SKIPPED gracefully if the Apple
