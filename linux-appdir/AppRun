@@ -92,13 +92,11 @@ fi
 # prefix than the one that launched it. These tiers only decide which
 # Wine binary gets handed the .exe to run under.
 #
-# KNOWN OPEN RISK, not yet confirmed on real hardware: the installer .exe
-# is a classic .NET Framework 4.8 app, not self-contained. Most distro
-# Wine packages pull in wine-mono (or prompt to auto-install it on first
-# .NET app launch) which usually covers this, but it hasn't been verified
-# against this specific installer on a real machine - if that first-run
-# Mono prompt does appear, it's an extra Wine-owned dialog, not a crash,
-# but it's also not the fully silent experience asked for.
+# NOTE on .NET: the two bundled .exe files (Nutricula-64bit.exe /
+# Nutricula-32bit.exe, built by the "for Mac/Linux" workflows) are
+# SELF-CONTAINED - they carry their own .NET runtime inside the exe - so
+# they need no wine-mono / .NET Framework in whatever Wine prefix is used
+# (and so no first-run Mono prompt either).
 #
 # Tier 1 (most common on Linux by far): a system Wine already on PATH.
 # Getting MetaTrader running on Linux at all almost always means Wine was
