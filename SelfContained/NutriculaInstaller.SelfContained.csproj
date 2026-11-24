@@ -13,8 +13,18 @@
     has no .NET Framework / Mono registered inside it, so a normal
     ".NET Framework 4.8" exe dies at startup there (the exe loads, then
     mscoree.dll finds no runtime to host). This build brings its own .NET
-    runtime inside the one .exe (self-contained, single file), so it needs
-    nothing registered in the Wine prefix at all.
+    runtime (self-contained) with it, so it needs nothing registered in the
+    Wine prefix at all.
+
+    NOT bundled into a single file BY THIS PROJECT: PublishSingleFile is
+    OFF here on purpose (see below). The workflows that build this project
+    hand you a whole self-contained FOLDER, which you then run through
+    .NET Reactor on your own machine - Reactor both protects the managed
+    code AND does the single-file bundling itself (its own "Bundle"
+    feature), producing the one final .exe. ConfuserEx cannot do this at
+    all (it only understands a plain managed assembly, not a self-contained
+    bundle), which is why this flavour uses .NET Reactor instead - see
+    README-GITHUB-BUILD.md for the full signing flow.
 
     NO DUPLICATED CODE: this project compiles the very same .cs files and
     embeds the very same resources as ../NutriculaInstaller.csproj - they are
@@ -30,8 +40,11 @@
 
     HOW IT IS BUILT (always through the workflows, never by hand):
       dotnet publish SelfContained/NutriculaInstaller.SelfContained.csproj
-             -c Release -r win-x86   (or win-x64)
-    The runtime identifier (-r) decides the architecture.
+             -c Release -r win-x86 -p:PublishSingleFile=false   (or win-x64)
+    The runtime identifier (-r) decides the architecture. PublishSingleFile
+    is explicitly forced to false on the command line too (overriding
+    nothing - see below, it already defaults to false here), spelled out so
+    the command line alone says exactly what is built.
   -->
 
   <PropertyGroup>
@@ -53,15 +66,16 @@
          attributes; generating them again would be a duplicate-attribute error. -->
     <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
 
-    <!-- One self-contained exe, runtime included. Trimming is deliberately OFF
-         (this app reads embedded resources and uses reflection-style APIs;
-         trimming could silently remove something it needs). -->
+    <!-- Self-contained (runtime included), published as a plain FOLDER, not
+         a single file: PublishSingleFile is OFF - bundling into one exe is
+         done later by .NET Reactor, not by dotnet publish (see the header
+         comment above). Trimming is deliberately OFF too (this app reads
+         embedded resources and uses reflection-style APIs; trimming could
+         silently remove something it needs). -->
     <SelfContained>true</SelfContained>
-    <PublishSingleFile>true</PublishSingleFile>
-    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <PublishSingleFile>false</PublishSingleFile>
     <PublishTrimmed>false</PublishTrimmed>
     <PublishReadyToRun>false</PublishReadyToRun>
-    <EnableCompressionInSingleFile>false</EnableCompressionInSingleFile>
 
     <!-- Wine does not provide the ICU library that .NET uses for culture
          data on Windows; without this switch .NET can refuse to start there.
