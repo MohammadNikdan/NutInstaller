@@ -3,9 +3,13 @@
 // already-built installer .exe files by APPENDING a small signed trailer
 // directly onto the end of each file - no separate file to distribute, ever.
 // Run ONLY on the secure build machine, AFTER the final installer .exe files
-// have been fully built (and run through ConfuserEx) - never distributed to
-// customers, never committed anywhere the Installer itself is built from (it
-// links VendorIdentityPrivate.h, which must never ship).
+// have been fully built AND obfuscated - never distributed to customers,
+// never committed anywhere the Installer itself is built from (it links
+// VendorIdentityPrivate.h, which must never ship). The obfuscator differs
+// by flavour (see below): ConfuserEx for the Windows installer, .NET
+// Reactor for the two self-contained Mac/Linux-only builds - this tool
+// only cares about the final .exe each one produces, never how it got
+// there.
 //
 // THERE ARE THREE INSTALLER FLAVOURS (built by three separate GitHub Actions
 // workflows from the same source):
@@ -15,23 +19,35 @@
 //           The installer for ALL Windows users (a 32-bit exe runs on both
 //           32-bit and 64-bit Windows). Not bundled into Mac/Linux packages.
 //   "2. Windows - 32bit (for Mac/Linux)"
-//        -> Nutricula-Unsigned-32bit-SC.exe  -> Nutricula-32bit-SC.exe
+//        -> Nutricula-Unsigned-32bit-SC.zip  -> Nutricula-Unsigned-32bit-SC.exe  -> Nutricula-32bit-SC.exe
 //   "3. Windows - 64bit (for Mac/Linux)"
-//        -> Nutricula-Unsigned-64bit-SC.exe  -> Nutricula-64bit-SC.exe
+//        -> Nutricula-Unsigned-64bit-SC.zip  -> Nutricula-Unsigned-64bit-SC.exe  -> Nutricula-64bit-SC.exe
 //           Self-contained builds (they carry their own .NET runtime). They
 //           exist ONLY to be bundled into the Mac and Linux packages and are
 //           never given to Windows users. "SC" = self-contained.
 //
-//   (left: workflow name, middle: the file name the workflow outputs and
-//   ConfuserEx keeps, right: the file name this tool produces.) This tool
+//           The workflow's own .zip is NOT what this tool takes: it is a
+//           whole self-contained publish FOLDER, not a single exe. Extract
+//           it, run it through .NET Reactor using Reactor's own "Bundle"
+//           feature (Reactor protects the code AND produces the single
+//           final exe itself - ConfuserEx cannot do either step on a
+//           self-contained build), and rename Reactor's output to the
+//           ".exe" name in the middle column before handing it to this
+//           tool. Workflow 1's file needs no such extra step: it already
+//           is a single exe once ConfuserEx is done with it.
+//
+//   (left: workflow name, middle: the already-obfuscated single exe this
+//   tool expects, right: the file name this tool produces.) This tool
 //   recognises the flavour purely from the file's NAME: "32" or "64" (exactly
 //   one of them) plus "-SC" for the self-contained pair. It signs the file
 //   and gives it the clean final name on the right - NO "-Signed" suffix.
 //
 // TWO WAYS TO RUN IT:
 //
-//   1) Interactive (recommended, default) - place the (ConfuserEx'd) unsigned
-//      file(s) named exactly as in the middle column above in the SAME folder
+//   1) Interactive (recommended, default) - place the already-obfuscated
+//      file(s) (ConfuserEx'd for the plain Windows build, .NET Reactor'd
+//      for the two self-contained ones) named exactly as in the middle
+//      column above in the SAME folder
 //      as NutriculaSignInstaller.exe, then run NutriculaSignInstaller.exe
 //      with NO arguments (e.g. double-click it). It looks for ALL the names
 //      next to itself, tells you which one(s) it found, then asks you to
@@ -346,7 +362,7 @@ int RunInteractive()
     if (foundKinds.empty())
     {
         printf("ERROR: no installer file was found next to NutriculaSignInstaller.exe.\n");
-        printf("Place the ConfuserEx'd installer(s) in the SAME folder as\n");
+        printf("Place the already-obfuscated installer(s) in the SAME folder as\n");
         printf("NutriculaSignInstaller.exe, named exactly:\n");
         for (size_t i = 0; i < KIND_COUNT; ++i)
             wprintf(L"  %ls\n", KINDS[i].unsignedName);
@@ -424,7 +440,7 @@ int main(int argc, char** argv)
     }
 
     std::wstring exeName = Utf8ToWide(argv[0]);
-    printf("Interactive mode (recommended): place the ConfuserEx'd installer(s), named exactly\n");
+    printf("Interactive mode (recommended): place the already-obfuscated installer(s), named exactly\n");
     for (size_t i = 0; i < KIND_COUNT; ++i)
         wprintf(L"  %ls\n", KINDS[i].unsignedName);
     wprintf(L"next to %ls with no arguments (at least one of them is needed).\n\n", exeName.c_str());
