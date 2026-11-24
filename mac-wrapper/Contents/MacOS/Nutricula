@@ -121,24 +121,15 @@ find_wine_in_bundle() {
 # which pair we try is "which Wine binary do we hand the .exe to run
 # under", not "which terminal(s) will be found".
 #
-# KNOWN OPEN RISK, not yet confirmed on real hardware: the installer .exe
-# targets classic .NET Framework 4.8 (TargetFrameworkVersion v4.8 in its
-# .csproj), not a self-contained runtime. MetaQuotes' own embedded Wine
-# (bundled only to run the native MT4/MT5 terminal, which is plain C++)
-# has no obvious reason to already include .NET Framework/wine-mono
-# support, and if it doesn't, Wine will either show its own "Mono Windows
-# Support" install prompt (an extra dialog + a wait for a download, not a
-# silent failure, but also not the fully silent double-click experience
-# asked for) or the .exe may fail to start at all. A real Mac with only
-# MetaTrader installed (no separate Wine of its own) is the case most
-# likely to hit this, since there is then no alternative Wine to fall
-# back to. This needs a real-device test to know for sure; if it turns
-# out to be a real problem, the fix is to stop reusing MetaTrader's own
-# bottle at all and instead create/reuse one small Wine prefix of our
-# own (via a user-installed Wine, or a one-time winetricks dotnet48 run)
-# specifically for launching the installer - since, as explained above,
-# discovery doesn't care which prefix launched it anyway. Flagging this
-# now rather than treating it as already solved.
+# WHY THE BUNDLED .exe FILES ARE SELF-CONTAINED: MetaQuotes' own embedded
+# Wine (bundled only to run the native MT4/MT5 terminal, which is plain C++)
+# has NO .NET Framework / Mono registered inside its prefix - a classic
+# .NET Framework 4.8 exe started there and then died silently (confirmed on
+# real hardware: mscoree.dll loaded, but found no runtime to host). So the
+# two exes bundled here (Nutricula-64bit.exe / Nutricula-32bit.exe, built
+# by the "for Mac/Linux" workflows) carry their own .NET runtime inside the
+# exe and need nothing from the Wine prefix. Whether a given Wine can start
+# one of them at all is what the 64-bit-first / 32-bit-fallback below is for.
 # ------------------------------------------------------------------------
 try_pair() {
     local prefix="$1"
