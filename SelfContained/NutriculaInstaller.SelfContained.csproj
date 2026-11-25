@@ -16,14 +16,19 @@
     runtime (self-contained) with it, so it needs nothing registered in the
     Wine prefix at all.
 
-    NOT bundled into a single file BY THIS PROJECT: PublishSingleFile is
-    OFF here on purpose (see below). The workflows that build this project
-    hand you a whole self-contained FOLDER, which you then run through
-    .NET Reactor on your own machine - Reactor both protects the managed
-    code AND does the single-file bundling itself (its own "Bundle"
-    feature), producing the one final .exe. ConfuserEx cannot do this at
-    all (it only understands a plain managed assembly, not a self-contained
-    bundle), which is why this flavour uses .NET Reactor instead - see
+    NOT bundled into a single file BY THIS PROJECT, OR BY ANYTHING ELSE:
+    PublishSingleFile is OFF here on purpose (see below), and stays off for
+    good - the workflows that build this project hand you a whole
+    self-contained FOLDER, and that FOLDER is what ships (inside the Mac
+    and Linux packages), not a single exe. Neither ConfuserEx nor .NET
+    Reactor can merge a self-contained folder's native runtime files
+    (coreclr.dll, hostfxr.dll, ...) into one exe - ConfuserEx cannot open
+    this kind of build at all (it only understands a plain managed
+    assembly), and .NET Reactor's merge/embed features only operate on
+    managed .NET assemblies, never on native DLLs. So only this project's
+    one managed assembly, NutriculaExpertInstaller.dll, is protected (with
+    .NET Reactor, "-target_runtime dotnet"); every native runtime file next
+    to it ships untouched, exactly as dotnet publish produced it - see
     README-GITHUB-BUILD.md for the full signing flow.
 
     NO DUPLICATED CODE: this project compiles the very same .cs files and
