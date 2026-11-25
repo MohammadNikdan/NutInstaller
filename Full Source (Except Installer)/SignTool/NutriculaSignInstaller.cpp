@@ -2,67 +2,99 @@
 // NutriculaSignInstaller.cpp - build-time tool that signs the FINAL,
 // already-built installer .exe files by APPENDING a small signed trailer
 // directly onto the end of each file - no separate file to distribute, ever.
-// Run ONLY on the secure build machine, AFTER the final installer .exe files
-// have been fully built AND obfuscated - never distributed to customers,
+// Run ONLY on the secure build machine, AFTER the final installer file(s)
+// have been fully built AND protected - never distributed to customers,
 // never committed anywhere the Installer itself is built from (it links
-// VendorIdentityPrivate.h, which must never ship). The obfuscator differs
+// VendorIdentityPrivate.h, which must never ship). The protection differs
 // by flavour (see below): ConfuserEx for the Windows installer, .NET
 // Reactor for the two self-contained Mac/Linux-only builds - this tool
 // only cares about the final .exe each one produces, never how it got
 // there.
 //
 // THERE ARE THREE INSTALLER FLAVOURS (built by three separate GitHub Actions
-// workflows from the same source):
+// workflows from the same source). Both interactive mode (no arguments) and
+// scripted mode (one path argument) handle ALL THREE - one by file NAME
+// (workflow 1, unchanged from before), the other two by reading the exe's
+// own PE header (never a name or a folder name):
 //
 //   "1. Windows - 32bit"
-//        -> Nutricula-Unsigned-32bit.exe     -> Nutricula-32bit.exe
+//        -> Nutricula-Unsigned-32bit.exe -> (ConfuserEx) -> Nutricula-32bit.exe
 //           The installer for ALL Windows users (a 32-bit exe runs on both
 //           32-bit and 64-bit Windows). Not bundled into Mac/Linux packages.
-//   "2. Windows - 32bit (for Mac/Linux)"
-//        -> Nutricula-Unsigned-32bit-SC.zip  -> Nutricula-Unsigned-32bit-SC.exe  -> Nutricula-32bit-SC.exe
+//           Recognised BY NAME and renamed (see KINDS[] below) - this path
+//           through the tool is completely unchanged from before.
+//
+//   "2. Windows - 32bit (for Mac/Linux)" and
 //   "3. Windows - 64bit (for Mac/Linux)"
-//        -> Nutricula-Unsigned-64bit-SC.zip  -> Nutricula-Unsigned-64bit-SC.exe  -> Nutricula-64bit-SC.exe
-//           Self-contained builds (they carry their own .NET runtime). They
-//           exist ONLY to be bundled into the Mac and Linux packages and are
-//           never given to Windows users. "SC" = self-contained.
+//        -> Nutricula-Unsigned-{32,64}bit-SC.zip
+//           Each is a zip of a whole self-contained PUBLISH FOLDER (the
+//           native "NutriculaExpertInstaller.exe" apphost, the managed
+//           "NutriculaExpertInstaller.dll" beside it, its ".deps.json" and
+//           ".runtimeconfig.json", and dozens of .NET runtime files) - NOT a
+//           single finished exe. ConfuserEx cannot touch these at all (it
+//           only understands one plain managed assembly, never a
+//           self-contained apphost or a whole publish folder), and neither
+//           can .NET Reactor's own merge/embed features: those only operate
+//           on managed .NET assemblies, never on the native runtime files
+//           (coreclr.dll, hostfxr.dll, ...) that make up most of the folder.
+//           So for these two, the FOLDER itself is what ships, unchanged
+//           apart from its one managed .dll:
+//             1) Extract the zip.
+//             2) Run ONLY "NutriculaExpertInstaller.dll" (inside the
+//                extracted folder) through .NET Reactor, with
+//                "-target_runtime dotnet" - see README-GITHUB-BUILD.md for
+//                the exact settings. Overwrite the plain .dll in the folder
+//                with Reactor's protected output. Every other file in the
+//                folder (the apphost exe, the runtime's own native/managed
+//                files) is left exactly as dotnet publish produced it.
+//             3) Run this tool on "NutriculaExpertInstaller.exe" INSIDE that
+//                same extracted folder (see "TWO WAYS TO RUN IT" below for
+//                exactly how for each mode). Its generic name carries no
+//                "32"/"64", so instead of matching a name, this tool reads
+//                the exe's own PE header directly to tell 32-bit from
+//                64-bit - never a guess, never dependent on what the folder
+//                happens to be called. It then signs the exe AND renames it,
+//                AND its three same-named companions (.dll/.deps.json/
+//                .runtimeconfig.json), ALL TOGETHER, to
+//                "Nutricula-{32,64}bit-SC.*" - renaming only the exe and
+//                leaving the others would break the self-contained app,
+//                because a self-contained apphost finds its companion files
+//                by matching its OWN file name exactly.
+//             4) Place the WHOLE FOLDER (protected .dll + signed/renamed exe
+//                + every untouched runtime file) into the repo's dist/
+//                folder, one subfolder per architecture, for workflows
+//                "4. Mac" and "5. Linux" to pick up. See
+//                README-GITHUB-BUILD.md for the exact folder names expected
+//                there.
 //
-//           The workflow's own .zip is NOT what this tool takes: it is a
-//           whole self-contained publish FOLDER, not a single exe. Extract
-//           it, run it through .NET Reactor using Reactor's own "Bundle"
-//           feature (Reactor protects the code AND produces the single
-//           final exe itself - ConfuserEx cannot do either step on a
-//           self-contained build), and rename Reactor's output to the
-//           ".exe" name in the middle column before handing it to this
-//           tool. Workflow 1's file needs no such extra step: it already
-//           is a single exe once ConfuserEx is done with it.
+//           This self-contained detection (step 3) is based purely on
+//           CONTENT, never on a name: an exe is treated as a self-contained
+//           apphost whenever a ".dll", ".deps.json" and ".runtimeconfig.json"
+//           all exist right beside it under its EXACT same base name - three
+//           files only ever produced together by a modern (.NET Core/5+)
+//           self-contained "dotnet publish", never by the classic .NET
+//           Framework 4.8 single EXE that workflow 1 produces. So this can
+//           never misfire on the Windows-installer flavour, in either mode.
 //
-//   (left: workflow name, middle: the already-obfuscated single exe this
-//   tool expects, right: the file name this tool produces.) This tool
-//   recognises the flavour purely from the file's NAME: "32" or "64" (exactly
-//   one of them) plus "-SC" for the self-contained pair. It signs the file
-//   and gives it the clean final name on the right - NO "-Signed" suffix.
+// TWO WAYS TO RUN IT (both now handle all three flavours):
 //
-// TWO WAYS TO RUN IT:
-//
-//   1) Interactive (recommended, default) - place the already-obfuscated
-//      file(s) (ConfuserEx'd for the plain Windows build, .NET Reactor'd
-//      for the two self-contained ones) named exactly as in the middle
-//      column above in the SAME folder
-//      as NutriculaSignInstaller.exe, then run NutriculaSignInstaller.exe
-//      with NO arguments (e.g. double-click it). It looks for ALL the names
-//      next to itself, tells you which one(s) it found, then asks you to
-//      confirm before signing every file it found. Having only some of them
-//      is fine - only those are signed.
-//      Each file is signed in place and then renamed to its final name, so
-//      only the finished file is left.
+//   1) Interactive (recommended, default, no arguments) - e.g. double-click
+//      it. For the Windows-installer flavour: place
+//      "Nutricula-Unsigned-32bit.exe" (already run through ConfuserEx) in
+//      the SAME folder as NutriculaSignInstaller.exe. For a self-contained
+//      Mac/Linux flavour: copy NutriculaSignInstaller.exe INTO the extracted,
+//      Reactor-protected publish folder itself (right beside
+//      "NutriculaExpertInstaller.exe"). Either way (or both at once, if you
+//      happen to run it from a folder with both), it looks for all of them
+//      next to itself, tells you what it found, then asks you to confirm
+//      before signing.
 //
 //   2) Scripted (for automation) - one file at a time:
-//        NutriculaSignInstaller.exe <path_to_installer.exe>
-//      The flavour is read from the file's NAME (not its folder).
-//      The file is signed in place and then renamed (next to where it is) to
-//      the final name above. If the name does not identify exactly one
-//      flavour (for example neither or both of "32" / "64"), the file is
-//      signed in place and keeps its name (nothing is guessed).
+//        NutriculaSignInstaller.exe <path_to_an_exe>
+//      Works the same for either flavour - pass the Windows installer's path,
+//      or the path to the self-contained folder's "NutriculaExpertInstaller.exe".
+//      Detection (by name for the Windows flavour, by PE header + companion
+//      files for the self-contained one) is identical to interactive mode.
 //
 // TRAILER FORMAT (appended after the exe's normal content):
 //   [64 bytes]  raw (r||s) P-256 signature, over the SHA-256 of every byte
@@ -110,23 +142,23 @@ constexpr size_t MAGIC_LEN = 8;
 constexpr size_t SIGNATURE_LEN = 64;
 constexpr size_t TRAILER_LEN = SIGNATURE_LEN + MAGIC_LEN;
 
-// The file names the GitHub Actions workflows output (and ConfuserEx keeps)
-// and the clean names this tool gives them once signed. The flavours are told
-// apart by "32" / "64" plus an optional "-SC" (self-contained) in the name.
+// The ONLY flavour this tool still recognises and renames by file name: the
+// plain Windows installer (workflow 1). The two self-contained Mac/Linux
+// flavours are never named like this any more (see the header comment) -
+// their apphost exe keeps its generic dotnet-generated name and is always
+// signed in place via scripted mode, which DetectKindFromFileName already
+// falls back to below whenever a name matches no entry here.
 struct InstallerKind
 {
     const wchar_t* unsignedName;
     const wchar_t* finalName;
     const wchar_t* label;
     int  bits;             // 32 or 64
-    bool selfContained;    // true: the Mac/Linux-only self-contained flavour ("-SC")
     bool isWindowsRelease; // true: this is the file Windows users download
 };
 
 const InstallerKind KINDS[] = {
-    { L"Nutricula-Unsigned-32bit.exe",    L"Nutricula-32bit.exe",    L"32-bit (Windows)",       32, false, true  },
-    { L"Nutricula-Unsigned-32bit-SC.exe", L"Nutricula-32bit-SC.exe", L"32-bit (for Mac/Linux)", 32, true,  false },
-    { L"Nutricula-Unsigned-64bit-SC.exe", L"Nutricula-64bit-SC.exe", L"64-bit (for Mac/Linux)", 64, true,  false },
+    { L"Nutricula-Unsigned-32bit.exe", L"Nutricula-32bit.exe", L"32-bit (Windows)", 32, true },
 };
 constexpr size_t KIND_COUNT = sizeof(KINDS) / sizeof(KINDS[0]);
 
@@ -227,10 +259,14 @@ bool PromptYesNo(const char* prompt)
 }
 
 // Decides which flavour a file is from its NAME alone (never its folder):
-// exactly one of "32" / "64" must be present, plus "-sc" for the
-// self-contained (Mac/Linux) pair. Neither or both of 32/64, or a
-// combination that matches no known flavour (e.g. a 64-bit WITHOUT "-sc" -
-// that flavour no longer exists), returns nullptr - the caller must not guess.
+// exactly one of "32" / "64" must be present AND match a known entry in
+// KINDS[] (today, only the plain Windows installer). Neither or both of
+// 32/64, or a bit count with no matching entry, returns nullptr - the caller
+// must not guess. This is also what correctly handles the self-contained
+// Mac/Linux apphost exe (a generic name such as "NutriculaExpertInstaller.exe"
+// with neither "32" nor "64" in it): it always falls through to nullptr here,
+// so the caller signs it in place and leaves its name untouched, which is
+// exactly right for that flavour (see the header comment).
 const InstallerKind* DetectKindFromFileName(const std::wstring& path)
 {
     size_t slashPos = path.find_last_of(L"\\/");
@@ -241,11 +277,10 @@ const InstallerKind* DetectKindFromFileName(const std::wstring& path)
     bool has64 = name.find(L"64") != std::wstring::npos;
     if (has32 == has64) return nullptr;
     int bits = has64 ? 64 : 32;
-    bool hasSC = name.find(L"-sc") != std::wstring::npos;
 
     for (size_t i = 0; i < KIND_COUNT; ++i)
     {
-        if (KINDS[i].bits == bits && KINDS[i].selfContained == hasSC)
+        if (KINDS[i].bits == bits)
             return &KINDS[i];
     }
     return nullptr;
@@ -260,6 +295,59 @@ std::wstring DirectoryOf(const std::wstring& path)
 bool PathsEqualIgnoreCase(const std::wstring& a, const std::wstring& b)
 {
     return _wcsicmp(a.c_str(), b.c_str()) == 0;
+}
+
+// Reads the PE header's "Machine" field directly from an exe's own bytes
+// (same check the build-mac.yml / build-linux.yml workflows already run on
+// these files). Returns 0x014C for 32-bit (x86), 0x8664 for 64-bit (x64), or
+// 0 if the file is not a readable, valid PE executable.
+unsigned short ReadPEMachineField(const std::wstring& path)
+{
+    HANDLE h = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (h == INVALID_HANDLE_VALUE) return 0;
+    unsigned char head[4096] = {0};
+    DWORD readBytes = 0;
+    BOOL ok = ReadFile(h, head, sizeof(head), &readBytes, nullptr);
+    CloseHandle(h);
+    if (!ok || readBytes < 0x40) return 0;
+    if (head[0] != 'M' || head[1] != 'Z') return 0;
+
+    unsigned int peOffset;
+    memcpy(&peOffset, head + 0x3C, sizeof(peOffset));
+    if ((size_t)peOffset + 6 > readBytes) return 0;
+    if (memcmp(head + peOffset, "PE\0\0", 4) != 0) return 0;
+
+    unsigned short machine;
+    memcpy(&machine, head + peOffset + 4, sizeof(machine));
+    return machine;
+}
+
+// An exe is treated as a self-contained Mac/Linux-only apphost - never the
+// plain Windows installer - whenever ALL THREE of these exist right beside
+// it, sharing its EXACT base name (case-insensitively): ".dll",
+// ".deps.json", ".runtimeconfig.json". Those three are only ever produced
+// together by a modern self-contained "dotnet publish" (see the header
+// comment) - the classic .NET Framework 4.8 single EXE that workflow 1
+// produces never has them, so this can never misfire on that flavour.
+// On success, outBaseNoExt receives exePath with its trailing ".exe"
+// removed (same casing/path as given).
+bool LooksLikeSelfContainedApphost(const std::wstring& exePath, std::wstring& outBaseNoExt)
+{
+    if (!FileExistsAndIsFile(exePath)) return false;
+    if (exePath.size() < 4) return false;
+    std::wstring lower4 = exePath.substr(exePath.size() - 4);
+    for (wchar_t& c : lower4) c = (wchar_t)towlower(c);
+    if (lower4 != L".exe") return false;
+
+    std::wstring baseNoExt = exePath.substr(0, exePath.size() - 4);
+    const wchar_t* companionSuffixes[] = { L".dll", L".deps.json", L".runtimeconfig.json" };
+    for (const wchar_t* suffix : companionSuffixes)
+    {
+        if (!FileExistsAndIsFile(baseNoExt + suffix)) return false;
+    }
+
+    outBaseNoExt = baseNoExt;
+    return true;
 }
 
 // Shared by both interactive and scripted mode: reads sourcePath, strips any
@@ -332,11 +420,92 @@ void PrintNextStep(const InstallerKind* kind)
     }
 }
 
+// Signs and renames a self-contained Mac/Linux apphost exe found via
+// LooksLikeSelfContainedApphost: architecture (32 vs 64-bit) is read
+// directly from the exe's OWN PE header, never guessed from any name, so
+// this works regardless of what the enclosing folder happens to be called.
+// Only the exe's bytes are signed (the trailer belongs on the apphost that
+// actually starts; its .dll was already protected separately by .NET
+// Reactor, and .deps.json/.runtimeconfig.json are plain config, never
+// signed). All four same-named files are then renamed TOGETHER to
+// "Nutricula-{bits}bit-SC.*" in the same folder - never just the exe alone,
+// since a self-contained apphost finds its companions by matching its own
+// file name exactly. Prints its own messages; returns 0 on success.
+int SignSelfContainedApphost(const std::wstring& exePath, const std::wstring& baseNoExt)
+{
+    unsigned short machine = ReadPEMachineField(exePath);
+    int bits;
+    if (machine == 0x014C) bits = 32;
+    else if (machine == 0x8664) bits = 64;
+    else
+    {
+        printf("ERROR: could not read a valid PE header from the apphost exe, or its\n");
+        printf("architecture is neither 32-bit (x86) nor 64-bit (x64).\n");
+        return 1;
+    }
+    wprintf(L"Detected: %d-bit self-contained apphost (read from its own PE header).\n", bits);
+
+    int rc = SignInstallerFile(exePath, exePath); // sign in place; rename happens below
+    if (rc != 0) return rc;
+
+    std::wstring dir = DirectoryOf(exePath);
+    std::wstring finalBase = dir + L"Nutricula-" + std::to_wstring(bits) + L"bit-SC";
+
+    struct { const wchar_t* suffix; } parts[] = { {L".exe"}, {L".dll"}, {L".deps.json"}, {L".runtimeconfig.json"} };
+    int renameFailures = 0;
+    for (const auto& part : parts)
+    {
+        std::wstring from = baseNoExt + part.suffix;
+        std::wstring to = finalBase + part.suffix;
+        if (PathsEqualIgnoreCase(from, to)) continue;
+        if (!MoveFileExW(from.c_str(), to.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH))
+        {
+            wprintf(L"WARNING: could not rename %ls to %ls (is it open elsewhere?).\n", from.c_str(), to.c_str());
+            ++renameFailures;
+        }
+    }
+
+    if (renameFailures > 0)
+    {
+        printf("\nERROR: signed successfully, but %d of the 4 companion file(s) could not be\n", renameFailures);
+        printf("renamed - see the warning(s) above. Rename them all yourself, to the same\n");
+        wprintf(L"base name (%ls), before using this folder.\n", finalBase.c_str());
+        return 1;
+    }
+
+    printf("\n");
+    wprintf(L"OK: signed and renamed to %ls.exe / .dll / .deps.json / .runtimeconfig.json\n", finalBase.c_str());
+    printf("Next step:\n");
+    wprintf(L"  Copy the WHOLE folder (not just these 4 files) into the repo's dist\\Nutricula-%dbit-SC\\\n", bits);
+    printf("  folder (the Mac and Linux workflows bundle it). It is NOT for Windows users.\n");
+    return 0;
+}
+
 int RunInteractive()
 {
     std::wstring dir = GetExeDirectory();
 
     printf("Looking for the installer file(s) next to NutriculaSignInstaller.exe...\n\n");
+
+    // Self-contained Mac/Linux apphost candidate: checked independently of
+    // KINDS[] below, since its architecture comes from its own PE header,
+    // never from a name. This is unaffected by, and does not affect, the
+    // Windows-installer detection loop right after it.
+    std::wstring scCandidate = dir + L"NutriculaExpertInstaller.exe";
+    std::wstring scBaseNoExt;
+    bool scFound = LooksLikeSelfContainedApphost(scCandidate, scBaseNoExt);
+    if (scFound)
+    {
+        long long size = GetFileSizeQuick(scCandidate);
+        if (size >= 0)
+            wprintf(L"  FOUND      NutriculaExpertInstaller.exe (%lld bytes) - self-contained apphost (Mac/Linux)\n", size);
+        else
+            printf("  FOUND      NutriculaExpertInstaller.exe - self-contained apphost (Mac/Linux)\n");
+    }
+    else
+    {
+        printf("  not found  NutriculaExpertInstaller.exe - self-contained apphost (Mac/Linux) (skipped)\n");
+    }
 
     std::vector<const InstallerKind*> foundKinds;
     for (size_t i = 0; i < KIND_COUNT; ++i)
@@ -359,24 +528,34 @@ int RunInteractive()
     }
     printf("\n");
 
-    if (foundKinds.empty())
+    if (foundKinds.empty() && !scFound)
     {
         printf("ERROR: no installer file was found next to NutriculaSignInstaller.exe.\n");
-        printf("Place the already-obfuscated installer(s) in the SAME folder as\n");
+        printf("Place the already-obfuscated Windows installer in the SAME folder as\n");
         printf("NutriculaSignInstaller.exe, named exactly:\n");
         for (size_t i = 0; i < KIND_COUNT; ++i)
             wprintf(L"  %ls\n", KINDS[i].unsignedName);
-        printf("and run this again (at least one of them is needed).\n");
+        printf("- or, for a self-contained Mac/Linux build, copy NutriculaSignInstaller.exe\n");
+        printf("INTO the extracted, Reactor-protected publish folder itself (next to its own\n");
+        printf("NutriculaExpertInstaller.exe), and run it again there.\n");
         return 1;
     }
 
-    if (!PromptYesNo(foundKinds.size() == 1 ? "Sign this file now? (y/n): " : "Sign these files now? (y/n): "))
+    int totalFound = (int)foundKinds.size() + (scFound ? 1 : 0);
+    if (!PromptYesNo(totalFound == 1 ? "Sign this file now? (y/n): " : "Sign these files now? (y/n): "))
     {
         printf("ERROR: cancelled - you answered no, nothing was signed.\n");
         return 1;
     }
 
     int failures = 0;
+
+    if (scFound)
+    {
+        printf("\n--- NutriculaExpertInstaller.exe (self-contained apphost) ---\n");
+        if (SignSelfContainedApphost(scCandidate, scBaseNoExt) != 0) ++failures;
+    }
+
     std::vector<const InstallerKind*> signedKinds;
     for (const InstallerKind* kind : foundKinds)
     {
@@ -403,6 +582,16 @@ int RunInteractive()
 
 int RunScripted(const std::wstring& sourcePath)
 {
+    // Self-contained Mac/Linux apphost (detected purely by content - its
+    // three companion files - never by name): checked FIRST, before the
+    // Windows-installer name match below, since this check can never
+    // misfire on that flavour (see the header comment).
+    std::wstring scBaseNoExt;
+    if (LooksLikeSelfContainedApphost(sourcePath, scBaseNoExt))
+    {
+        return SignSelfContainedApphost(sourcePath, scBaseNoExt);
+    }
+
     const InstallerKind* kind = DetectKindFromFileName(sourcePath);
     std::wstring finalPath;
     if (kind != nullptr)
@@ -412,9 +601,10 @@ int RunScripted(const std::wstring& sourcePath)
     else
     {
         finalPath = sourcePath;
-        printf("NOTE: the file name does not identify exactly one known flavour (it needs exactly\n");
-        printf("one of \"32\" / \"64\", plus \"-SC\" for the Mac/Linux self-contained pair) - signing\n");
-        printf("in place, name left unchanged.\n\n");
+        printf("NOTE: the file name does not identify the Windows-installer flavour (it needs\n");
+        printf("exactly one of \"32\" / \"64\"), and it is not a self-contained apphost either\n");
+        printf("(no matching .dll/.deps.json/.runtimeconfig.json beside it) - signing in\n");
+        printf("place, name left unchanged.\n\n");
     }
 
     int rc = SignInstallerFile(sourcePath, finalPath);
@@ -440,10 +630,14 @@ int main(int argc, char** argv)
     }
 
     std::wstring exeName = Utf8ToWide(argv[0]);
-    printf("Interactive mode (recommended): place the already-obfuscated installer(s), named exactly\n");
+    printf("Interactive mode (recommended): run with no arguments from either\n");
+    printf(" - the folder containing the already-obfuscated Windows installer, named exactly\n");
     for (size_t i = 0; i < KIND_COUNT; ++i)
-        wprintf(L"  %ls\n", KINDS[i].unsignedName);
-    wprintf(L"next to %ls with no arguments (at least one of them is needed).\n\n", exeName.c_str());
-    printf("Scripted mode: %s <path_to_installer.exe>\n", argv[0]);
+        wprintf(L"     %ls\n", KINDS[i].unsignedName);
+    printf(" - or the extracted, Reactor-protected self-contained publish folder itself\n");
+    printf("   (next to its own NutriculaExpertInstaller.exe)\n\n");
+    wprintf(L"  %ls\n\n", exeName.c_str());
+    printf("Scripted mode (either flavour, one file at a time):\n");
+    printf("  %s <path_to_an_exe>\n", argv[0]);
     return 1;
 }
