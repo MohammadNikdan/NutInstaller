@@ -38,24 +38,39 @@ The eleven files under `Assets` are compiled into the installer as embedded .NET
 
 ("SC" = self-contained: workflows 2 and 3 build an installer that carries its own .NET runtime, because the copy of Wine that ships with MetaTrader 5 on a Mac has no .NET Framework in it. They are only ever bundled into the Mac / Linux packages, never given to Windows users.)
 
-**The two `-SC` zips are not finished installers.** Each one is a whole self-contained PUBLISH FOLDER (the managed `NutriculaExpertInstaller.dll` plus the .NET runtime's own files next to it), not yet bundled into a single file - extract it before doing anything else with it.
+**The two `-SC` zips are not finished installers, and they never become a single exe.** Each one is a whole self-contained PUBLISH FOLDER: the native apphost `NutriculaExpertInstaller.exe`, the managed `NutriculaExpertInstaller.dll` beside it, and dozens of .NET runtime files (`coreclr.dll`, `hostfxr.dll`, `System.*.dll`, ...). Extract the zip before doing anything else with it. Neither ConfuserEx nor .NET Reactor can merge those native runtime files into one exe - ConfuserEx cannot open this kind of build at all (it only understands a single plain managed assembly), and .NET Reactor's own merge/embed-assemblies features only operate on managed .NET assemblies, never on native DLLs. So the folder itself ships, essentially unchanged, with only its one managed assembly protected.
 
-Next, on the secure build machine, the two flavours are protected differently:
+Next, on the secure build machine, the three flavours are protected differently:
 
 - **`Nutricula-Unsigned-32bit.exe`** (the Windows installer): run it through **ConfuserEx** exactly as before.
-- **The two extracted `-SC` folders**: ConfuserEx cannot open these at all (it only understands a single plain managed assembly, never a whole publish folder) - use **.NET Reactor** instead, with its own **"Bundle"** feature turned on. Point Reactor at the extracted folder; it protects the code and produces the single final `.exe` itself in one step. Rename that output to `Nutricula-Unsigned-32bit-SC.exe` / `Nutricula-Unsigned-64bit-SC.exe` respectively.
+- **Each extracted `-SC` folder**: run **ONLY** the folder's `NutriculaExpertInstaller.dll` through **.NET Reactor**, with **`-target_runtime dotnet`** explicitly set (this is a .NET 8 assembly, not classic .NET Framework/Mono - Reactor must be told so). Recommended settings, matching what was previously used with ConfuserEx:
+  - Control Flow Obfuscation: **ON** (`flow_level 9`, engine `massive` - Reactor's defaults)
+  - Anti Tampering: **OFF**
+  - Obfuscation (renaming): **ON**
+  - String Encryption: **ON**
+  - Resource Encryption & Compression: **OFF** (this is what caused the slow installer startup previously seen with ConfuserEx's "resources" option - leave it off here too)
+  - NecroBit / Code Virtualization / Native EXE File: leave **OFF** unless you have specifically tested the installer still works correctly with them on
+  Point Reactor's output back at the same `NutriculaExpertInstaller.dll` path inside the extracted folder (overwriting the plain one) - every other file in the folder (the apphost exe, every native/managed runtime file) is left exactly as `dotnet publish` produced it.
 
-Then put all three ConfuserEx/Reactor output files next to `NutriculaSignInstaller.exe` and run it. It finds each flavour by name, signs it, and produces the final files:
+Then sign with `NutriculaSignInstaller.exe`. It now handles both kinds of flavour automatically, no manual path or renaming needed - the only difference is WHERE you put/run it:
+
+- **For `Nutricula-Unsigned-32bit.exe`** (the Windows installer): place it next to `NutriculaSignInstaller.exe`, run the tool with no arguments (double-click it), confirm. It is signed and renamed to `Nutricula-32bit.exe`. (Unchanged from before.)
+- **For each extracted `-SC` folder**: copy `NutriculaSignInstaller.exe` **into that same folder** (right beside its own `NutriculaExpertInstaller.exe`), then run it there with no arguments, confirm. It reads the apphost exe's own PE header to tell 32-bit from 64-bit automatically (never guessed from a name or the folder's name), signs it, and renames **all four** of `NutriculaExpertInstaller.{exe,dll,deps.json,runtimeconfig.json}` together to `Nutricula-{32,64}bit-SC.*` - so you can see at a glance that it worked. (Renaming only the exe would break the self-contained app: it finds its companion `.dll` / `.deps.json` / `.runtimeconfig.json` by matching its own file name exactly - this is why all four are renamed in one step, never just one.)
+
+(Scripted/automated use is still available and works the same way for either flavour: `NutriculaSignInstaller.exe <path_to_an_exe>` - it detects which kind of file it was given on its own.)
+
+Resulting files/folders:
 
 ```text
 Nutricula-32bit.exe      <- the Windows installer for ALL Windows users (32- and 64-bit Windows)
-Nutricula-32bit-SC.exe   <- only bundled into the Mac / Linux packages, never given to Windows users
-Nutricula-64bit-SC.exe   <- only bundled into the Mac / Linux packages, never given to Windows users
+Nutricula-32bit-SC/      <- the WHOLE extracted folder (protected dll + signed exe + untouched
+                            runtime files) - only bundled into the Mac / Linux packages
+Nutricula-64bit-SC/      <- same, the 64-bit flavour's whole folder
 ```
 
-Put the **two "-SC" files** into the repo's `dist/` folder, then run **4. Mac** and **5. Linux** (they produce `Nutricula.dmg` and `Nutricula.AppImage`). The Windows installer `Nutricula-32bit.exe` is not used by those two workflows.
+Put the **two whole `-SC` folders** (not single files) into the repo's `dist/` folder, under exactly the names `dist/Nutricula-32bit-SC/` and `dist/Nutricula-64bit-SC/`, then run **4. Mac** and **5. Linux** (they produce `Nutricula.dmg` and `Nutricula.AppImage`, copying each folder's full contents into its own per-architecture subfolder inside the package). The Windows installer `Nutricula-32bit.exe` is not used by those two workflows.
 
-Workflow 1 uses a Windows Server 2022 GitHub-hosted runner and MSBuild. GitHub's Windows 2022 image includes Visual Studio 2022, MSBuild, and .NET Framework 4.8 targeting/build components. Workflows 2 and 3 use the same runner with its pre-installed .NET SDK (8 or newer, checked at the start of the run) and build `SelfContained/NutriculaInstaller.SelfContained.csproj`, which compiles the very same source files and embeds the very same resources as `NutriculaInstaller.csproj` (each run checks that the two project files still list identical items - if you add or remove a source file or an embedded resource in one, mirror it in the other). They publish it as a plain self-contained FOLDER (`PublishSingleFile=false`), not a single file - bundling into one exe is left to .NET Reactor, done by you afterwards (see above), not to this workflow.
+Workflow 1 uses a Windows Server 2022 GitHub-hosted runner and MSBuild. GitHub's Windows 2022 image includes Visual Studio 2022, MSBuild, and .NET Framework 4.8 targeting/build components. Workflows 2 and 3 use the same runner with its pre-installed .NET SDK (8 or newer, checked at the start of the run) and build `SelfContained/NutriculaInstaller.SelfContained.csproj`, which compiles the very same source files and embeds the very same resources as `NutriculaInstaller.csproj` (each run checks that the two project files still list identical items - if you add or remove a source file or an embedded resource in one, mirror it in the other). They publish it as a plain self-contained FOLDER (`PublishSingleFile=false`), not a single file - that folder is what ships, with only its managed `.dll` protected by .NET Reactor afterwards (see above); it is never bundled into a single exe by anything in this pipeline.
 
 ## Important
 
