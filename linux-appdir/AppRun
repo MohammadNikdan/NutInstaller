@@ -12,9 +12,10 @@
 # always already on this system if MetaTrader is running at all - unlike
 # Mac, Linux has no official MetaQuotes build, so SOME Wine install is how
 # MetaTrader got here in the first place) and launch the real Windows
-# installer (bundled alongside this script as TWO builds: a 64-bit
-# Nutricula-64bit.exe and a 32-bit Nutricula-32bit.exe - see the launch
-# section at the bottom for why) through it. If nothing usable is found anywhere, show a plain English message
+# installer (bundled alongside this script as TWO whole self-contained
+# publish folders, one per architecture: win-x64/Nutricula-64bit-SC.exe and
+# win-x86/Nutricula-32bit-SC.exe - see the launch section at the bottom for
+# why) through it. If nothing usable is found anywhere, show a plain English message
 # (via whatever GUI dialog tool is available, or a desktop notification as
 # a fallback) saying no MetaTrader installation was found, and exit.
 # ==============================================================================
@@ -28,11 +29,14 @@ if [ -z "${APPDIR:-}" ]; then
     APPDIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 fi
 
-# Both builds of the same installer. Which one a given Wine can actually run
-# can differ from machine to machine, so the launch section at the bottom
-# tries the 64-bit one first and falls back to the 32-bit one - invisibly.
-INSTALLER_EXE_64="$APPDIR/Resources/Nutricula-64bit.exe"
-INSTALLER_EXE_32="$APPDIR/Resources/Nutricula-32bit.exe"
+# Both builds of the same installer, each its own whole self-contained
+# publish folder (apphost exe + managed dll + the .NET runtime's own files)
+# under a per-architecture subfolder - not a single flat exe file any more.
+# Which one a given Wine can actually run can differ from machine to machine,
+# so the launch section at the bottom tries the 64-bit one first and falls
+# back to the 32-bit one - invisibly.
+INSTALLER_EXE_64="$APPDIR/Resources/win-x64/Nutricula-64bit-SC.exe"
+INSTALLER_EXE_32="$APPDIR/Resources/win-x86/Nutricula-32bit-SC.exe"
 LOG_FILE="$HOME/.nutricula_installer_launcher.log"
 log() { printf '%s %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$1" >> "$LOG_FILE" 2>/dev/null; }
 
@@ -92,11 +96,11 @@ fi
 # prefix than the one that launched it. These tiers only decide which
 # Wine binary gets handed the .exe to run under.
 #
-# NOTE on .NET: the two bundled .exe files (Nutricula-64bit.exe /
-# Nutricula-32bit.exe, built by the "for Mac/Linux" workflows) are
-# SELF-CONTAINED - they carry their own .NET runtime inside the exe - so
-# they need no wine-mono / .NET Framework in whatever Wine prefix is used
-# (and so no first-run Mono prompt either).
+# NOTE on .NET: the two bundled folders (win-x64/ / win-x86/, built by the
+# "for Mac/Linux" workflows) are SELF-CONTAINED - each carries its own .NET
+# runtime right next to its apphost exe - so they need no wine-mono / .NET
+# Framework in whatever Wine prefix is used (and so no first-run Mono prompt
+# either).
 #
 # Tier 1 (most common on Linux by far): a system Wine already on PATH.
 # Getting MetaTrader running on Linux at all almost always means Wine was
