@@ -18,20 +18,27 @@ name: 2. Windows - 32bit (for Mac/Linux)
 # files ever list different sources/resources.
 #
 # Output artifact: Nutricula-Unsigned-32bit-SC.zip
-#   This is NOT the final exe - it is a zip of the whole self-contained
-#   PUBLISH FOLDER (the managed .dll plus the .NET runtime files next to
-#   it, not yet bundled into one file). Next steps, all on your own
-#   machine (never in this workflow):
+#   This is NOT a finished exe - it is a zip of the whole self-contained
+#   PUBLISH FOLDER (the native apphost exe, its managed .dll, and dozens of
+#   .NET runtime files). Next steps, all on your own machine (never in this
+#   workflow):
 #     1) Extract the zip.
-#     2) Run the extracted folder through .NET Reactor, using its "Bundle"
-#        feature (Reactor both protects the code AND produces the single
-#        final .exe - ConfuserEx cannot do either step: it only
-#        understands a plain managed assembly, never a self-contained
-#        publish folder or an already-bundled single-file exe).
-#     3) Rename Reactor's output .exe to Nutricula-Unsigned-32bit-SC.exe,
-#        then run NutriculaSignInstaller.exe on it as usual (it finds it
-#        by its name and produces Nutricula-32bit-SC.exe).
-#     4) Place that signed file in dist/ for the Mac and Linux workflows.
+#     2) Run ONLY the extracted folder's "NutriculaExpertInstaller.dll"
+#        through .NET Reactor ("-target_runtime dotnet"). ConfuserEx cannot
+#        touch this build at all (it only understands a plain managed
+#        assembly, never a self-contained apphost or publish folder), and
+#        .NET Reactor's own merge/embed features cannot bundle the native
+#        runtime files (coreclr.dll, hostfxr.dll, ...) either - only the
+#        managed .dll is protected; overwrite it in place in the folder.
+#     3) Copy NutriculaSignInstaller.exe into that same extracted folder and
+#        run it there with no arguments (or run it in scripted mode, pointed
+#        at the folder's "NutriculaExpertInstaller.exe" - either way). It
+#        reads the apphost's own PE header to detect 32 vs 64-bit on its
+#        own, signs it, and renames it together with its three companions
+#        (.dll/.deps.json/.runtimeconfig.json) to "Nutricula-32bit-SC.*".
+#     4) Place the WHOLE FOLDER (protected dll + signed/renamed exe + every
+#        untouched runtime file) into dist/Nutricula-32bit-SC/ for the Mac
+#        and Linux workflows.
 #   See README-GITHUB-BUILD.md for the full walkthrough.
 #
 # This workflow is the "first" of the pair: "2. Windows - 32bit (for

@@ -4,22 +4,34 @@ name: 5. Linux
 # SCOPE, STATED PLAINLY: this workflow does NOT rebuild the installer .exe
 # files from source - see build-mac.yml's header comment for the full
 # reasoning (same applies here). It expects TWO already-built, already-signed
-# installer files to exist in the repo's dist/ folder:
+# self-contained installer FOLDERS to exist in the repo's dist/ folder:
 #
-#   dist/Nutricula-32bit-SC.exe  (from "2. Windows - 32bit (for Mac/Linux)",
-#                                 then NutriculaSignInstaller)
-#   dist/Nutricula-64bit-SC.exe  (from "3. Windows - 64bit (for Mac/Linux)",
-#                                 then NutriculaSignInstaller)
+#   dist/Nutricula-32bit-SC/  (from "2. Windows - 32bit (for Mac/Linux)": the
+#                              workflow's zip, extracted, with ONLY its
+#                              NutriculaExpertInstaller.dll protected by .NET
+#                              Reactor, then both the apphost exe and its
+#                              three companions (.dll/.deps.json/
+#                              .runtimeconfig.json) signed AND renamed
+#                              TOGETHER by NutriculaSignInstaller to
+#                              Nutricula-32bit-SC.{exe,dll,deps.json,
+#                              runtimeconfig.json} - every other file
+#                              untouched)
+#   dist/Nutricula-64bit-SC/  (same, from "3. Windows - 64bit (for Mac/Linux)",
+#                              renamed to Nutricula-64bit-SC.*)
 #
 # ("SC" = self-contained: these two carry their own .NET runtime. The plain
 # dist/Nutricula-32bit.exe is the Windows installer - it is NOT used here.)
+# Each folder is the WHOLE self-contained publish output (the apphost exe,
+# its managed .dll, and dozens of .NET runtime files) - not a single file.
+# Neither ConfuserEx nor .NET Reactor can merge those native runtime files
+# into one exe, so the folder ships as-is; see README-GITHUB-BUILD.md.
 #
 # and only wraps them for Linux double-click (AppImage) launch. BOTH are
-# bundled (stored inside it as Resources/Nutricula-32bit.exe and
-# Resources/Nutricula-64bit.exe, the names AppRun expects): AppRun tries the
-# 64-bit one first and, only if the Wine it found cannot start that, the
-# 32-bit one - invisibly to the person double-clicking (see
-# linux-appdir/AppRun).
+# bundled (each folder's contents copied whole into its own per-architecture
+# subfolder: Resources/win-x86/ and Resources/win-x64/, the paths AppRun
+# expects): AppRun tries the 64-bit one first and, only if the Wine it found
+# cannot start that, the 32-bit one - invisibly to the person double-clicking
+# (see linux-appdir/AppRun).
 #
 # The output is a single file, "Nutricula.AppImage".
 #
@@ -43,26 +55,34 @@ jobs:
       - name: Checkout repo
         uses: actions/checkout@v7
 
-      - name: Verify both pre-built self-contained installers are present
+      - name: Verify both pre-built self-contained installer folders are present
         run: |
-          for f in "dist/Nutricula-32bit-SC.exe" "dist/Nutricula-64bit-SC.exe"; do
-            if [ ! -f "$f" ]; then
-              echo "::error::'$f' is missing. Build both self-contained installers (workflows '2. Windows - 32bit (for Mac/Linux)' and '3. Windows - 64bit (for Mac/Linux)', then NutriculaSignInstaller), and place both signed files in dist/ under exactly these names."
+          for pair in "32:dist/Nutricula-32bit-SC" "64:dist/Nutricula-64bit-SC"; do
+            bits="${pair%%:*}"
+            d="${pair#*:}"
+            if [ ! -d "$d" ]; then
+              echo "::error::'$d' is missing (or is not a folder). Build both self-contained installers (workflows '2. Windows - 32bit (for Mac/Linux)' and '3. Windows - 64bit (for Mac/Linux)'), extract each zip, protect ONLY NutriculaExpertInstaller.dll with .NET Reactor, then run NutriculaSignInstaller on the folder (it signs AND renames the apphost exe plus its 3 companions together), then place each WHOLE FOLDER in dist/ under exactly these names."
               exit 1
             fi
+            for ext in exe dll; do
+              if [ ! -f "$d/Nutricula-${bits}bit-SC.$ext" ]; then
+                echo "::error::'$d/Nutricula-${bits}bit-SC.$ext' is missing - '$d' does not look like a complete, already-signed self-contained publish folder (NutriculaSignInstaller renames NutriculaExpertInstaller.* to Nutricula-${bits}bit-SC.* when it signs it - run that first)."
+                exit 1
+              fi
+            done
           done
 
-      - name: Verify each installer really has the architecture its name says
+      - name: Verify each installer folder really has the architecture its name says
         run: |
-          # Guards against the two files being swapped or mis-named when they
+          # Guards against the two folders being swapped or mis-named when they
           # were placed into dist/ by hand: reads the PE header's Machine
-          # field of each file. 32bit must be x86 (0x014C), 64bit must be
-          # x64 (0x8664).
+          # field of the apphost exe inside each folder. 32bit must be x86
+          # (0x014C), 64bit must be x64 (0x8664).
           python3 - <<'PY'
           import struct, sys
           expected = {
-              "dist/Nutricula-32bit-SC.exe": (0x014C, "32-bit (x86)"),
-              "dist/Nutricula-64bit-SC.exe": (0x8664, "64-bit (x64)"),
+              "dist/Nutricula-32bit-SC/Nutricula-32bit-SC.exe": (0x014C, "32-bit (x86)"),
+              "dist/Nutricula-64bit-SC/Nutricula-64bit-SC.exe": (0x8664, "64-bit (x64)"),
           }
           bad = False
           for path, (want, label) in expected.items():
@@ -75,7 +95,7 @@ jobs:
                   print("::error::%s has no valid PE header." % path); bad = True; continue
               machine = struct.unpack_from("<H", head, pe + 4)[0]
               if machine != want:
-                  print("::error::%s should be %s (Machine 0x%04X) but is 0x%04X - wrong file or wrong name." % (path, label, want, machine)); bad = True
+                  print("::error::%s should be %s (Machine 0x%04X) but is 0x%04X - wrong folder or wrong name." % (path, label, want, machine)); bad = True
               else:
                   print("OK: %s is %s." % (path, label))
           sys.exit(1 if bad else 0)
@@ -85,13 +105,16 @@ jobs:
         run: |
           set -e
           APPDIR="build/Nutricula.AppDir"
-          mkdir -p "$APPDIR/Resources"
+          mkdir -p "$APPDIR/Resources/win-x86" "$APPDIR/Resources/win-x64"
           cp linux-appdir/AppRun "$APPDIR/AppRun"
           chmod +x "$APPDIR/AppRun"
           cp linux-appdir/NutriculaInstaller.desktop "$APPDIR/NutriculaInstaller.desktop"
-          # Stored under the names AppRun looks for.
-          cp "dist/Nutricula-32bit-SC.exe" "$APPDIR/Resources/Nutricula-32bit.exe"
-          cp "dist/Nutricula-64bit-SC.exe" "$APPDIR/Resources/Nutricula-64bit.exe"
+          # Each self-contained folder's contents, copied WHOLE (the signed,
+          # renamed Nutricula-{32,64}bit-SC.exe/.dll/.deps.json/
+          # .runtimeconfig.json, plus every untouched .NET runtime file) into
+          # the per-architecture subfolder AppRun looks for.
+          cp -R "dist/Nutricula-32bit-SC/." "$APPDIR/Resources/win-x86/"
+          cp -R "dist/Nutricula-64bit-SC/." "$APPDIR/Resources/win-x64/"
           # appimagetool requires SOME icon file to exist. linux-appdir/NutriculaInstaller.png
           # is a tiny 1x1 placeholder checked into the repo - replace that
           # file with a real icon (same name, same location) whenever you
