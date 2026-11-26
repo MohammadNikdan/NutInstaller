@@ -53,15 +53,24 @@
 //                "32"/"64", so instead of matching a name, this tool reads
 //                the exe's own PE header directly to tell 32-bit from
 //                64-bit - never a guess, never dependent on what the folder
-//                happens to be called. It then signs the exe AND renames it,
-//                AND its three same-named companions (.dll/.deps.json/
-//                .runtimeconfig.json), ALL TOGETHER, to
-//                "Nutricula-{32,64}bit-SC.*" - renaming only the exe and
-//                leaving the others would break the self-contained app,
-//                because a self-contained apphost finds its companion files
-//                by matching its OWN file name exactly.
-//             4) Place the WHOLE FOLDER (protected .dll + signed/renamed exe
-//                + every untouched runtime file) into the repo's dist/
+//                happens to be called. It then signs the exe IN PLACE,
+//                under its ORIGINAL name - it is never renamed, not even
+//                the exe alone. (An earlier version of this tool renamed
+//                the exe and its three companions together, so a
+//                successful sign would be visually obvious; this broke the
+//                self-contained app. The managed-assembly path a
+//                self-contained apphost loads is a fixed string baked INTO
+//                the exe at publish time, never derived from the exe's own
+//                running file name at startup - so renaming the files left
+//                the apphost looking for a .dll that no longer existed
+//                under its old name, and it failed to start with no window
+//                and no error at all. Confirmed on real hardware. Visual
+//                confirmation that signing worked now comes from this
+//                tool's own OK/FAILED messages and the green/red banner it
+//                prints at the very end - the window stays open afterwards
+//                [press Enter to close it] instead of closing itself.)
+//             4) Place the WHOLE FOLDER (protected .dll + signed exe + every
+//                untouched runtime file) into the repo's dist/
 //                folder, one subfolder per architecture, for workflows
 //                "4. Mac" and "5. Linux" to pick up. See
 //                README-GITHUB-BUILD.md for the exact folder names expected
@@ -117,7 +126,15 @@
 // Safe to re-run: any existing trailer is stripped first, so a file is
 // re-signed fresh each time rather than growing a new trailer on top of the
 // old one. If a final file with the target name already exists (for
-// example from an earlier build), it is replaced by the new one.
+// example from an earlier build), it is replaced by the new one. (This
+// applies to the Windows-installer flavour, workflow 1 - the only one this
+// tool ever renames. The self-contained flavour is always signed in place
+// under its original name - see above - because its apphost cannot be
+// renamed safely.)
+//
+// After finishing (either mode, either flavour), this tool prints a green
+// "SUCCESS" or red "FAILED" banner and then waits for Enter before closing,
+// so double-clicking it never flashes a window shut before you can read it.
 //
 
 #include "../Coordinator/VendorIdentityPrivate.h"
@@ -141,6 +158,61 @@ const char* MAGIC = "NUTRSIG1";
 constexpr size_t MAGIC_LEN = 8;
 constexpr size_t SIGNATURE_LEN = 64;
 constexpr size_t TRAILER_LEN = SIGNATURE_LEN + MAGIC_LEN;
+
+// The console's own colors before this tool touches them, captured once at
+// startup so every color change can be reverted to exactly what it was
+// (never to a guessed default) - see CaptureConsoleDefaultColor() in main().
+WORD g_originalConsoleAttributes = FOREGROUND_RED | FOREGROUND_GREEN | FOREGROUND_BLUE;
+
+void CaptureConsoleDefaultColor()
+{
+    CONSOLE_SCREEN_BUFFER_INFO info;
+    HANDLE h = GetStdHandle(STD_OUTPUT_HANDLE);
+    if (h != INVALID_HANDLE_VALUE && GetConsoleScreenBufferInfo(h, &info))
+        g_originalConsoleAttributes = info.wAttributes;
+}
+
+void SetConsoleColor(WORD color)
+{
+    HANDLE h = GetStdHandle(STD_OUTPUT_HANDLE);
+    if (h != INVALID_HANDLE_VALUE) SetConsoleTextAttribute(h, color);
+}
+
+void ResetConsoleColor()
+{
+    SetConsoleColor(g_originalConsoleAttributes);
+}
+
+// One clearly colored banner at the very end of every run (either flavour,
+// either mode), so success/failure is obvious at a glance - not just from
+// text buried in the scroll of messages above it.
+void PrintFinalBanner(bool success)
+{
+    printf("\n");
+    SetConsoleColor(success
+        ? (FOREGROUND_GREEN | FOREGROUND_INTENSITY)
+        : (FOREGROUND_RED | FOREGROUND_INTENSITY));
+    printf("================================================================\n");
+    if (success)
+        printf(" SUCCESS - signing completed.\n");
+    else
+        printf(" FAILED - signing did NOT complete. See the messages above.\n");
+    printf("================================================================\n");
+    ResetConsoleColor();
+}
+
+// Keeps the window open after double-clicking (Windows closes a console
+// window the instant the process behind it exits, which otherwise makes a
+// quick run look like nothing happened at all). Safe under automation too:
+// if stdin has no console to read from (piped/redirected/closed), getline
+// returns immediately instead of hanging.
+void PauseBeforeExit()
+{
+    printf("\nPress Enter to close this window...");
+    fflush(stdout);
+    std::string dummy;
+    std::getline(std::cin, dummy);
+}
 
 // The ONLY flavour this tool still recognises and renames by file name: the
 // plain Windows installer (workflow 1). The two self-contained Mac/Linux
@@ -420,18 +492,24 @@ void PrintNextStep(const InstallerKind* kind)
     }
 }
 
-// Signs and renames a self-contained Mac/Linux apphost exe found via
+// Signs a self-contained Mac/Linux apphost exe found via
 // LooksLikeSelfContainedApphost: architecture (32 vs 64-bit) is read
 // directly from the exe's OWN PE header, never guessed from any name, so
 // this works regardless of what the enclosing folder happens to be called.
-// Only the exe's bytes are signed (the trailer belongs on the apphost that
-// actually starts; its .dll was already protected separately by .NET
-// Reactor, and .deps.json/.runtimeconfig.json are plain config, never
-// signed). All four same-named files are then renamed TOGETHER to
-// "Nutricula-{bits}bit-SC.*" in the same folder - never just the exe alone,
-// since a self-contained apphost finds its companions by matching its own
-// file name exactly. Prints its own messages; returns 0 on success.
-int SignSelfContainedApphost(const std::wstring& exePath, const std::wstring& baseNoExt)
+// Only the exe's bytes are signed, IN PLACE, under its ORIGINAL name - it
+// is NEVER renamed (the trailer belongs on the apphost that actually
+// starts; its .dll was already protected separately by .NET Reactor, and
+// .deps.json/.runtimeconfig.json are plain config, never signed).
+//
+// Renaming is deliberately NOT done here any more: an earlier version of
+// this tool renamed the exe and its three companions together, which broke
+// the self-contained app - the managed-assembly path a self-contained
+// apphost loads is a fixed string baked INTO the exe at publish time, never
+// derived from the exe's own running file name, so after a rename the
+// apphost kept looking for a .dll under its old name and failed to start
+// with no window and no error at all (confirmed on real hardware). Prints
+// its own OK/ERROR messages; returns 0 on success.
+int SignSelfContainedApphost(const std::wstring& exePath)
 {
     unsigned short machine = ReadPEMachineField(exePath);
     int bits;
@@ -445,38 +523,11 @@ int SignSelfContainedApphost(const std::wstring& exePath, const std::wstring& ba
     }
     wprintf(L"Detected: %d-bit self-contained apphost (read from its own PE header).\n", bits);
 
-    int rc = SignInstallerFile(exePath, exePath); // sign in place; rename happens below
+    int rc = SignInstallerFile(exePath, exePath); // sign in place, name never changes
     if (rc != 0) return rc;
 
-    std::wstring dir = DirectoryOf(exePath);
-    std::wstring finalBase = dir + L"Nutricula-" + std::to_wstring(bits) + L"bit-SC";
-
-    struct { const wchar_t* suffix; } parts[] = { {L".exe"}, {L".dll"}, {L".deps.json"}, {L".runtimeconfig.json"} };
-    int renameFailures = 0;
-    for (const auto& part : parts)
-    {
-        std::wstring from = baseNoExt + part.suffix;
-        std::wstring to = finalBase + part.suffix;
-        if (PathsEqualIgnoreCase(from, to)) continue;
-        if (!MoveFileExW(from.c_str(), to.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH))
-        {
-            wprintf(L"WARNING: could not rename %ls to %ls (is it open elsewhere?).\n", from.c_str(), to.c_str());
-            ++renameFailures;
-        }
-    }
-
-    if (renameFailures > 0)
-    {
-        printf("\nERROR: signed successfully, but %d of the 4 companion file(s) could not be\n", renameFailures);
-        printf("renamed - see the warning(s) above. Rename them all yourself, to the same\n");
-        wprintf(L"base name (%ls), before using this folder.\n", finalBase.c_str());
-        return 1;
-    }
-
-    printf("\n");
-    wprintf(L"OK: signed and renamed to %ls.exe / .dll / .deps.json / .runtimeconfig.json\n", finalBase.c_str());
-    printf("Next step:\n");
-    wprintf(L"  Copy the WHOLE folder (not just these 4 files) into the repo's dist\\Nutricula-%dbit-SC\\\n", bits);
+    printf("\nNext step:\n");
+    wprintf(L"  Copy the WHOLE folder (not just this exe) into the repo's dist\\Nutricula-%dbit-SC\\\n", bits);
     printf("  folder (the Mac and Linux workflows bundle it). It is NOT for Windows users.\n");
     return 0;
 }
@@ -553,7 +604,7 @@ int RunInteractive()
     if (scFound)
     {
         printf("\n--- NutriculaExpertInstaller.exe (self-contained apphost) ---\n");
-        if (SignSelfContainedApphost(scCandidate, scBaseNoExt) != 0) ++failures;
+        if (SignSelfContainedApphost(scCandidate) != 0) ++failures;
     }
 
     std::vector<const InstallerKind*> signedKinds;
@@ -589,7 +640,7 @@ int RunScripted(const std::wstring& sourcePath)
     std::wstring scBaseNoExt;
     if (LooksLikeSelfContainedApphost(sourcePath, scBaseNoExt))
     {
-        return SignSelfContainedApphost(sourcePath, scBaseNoExt);
+        return SignSelfContainedApphost(sourcePath);
     }
 
     const InstallerKind* kind = DetectKindFromFileName(sourcePath);
@@ -620,24 +671,33 @@ int RunScripted(const std::wstring& sourcePath)
 
 int main(int argc, char** argv)
 {
+    CaptureConsoleDefaultColor();
+
+    int rc;
     if (argc == 1)
     {
-        return RunInteractive();
+        rc = RunInteractive();
     }
-    if (argc == 2)
+    else if (argc == 2)
     {
-        return RunScripted(Utf8ToWide(argv[1]));
+        rc = RunScripted(Utf8ToWide(argv[1]));
+    }
+    else
+    {
+        std::wstring exeName = Utf8ToWide(argv[0]);
+        printf("Interactive mode (recommended): run with no arguments from either\n");
+        printf(" - the folder containing the already-obfuscated Windows installer, named exactly\n");
+        for (size_t i = 0; i < KIND_COUNT; ++i)
+            wprintf(L"     %ls\n", KINDS[i].unsignedName);
+        printf(" - or the extracted, Reactor-protected self-contained publish folder itself\n");
+        printf("   (next to its own NutriculaExpertInstaller.exe)\n\n");
+        wprintf(L"  %ls\n\n", exeName.c_str());
+        printf("Scripted mode (either flavour, one file at a time):\n");
+        printf("  %s <path_to_an_exe>\n", argv[0]);
+        rc = 1;
     }
 
-    std::wstring exeName = Utf8ToWide(argv[0]);
-    printf("Interactive mode (recommended): run with no arguments from either\n");
-    printf(" - the folder containing the already-obfuscated Windows installer, named exactly\n");
-    for (size_t i = 0; i < KIND_COUNT; ++i)
-        wprintf(L"     %ls\n", KINDS[i].unsignedName);
-    printf(" - or the extracted, Reactor-protected self-contained publish folder itself\n");
-    printf("   (next to its own NutriculaExpertInstaller.exe)\n\n");
-    wprintf(L"  %ls\n\n", exeName.c_str());
-    printf("Scripted mode (either flavour, one file at a time):\n");
-    printf("  %s <path_to_an_exe>\n", argv[0]);
-    return 1;
+    PrintFinalBanner(rc == 0);
+    PauseBeforeExit();
+    return rc;
 }
