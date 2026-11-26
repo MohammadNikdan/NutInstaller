@@ -9,8 +9,8 @@
 # runtime already hiding inside their MetaTrader installation (or another
 # Wine-based tool, if that's what they used instead) and launch the real
 # Windows installer (bundled in Contents/Resources as TWO whole self-contained
-# publish folders, one per architecture: win-x64/Nutricula-64bit-SC.exe and
-# win-x86/Nutricula-32bit-SC.exe - see the launch section at the bottom for
+# publish folders, one per architecture: win-x64/NutriculaExpertInstaller.exe and
+# win-x86/NutriculaExpertInstaller.exe - see the launch section at the bottom for
 # why) through it. If we succeed, the person just sees the ordinary Windows
 # installer window pop up and never learns Wine was involved at all.
 #
@@ -34,8 +34,8 @@ RESOURCES_DIR="$APP_CONTENTS_DIR/Resources"
 # Which one a given Wine can actually run differs from machine to machine, so
 # the launch section at the bottom tries the 64-bit one first and falls back
 # to the 32-bit one - invisibly.
-INSTALLER_EXE_64="$RESOURCES_DIR/win-x64/Nutricula-64bit-SC.exe"
-INSTALLER_EXE_32="$RESOURCES_DIR/win-x86/Nutricula-32bit-SC.exe"
+INSTALLER_EXE_64="$RESOURCES_DIR/win-x64/NutriculaExpertInstaller.exe"
+INSTALLER_EXE_32="$RESOURCES_DIR/win-x86/NutriculaExpertInstaller.exe"
 
 LOG_FILE="$HOME/Library/Logs/NutriculaInstallerLauncher.log"
 mkdir -p "$(dirname "$LOG_FILE")" 2>/dev/null
