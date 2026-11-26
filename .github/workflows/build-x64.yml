@@ -34,9 +34,13 @@ name: 3. Windows - 64bit (for Mac/Linux)
 #        run it there with no arguments (or run it in scripted mode, pointed
 #        at the folder's "NutriculaExpertInstaller.exe" - either way). It
 #        reads the apphost's own PE header to detect 32 vs 64-bit on its
-#        own, signs it, and renames it together with its three companions
-#        (.dll/.deps.json/.runtimeconfig.json) to "Nutricula-64bit-SC.*".
-#     4) Place the WHOLE FOLDER (protected dll + signed/renamed exe + every
+#        own and signs it IN PLACE - the exe is never renamed (renaming it,
+#        or its .dll/.deps.json/.runtimeconfig.json companions, breaks the
+#        self-contained app: the managed-assembly path the apphost loads is
+#        baked into the exe at publish time, not derived from its file name).
+#        The tool prints a green/red pass-fail banner and waits for Enter
+#        before closing, so a successful sign is still obvious at a glance.
+#     4) Place the WHOLE FOLDER (protected dll + signed exe + every
 #        untouched runtime file) into dist/Nutricula-64bit-SC/ for the Mac
 #        and Linux workflows.
 #   See README-GITHUB-BUILD.md for the full walkthrough.

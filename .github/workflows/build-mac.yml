@@ -8,15 +8,16 @@ name: 4. Mac
 #   dist/Nutricula-32bit-SC/  (from "2. Windows - 32bit (for Mac/Linux)": the
 #                              workflow's zip, extracted, with ONLY its
 #                              NutriculaExpertInstaller.dll protected by .NET
-#                              Reactor, then both the apphost exe and its
-#                              three companions (.dll/.deps.json/
-#                              .runtimeconfig.json) signed AND renamed
-#                              TOGETHER by NutriculaSignInstaller to
-#                              Nutricula-32bit-SC.{exe,dll,deps.json,
-#                              runtimeconfig.json} - every other file
-#                              untouched)
-#   dist/Nutricula-64bit-SC/  (same, from "3. Windows - 64bit (for Mac/Linux)",
-#                              renamed to Nutricula-64bit-SC.*)
+#                              Reactor, then the apphost exe itself signed IN
+#                              PLACE by NutriculaSignInstaller - the exe,
+#                              its .dll, .deps.json and .runtimeconfig.json
+#                              all keep their original dotnet-publish names;
+#                              NONE of them is ever renamed, because a
+#                              self-contained apphost's own managed-assembly
+#                              reference is baked into the exe at publish
+#                              time and does not survive a rename - every
+#                              other file in the folder untouched)
+#   dist/Nutricula-64bit-SC/  (same, from "3. Windows - 64bit (for Mac/Linux)")
 #
 # ("SC" = self-contained: these two carry their own .NET runtime, which the
 # MetaTrader 5 copy of Wine on a Mac cannot provide. The plain
@@ -83,12 +84,12 @@ jobs:
             bits="${pair%%:*}"
             d="${pair#*:}"
             if [ ! -d "$d" ]; then
-              echo "::error::'$d' is missing (or is not a folder). Build both self-contained installers (workflows '2. Windows - 32bit (for Mac/Linux)' and '3. Windows - 64bit (for Mac/Linux)'), extract each zip, protect ONLY NutriculaExpertInstaller.dll with .NET Reactor, then run NutriculaSignInstaller on the folder (it signs AND renames the apphost exe plus its 3 companions together), then place each WHOLE FOLDER in dist/ under exactly these names."
+              echo "::error::'$d' is missing (or is not a folder). Build both self-contained installers (workflows '2. Windows - 32bit (for Mac/Linux)' and '3. Windows - 64bit (for Mac/Linux)'), extract each zip, protect ONLY NutriculaExpertInstaller.dll with .NET Reactor, then run NutriculaSignInstaller on the folder (it signs the apphost exe in place, never renaming it), then place each WHOLE FOLDER in dist/ under exactly these names."
               exit 1
             fi
             for ext in exe dll; do
-              if [ ! -f "$d/Nutricula-${bits}bit-SC.$ext" ]; then
-                echo "::error::'$d/Nutricula-${bits}bit-SC.$ext' is missing - '$d' does not look like a complete, already-signed self-contained publish folder (NutriculaSignInstaller renames NutriculaExpertInstaller.* to Nutricula-${bits}bit-SC.* when it signs it - run that first)."
+              if [ ! -f "$d/NutriculaExpertInstaller.$ext" ]; then
+                echo "::error::'$d/NutriculaExpertInstaller.$ext' is missing - '$d' does not look like a complete, already-signed self-contained publish folder (run NutriculaSignInstaller on it first - it signs NutriculaExpertInstaller.exe in place, under its original name)."
                 exit 1
               fi
             done
@@ -103,8 +104,8 @@ jobs:
           python3 - <<'PY'
           import struct, sys
           expected = {
-              "dist/Nutricula-32bit-SC/Nutricula-32bit-SC.exe": (0x014C, "32-bit (x86)"),
-              "dist/Nutricula-64bit-SC/Nutricula-64bit-SC.exe": (0x8664, "64-bit (x64)"),
+              "dist/Nutricula-32bit-SC/NutriculaExpertInstaller.exe": (0x014C, "32-bit (x86)"),
+              "dist/Nutricula-64bit-SC/NutriculaExpertInstaller.exe": (0x8664, "64-bit (x64)"),
           }
           bad = False
           for path, (want, label) in expected.items():
@@ -132,10 +133,10 @@ jobs:
           # The launcher's file name MUST equal CFBundleExecutable in Info.plist.
           cp -R "mac-wrapper/Contents/MacOS/Nutricula" "$APP/Contents/MacOS/Nutricula"
           chmod +x "$APP/Contents/MacOS/Nutricula"
-          # Each self-contained folder's contents, copied WHOLE (the signed,
-          # renamed Nutricula-{32,64}bit-SC.exe/.dll/.deps.json/
-          # .runtimeconfig.json, plus every untouched .NET runtime file) into
-          # the per-architecture subfolder the launcher script looks for.
+          # Each self-contained folder's contents, copied WHOLE (the signed
+          # NutriculaExpertInstaller.exe/.dll/.deps.json/.runtimeconfig.json -
+          # never renamed - plus every untouched .NET runtime file) into the
+          # per-architecture subfolder the launcher script looks for.
           cp -R "dist/Nutricula-32bit-SC/." "$APP/Contents/Resources/win-x86/"
           cp -R "dist/Nutricula-64bit-SC/." "$APP/Contents/Resources/win-x64/"
           echo "APP_PATH=$APP" >> "$GITHUB_ENV"
