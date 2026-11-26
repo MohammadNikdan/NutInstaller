@@ -52,10 +52,12 @@ Next, on the secure build machine, the three flavours are protected differently:
   - NecroBit / Code Virtualization / Native EXE File: leave **OFF** unless you have specifically tested the installer still works correctly with them on
   Point Reactor's output back at the same `NutriculaExpertInstaller.dll` path inside the extracted folder (overwriting the plain one) - every other file in the folder (the apphost exe, every native/managed runtime file) is left exactly as `dotnet publish` produced it.
 
-Then sign with `NutriculaSignInstaller.exe`. It now handles both kinds of flavour automatically, no manual path or renaming needed - the only difference is WHERE you put/run it:
+Then sign with `NutriculaSignInstaller.exe`. It now handles both kinds of flavour automatically, no manual path needed - the only difference is WHERE you put/run it:
 
 - **For `Nutricula-Unsigned-32bit.exe`** (the Windows installer): place it next to `NutriculaSignInstaller.exe`, run the tool with no arguments (double-click it), confirm. It is signed and renamed to `Nutricula-32bit.exe`. (Unchanged from before.)
-- **For each extracted `-SC` folder**: copy `NutriculaSignInstaller.exe` **into that same folder** (right beside its own `NutriculaExpertInstaller.exe`), then run it there with no arguments, confirm. It reads the apphost exe's own PE header to tell 32-bit from 64-bit automatically (never guessed from a name or the folder's name), signs it, and renames **all four** of `NutriculaExpertInstaller.{exe,dll,deps.json,runtimeconfig.json}` together to `Nutricula-{32,64}bit-SC.*` - so you can see at a glance that it worked. (Renaming only the exe would break the self-contained app: it finds its companion `.dll` / `.deps.json` / `.runtimeconfig.json` by matching its own file name exactly - this is why all four are renamed in one step, never just one.)
+- **For each extracted `-SC` folder**: copy `NutriculaSignInstaller.exe` **into that same folder** (right beside its own `NutriculaExpertInstaller.exe`), then run it there with no arguments, confirm. It reads the apphost exe's own PE header to tell 32-bit from 64-bit automatically (never guessed from a name or the folder's name), and signs it **in place, under its original name** - `NutriculaExpertInstaller.exe` is never renamed, and neither are its `.dll`/`.deps.json`/`.runtimeconfig.json` companions. (An earlier version of this tool renamed all four together so a successful sign would be visually obvious; this broke the self-contained app, because the managed-assembly path a self-contained apphost loads is baked into the exe at publish time, not derived from its own file name at startup - after a rename it silently failed to start at all. Confirmed on real hardware.)
+
+Either way, the tool itself now tells you whether it worked: it prints a clear green "SUCCESS" or red "FAILED" banner at the end, and the window stays open afterwards (press Enter to close it) instead of closing itself - so you always get to read the result.
 
 (Scripted/automated use is still available and works the same way for either flavour: `NutriculaSignInstaller.exe <path_to_an_exe>` - it detects which kind of file it was given on its own.)
 
@@ -63,8 +65,9 @@ Resulting files/folders:
 
 ```text
 Nutricula-32bit.exe      <- the Windows installer for ALL Windows users (32- and 64-bit Windows)
-Nutricula-32bit-SC/      <- the WHOLE extracted folder (protected dll + signed exe + untouched
-                            runtime files) - only bundled into the Mac / Linux packages
+Nutricula-32bit-SC/      <- the WHOLE extracted folder (protected dll + signed exe, both under
+                            their original names + untouched runtime files) - only bundled into
+                            the Mac / Linux packages
 Nutricula-64bit-SC/      <- same, the 64-bit flavour's whole folder
 ```
 
